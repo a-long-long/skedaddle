@@ -383,6 +383,13 @@ if [ -x "$BUILD/skedaddle" ] || [ -x "$BUILD/skedaddle.exe" ]; then
     run qt_ui_test "QT-UI-OK" qt_run \
         env APPDATA="$CFG_UIT/appdata" XDG_CONFIG_HOME="$CFG_UIT/xdg" \
         "$(exefile2 "$BUILD/skedaddle")" --ui-test --w=900 --h=600
+
+    # 卫星天顶图单元自检（独立可执行）：模拟星座数据合理 + 天顶图确实渲染出内容。
+    # 不读设置、无需 App，故不必隔离配置；与 --ui-test 正交（它验交互链）。
+    if [ -x "$(exefile2 "$BUILD/skedaddle_satellite_selftest")" ]; then
+        run qt_sat_selftest "SAT-OK" qt_run \
+            "$(exefile2 "$BUILD/skedaddle_satellite_selftest")"
+    fi
 fi
 
 # ---- 优先队列：每次 pop 必须是当前最小值（PLAN.md §37）----

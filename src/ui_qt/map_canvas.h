@@ -20,6 +20,8 @@
 #include <QImage>
 #include <functional>   /* m_onViaPicked 回调（避开 Qt 信号槽/moc） */
 
+#include "satellite_model.h"   /* SkSatelliteModel：卫星天顶图数据层 */
+
 extern "C" {
 #include "ui/window.h"      /* App / app_* / mv_* 全在这里 */
 #include "utils/datum.h"    /* DatumId：drawGraticuleGK 参数 */
@@ -65,11 +67,17 @@ private:
     void drawGraticuleGK(QPainter &p, DatumId id); /* 方里格（高斯公里网，非 WGS84 坐标系） */
     void drawCursorCoords(QPainter &p); /* 右下角：光标处经纬度（无光标则显示中心点） */
     void drawRouteInfo(QPainter &p);   /* 左下角：路线里程 / 算路状态（替代被取消的状态栏） */
+    void drawSkyPlot(QPainter &p);     /* 右上角：卫星天顶图（方位角/仰角投影 + 信号强弱） */
 
 public:
     /* 坐标网开关：Qt 端叠加层，C 渲染核心不参与 */
     void setShowGrid(bool v);
     bool isGridOn() const { return m_showGrid; }   /* 坐标网是否开启（右栏按钮循环切换用） */
+
+    /* 卫星天顶图浮层开关（右栏「卫星」按钮 / --satellite 用） */
+    void setShowSatellite(bool v);
+    bool isSatelliteOn() const { return m_showSatellite; }
+    SkSatelliteModel *satModel() const { return m_satModel; }   /* 真实源接入点（main_window 接 SkSatelliteSource） */
 
     App        *m_a;
     MainWindow *m_mw;
@@ -98,6 +106,10 @@ public:
 
     /* 坐标网叠加层开关（右栏「坐标网」按钮控制） */
     bool m_showGrid = false;
+
+    /* 卫星天顶图浮层开关（右栏「卫星」按钮控制；模拟星座兜底，可选接真实源） */
+    bool m_showSatellite = false;
+    SkSatelliteModel *m_satModel = nullptr;   /* 卫星数据模型（拥有，parent=this） */
 
     /* 途经点拾取模式：开启后左键点击地图不再设起/终点，而是添加一个途经点。
      * 由「添加途经点」按钮 toggle；m_onViaPicked 在添加后回调（刷新途经点面板）。 */

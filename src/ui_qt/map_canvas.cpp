@@ -10,6 +10,7 @@
 #include <cstring>
 
 #include "main_window.h"
+#include "skyplot_draw.h"  /* sk_draw_skyplot：天顶图纯绘制（不依赖 widget） */
 #include "utils/datum.h"   /* 坐标系（大地基准）：经纬网/读数按所选基准呈现 */
 
 /* Qt 前端的地图画布实现。设计要点见 map_canvas.h 顶部注释。
@@ -28,6 +29,7 @@ MapCanvas::MapCanvas(App *a, MainWindow *mw, QWidget *parent)
     setMouseTracking(true);          /* 不按键也收 move：拖拽期间必须 */
     setFocusPolicy(Qt::StrongFocus); /* 键盘快捷键进 keyPressEvent */
     setAttribute(Qt::WA_OpaquePaintEvent, true);
+    m_satModel = new SkSatelliteModel(this);   /* 卫星数据模型（模拟星座兜底） */
 }
 
 MapCanvas::~MapCanvas()
@@ -80,6 +82,12 @@ void MapCanvas::tick()
         renderNow();
         m_a->need_redraw = 0;
     }
+    /* 卫星天顶图：每帧轻量推进动画（模拟时间 dt=33ms）并只重画浮层，
+     * 不触发 C 核心重渲（地图缓冲不动，paintEvent 仅复制缓冲 + 画浮层）。 */
+    if (m_showSatellite) {
+        m_satModel->advance(0.033);
+        update();
+    }
 }
 
 QString MapCanvas::statusText() const
@@ -128,12 +136,36 @@ void MapCanvas::paintEvent(QPaintEvent *)
     drawCursorCoords(p);
     drawRouteInfo(p);
     if (m_showGrid) drawGraticule(p);
+    if (m_showSatellite) drawSkyPlot(p);
 }
 
 void MapCanvas::setShowGrid(bool v)
 {
     m_showGrid = v;
     m_a->need_redraw = 1;
+}
+
+void MapCanvas::setShowSatellite(bool v)
+{
+    if (m_showSatellite == v) return;
+    m_showSatellite = v;
+    if (v) m_satModel->advance(0.0);   /* 立即生成一帧，避免开图瞬间空白 */
+    update();
+}
+
+void MapCanvas::drawSkyPlot(QPainter &p)
+{
+    if (!m_satModel) return;
+    /* 右上角、右栏按钮列下方（按钮 8 个 × 约 40px，从顶 12 起 ≈ 332）。
+     * 窗口不够高则贴底（极端小窗可能与底按钮重叠，可接受）。 */
+    const int top = 12 + 8 * 40;
+    const int avail = height() - top - 12;
+    int sz = qBound(120, qMin(180, qMin(width() - 24, avail)), 180);
+    const int y = qMax(12, (avail >= 120) ? top : (height() - sz - 12));
+    const int x = width() - sz - 12;
+    sk_draw_skyplot(&p, QRect(x, y, sz, sz),
+                    m_satModel->satellites(), m_satModel->count(),
+                    m_satModel->hasFix());
 }
 
 /* ---- 坐标网格（经纬网 / 方里格，与坐标系解耦）：Qt 端叠加层，C 渲染核心一行不改 ----

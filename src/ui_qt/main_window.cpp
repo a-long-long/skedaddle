@@ -113,6 +113,18 @@ MainWindow::MainWindow(App *a, QWidget *parent)
     buildRightCol();
     buildStepsDock();
 
+    /* 卫星天顶图：从设置读初始开关态（持久化），同步按钮勾选。
+     * 真实源（HAVE_QT_POSITIONING）在 start() 里接；无 Positioning 时模拟星座兜底。
+     * 必须在 buildRightCol 之后（按钮此时已建）。 */
+    {
+        bool satOn = settings_get_int(m_a->cfg, "satellite_show", 0) != 0;
+        m_canvas->setShowSatellite(satOn);
+        if (m_satBtn) {
+            QSignalBlocker blk(m_satBtn);
+            m_satBtn->setChecked(satOn);
+        }
+    }
+
     /* 地图点选途经点后：面板里的"刚加的那一行"立即出现（面板开着时才点得到）。 */
     m_canvas->m_onViaPicked = [this](double, double) { refreshViaPanel(); };
 
@@ -141,6 +153,16 @@ void MainWindow::start()
     m_timer->start(33);
     m_canvas->renderNow();
     updateGridBtn();   /* 让坐标网按钮显示当前坐标系统一短名 */
+
+    /* 接系统定位后端的卫星源：有则接管天顶图数据，无则模拟星座兜底。
+     * 仅交互模式（start）触发，--ui-test / --shot 不调 start，故无头模式不会因
+     * 定位后端缺失而卡住。无 Positioning 模块时整段被编译期宏吃掉。 */
+#ifdef HAVE_QT_POSITIONING
+    if (m_canvas && m_canvas->satModel()) {
+        m_satSource = new SkSatelliteSource(m_canvas->satModel(), this);
+        if (m_satSource->available()) m_satSource->start();
+    }
+#endif
     /* 启动后探测系统区域/语言：在事件循环起来后再弹窗（不阻塞 start 返回）。
      * --ui-test / --shot 不调用 start，故无头模式不会弹窗卡住。 */
     QTimer::singleShot(0, this, [this]() { checkSystemLanguage(); });
@@ -804,6 +826,38 @@ int MainWindow::runUiSelfTest()
               "下载树：不存在的叶子 selectByLeaf 返回 false");
     }
 
+    /* ⑰ 卫星天顶图按钮：可勾选、点击切换 MapCanvas 浮层 + 持久化。
+     *    验证：按钮存在且有悬停提示；点（toggled→toggleSatellite）后画布状态翻转、
+     *    按钮勾选态与画布一致；切换时 settings 的 satellite_show 同步落盘；
+     *    再点一次即关、按钮取消勾选。
+     *    ★ 用 emit toggled 验证"按钮→槽"这条真实接线（不只是函数本身），
+     *      与途经点面板同套路；toggled 的参数被 lambda 忽略，不影响。 */
+    {
+        check(m_satBtn != nullptr, "卫星天顶图：按钮存在");
+        check(m_satBtn && !m_satBtn->toolTip().isEmpty(), "卫星天顶图：按钮有悬停提示");
+
+        /* 起始保证关（按钮非 checkable 初态也可能被别处改过） */
+        m_canvas->setShowSatellite(false);
+        if (m_satBtn) { QSignalBlocker blk(m_satBtn); m_satBtn->setChecked(false); }
+
+        bool s0 = m_canvas->isSatelliteOn();
+        check(!s0, "卫星天顶图：初始关");
+
+        /* 点一下（toggled → toggleSatellite）：应翻转 + 持久化 */
+        if (m_satBtn) { emit m_satBtn->toggled(true); QApplication::processEvents(); }
+        check(m_canvas->isSatelliteOn() != s0, "卫星天顶图：点击后状态翻转");
+        check(m_satBtn && m_satBtn->isChecked() == m_canvas->isSatelliteOn(),
+              "卫星天顶图：按钮勾选态与画布一致");
+        check(settings_get_int(m_a->cfg, "satellite_show", -1) ==
+                  (m_canvas->isSatelliteOn() ? 1 : 0),
+              "卫星天顶图：切换同步落盘 satellite_show");
+
+        /* 再点一次：关回去，且按钮勾选态也复位 */
+        if (m_satBtn) { emit m_satBtn->toggled(false); QApplication::processEvents(); }
+        check(m_canvas->isSatelliteOn() == s0, "卫星天顶图：再点击即关闭");
+        check(m_satBtn && !m_satBtn->isChecked(), "卫星天顶图：关闭后按钮取消勾选");
+    }
+
     if (fail == 0) {
         printf("QT-UI-OK\n");
         return 0;
@@ -1371,6 +1425,15 @@ void MainWindow::buildRightCol()
         toggleViaPanel();
     });
 
+    /* 卫星天顶图按钮（可勾选：亮起 = 天顶图开着）。
+     * 与坐标网/轨迹/途经点同一套路：点击切换 MapCanvas 浮层 + 持久化。
+     * 数据优先接系统定位后端（HAVE_QT_POSITIONING），无源时由模拟星座兜底。 */
+    m_satBtn = bigbtn(Qt::IconKind::Satellite, trc("卫星天顶图（信号强弱 / 定位状态）"));
+    m_satBtn->setCheckable(true);
+    connect(m_satBtn, &QToolButton::toggled, this, [this](bool) {
+        toggleSatellite();
+    });
+
     /* 菜单按钮：弹出与菜单栏同一份 QMenu。
        Qt 5.11 的 popup 只有 (pos, at) 两参，用 sizeHint 把菜单定位到按钮左侧，
        避免从最底钮向下弹出超出屏幕。 */
@@ -1392,6 +1455,7 @@ void MainWindow::buildRightCol()
     vl->addSpacing(6);
     vl->addWidget(m_trackBtn);
     vl->addWidget(m_viaBtn);
+    vl->addWidget(m_satBtn);
     vl->addWidget(m_menuBtn);
 
     /* 外观：底板/边框/悬停高亮全部由 IconButton::paintEvent 自绘
@@ -1583,6 +1647,22 @@ void MainWindow::updateGridBtn()
 void MainWindow::toggleGrid()
 {
     if (m_canvas) m_canvas->setShowGrid(!m_canvas->isGridOn());
+}
+
+/* 卫星天顶图按钮：切换 MapCanvas 浮层 + 持久化开关态。
+ * 真实源（若有）在 start() 里已接好，这里只切显示。 */
+void MainWindow::toggleSatellite()
+{
+    if (!m_canvas) return;
+    bool on = !m_canvas->isSatelliteOn();
+    m_canvas->setShowSatellite(on);
+    settings_set_int(m_a->cfg, "satellite_show", on ? 1 : 0);
+    app_persist_settings(m_a);          /* 落盘（与坐标网等其它持久化项一致） */
+    /* ★★ setChecked 会发 toggled → 又调回本函数 ⇒ 无限递归；用 QSignalBlocker 堵。 */
+    if (m_satBtn) {
+        QSignalBlocker blk(m_satBtn);
+        m_satBtn->setChecked(on);
+    }
 }
 
 /* 昼夜三态换算：把 day_night_mode（0 白天 / 1 夜间 / 2 自动）写成有效
@@ -2417,6 +2497,7 @@ void MainWindow::retranslateUi()
     if (m_loc)     m_loc->setToolTip(trc("定位到关注点"));
     if (m_dayBtn)  m_dayBtn->setToolTip(trc("昼 / 夜 切换"));
     if (m_menuBtn) m_menuBtn->setToolTip(trc("主菜单"));
+    if (m_satBtn)  m_satBtn->setToolTip(trc("卫星天顶图（信号强弱 / 定位状态）"));
     updateDatumTip();   /* 坐标网按钮提示随语言刷新 */
 
     /* 搜索浮层 */

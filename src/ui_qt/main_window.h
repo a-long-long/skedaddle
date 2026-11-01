@@ -47,6 +47,7 @@ class QToolButton;
 class QWidget;
 class MapCanvas;
 class DownloadDialog;   /* 下载地图对话框（全球 Geofabrik 列表）*/
+class SkSatelliteSource;   /* 真实卫星源（仅 HAVE_QT_POSITIONING 实例化）*/
 
 class MainWindow : public QMainWindow {
 public:
@@ -168,6 +169,7 @@ private:
     void locateGpxRow(int kind, int idx); /* 双击面板某行：把视口挪到那条轨迹/收藏 */
     void locate();                       /* 定位按钮：回到关注点 */
     void layoutOverlays();               /* 两个浮层贴到画布上（画布尺寸变了要重贴） */
+    void toggleSatellite();              /* 右栏「卫星」按钮：切换天顶图浮层 + 持久化 */
 
     /* ---- 下载地图（菜单「下载地图…」+ 浏览到区域外自动提示）---- */
     void showDownloadDialog();           /* 打开下载对话框（全球 Geofabrik 列表） */
@@ -222,12 +224,17 @@ private:
     DownloadDialog *m_dlDlg = nullptr;    /* 下载地图对话框（懒创建） */
     bool          m_covPrompted = false; /* 区域外提示是否已弹过（回到有图才复位）*/
 
+#ifdef HAVE_QT_POSITIONING
+    SkSatelliteSource *m_satSource = nullptr;   /* 真实卫星源（平台定位后端；本机无 Positioning 时为 nullptr） */
+#endif
+
     /* 右栏按钮（retranslateUi 需要重设悬停提示，故留引用） */
     QToolButton  *m_zin = nullptr;
     QToolButton  *m_zout = nullptr;
     QToolButton  *m_loc = nullptr;
     QToolButton  *m_dayBtn = nullptr;
     QToolButton  *m_menuBtn = nullptr;
+    QToolButton  *m_satBtn = nullptr;   /* 右栏「卫星」按钮（可勾选，亮起=天顶图开） */
     /* 语言子菜单动作（retranslateUi 同步勾选态） */
     QAction      *m_langZAct = nullptr;
     QAction      *m_langEAct = nullptr;

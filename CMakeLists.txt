@@ -487,17 +487,34 @@ sk_link_tool(skedaddle_tag_stats)
 #   同一份源码同时兼容 Qt5/Qt6：无 Q_OBJECT/信号槽，故无需 moc；事件坐标统一用
 #   position()/angleDelta()。配置时给 -DCMAKE_PREFIX_PATH=<Qt前缀> 指定版本，
 #   找不到则跳过本目标，不影响其余全部产物。
+#   真实卫星源（天顶图数据）依赖 Qt Positioning（QGeoSatelliteInfoSource），可选：
+#   找不到（本机 mingw_64 不带）则编译期宏 HAVE_QT_POSITIONING 不定义，天顶图
+#   自动退化为确定性模拟星座兜底——功能始终可用、可演示。
 set(QT "")
+set(HAVE_QT_POSITIONING 0)
+set(SKEDADDLE_POSITIONING_LIB "")
 find_package(Qt6 COMPONENTS Widgets Network QUIET)
 if(Qt6Widgets_FOUND)
     set(QT Qt6)
+    find_package(Qt6 COMPONENTS Positioning QUIET)
+    if(Qt6Positioning_FOUND)
+        set(HAVE_QT_POSITIONING 1)
+        set(SKEDADDLE_POSITIONING_LIB Qt6::Positioning)
+    endif()
 else()
     find_package(Qt5 COMPONENTS Widgets Network QUIET)
     if(Qt5Widgets_FOUND)
         set(QT Qt5)
+        find_package(Qt5 COMPONENTS Positioning QUIET)
+        if(Qt5Positioning_FOUND)
+            set(HAVE_QT_POSITIONING 1)
+            set(SKEDADDLE_POSITIONING_LIB Qt5::Positioning)
+        endif()
     endif()
 endif()
 if(QT)
+    message(STATUS "Qt 前端: 启用 (${QT} ${${QT}Widgets_VERSION})"
+            " | Qt Positioning: ${HAVE_QT_POSITIONING}")
     add_executable(skedaddle
         src/ui_qt/qt_main.cpp
         src/ui_qt/map_canvas.cpp
@@ -508,7 +525,10 @@ if(QT)
 # （见 scripts/regress.sh 的 shot()/app_route/gpx_render/ovl_shot）。
         src/ui_qt/qt_icons.cpp
         src/ui_qt/main_window.cpp
-        src/ui_qt/download_dialog.cpp)
+        src/ui_qt/download_dialog.cpp
+        src/ui_qt/skyplot_draw.cpp
+        src/ui_qt/satellite_model.cpp
+        src/ui_qt/satellite_source.cpp)
     # 应用图标：作为 Qt 资源嵌入二进制（资源路径 :/app_icon.png），由
     # qt_main.cpp 的 QApplication::setWindowIcon 挂到所有窗口/任务栏。
     # Qt5/Qt6 各自提供对应的资源编译宏，这里按 QT 实测选择。
@@ -533,6 +553,13 @@ if(QT)
     # 缓存"恰好能编"，reconfigure 后全量重编才暴露缺失——这里显式补上。
     target_include_directories(skedaddle PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
+    # 真实卫星源：平台定位后端（HAVE_QT_POSITIONING 编译期宏 + 链 Positioning）。
+    # 本机 mingw_64 不带 Positioning ⇒ 宏不定义 ⇒ 整段编译降级为模拟星座兜底。
+    if(HAVE_QT_POSITIONING)
+        target_compile_definitions(skedaddle PRIVATE HAVE_QT_POSITIONING=1)
+        target_link_libraries(skedaddle PRIVATE ${SKEDADDLE_POSITIONING_LIB})
+    endif()
+
     # 语言包：拷贝到构建目录与 skedaddle.exe 同级的 lang/
     # （运行时 i18n 按 exe 目录下的 lang/<code>.xml 加载，文件缺失则回退内置 TR[]）
     add_custom_command(TARGET skedaddle POST_BUILD
@@ -543,6 +570,21 @@ if(QT)
         COMMENT "拷贝英文语言包 lang/en.xml")
 
     message(STATUS "Qt 前端: 启用 (${QT} ${${QT}Widgets_VERSION})")
+
+    # 卫星天顶图单元自检（独立可执行）：模型数据合理 + 天顶图确实渲染出内容。
+    # 不依赖整 App，编译期宏 HAVE_QT_POSITIONING 同样控制卫星源分支。
+    add_executable(skedaddle_satellite_selftest
+        tools/satellite_selftest.cpp
+        src/ui_qt/skyplot_draw.cpp
+        src/ui_qt/satellite_model.cpp
+        src/ui_qt/satellite_source.cpp)
+    target_include_directories(skedaddle_satellite_selftest PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(skedaddle_satellite_selftest PRIVATE
+        ${QT}::Widgets Threads::Threads)
+    if(HAVE_QT_POSITIONING)
+        target_compile_definitions(skedaddle_satellite_selftest PRIVATE HAVE_QT_POSITIONING=1)
+        target_link_libraries(skedaddle_satellite_selftest PRIVATE ${SKEDADDLE_POSITIONING_LIB})
+    endif()
 else()
     message(STATUS "Qt 前端: 未找到 Qt6/Qt5 Widgets，跳过 skedaddle")
 endif()

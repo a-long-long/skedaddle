@@ -176,6 +176,29 @@ void drawVia(QPainter &p)
     p.drawPath(tri);
 }
 
+/* 卫星：天顶图开关图标。本体（中心圆）+ 两侧太阳翼 + 顶部天线 + 两道信号斜线，
+ * 一眼可辨为"导航卫星 / GNSS"。 */
+void drawSatellite(QPainter &p)
+{
+    const double cx = 10.0, cy = 11.0;
+    /* 两侧太阳翼（空心矩形） */
+    p.setPen(mkPen(1.5));
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(QRectF(cx - 7.6, cy - 2.4, 3.0, 4.8));
+    p.drawRect(QRectF(cx + 4.6, cy - 2.4, 3.0, 4.8));
+    /* 本体（中心圆，实心） */
+    p.setBrush(QBrush(kInk));
+    p.setPen(Qt::NoPen);
+    p.drawEllipse(QRectF(cx - 2.4, cy - 2.4, 4.8, 4.8));
+    /* 天线（向上短线） */
+    p.setPen(mkPen(1.5));
+    p.setBrush(Qt::NoBrush);
+    p.drawLine(QPointF(cx, cy - 2.4), QPointF(cx, cy - 5.4));
+    /* 两道信号斜线（本体上方，对称） */
+    p.drawLine(QPointF(cx - 4.4, cy - 7.2), QPointF(cx - 2.4, cy - 5.2));
+    p.drawLine(QPointF(cx + 4.4, cy - 7.2), QPointF(cx + 2.4, cy - 5.2));
+}
+
 }  /* namespace */
 
 /* ---- 直接在 QPainter 上绘制（供 IconButton 的 paintEvent 调用）----
@@ -207,6 +230,7 @@ void qt_draw_icon(QPainter &p, Qt::IconKind kind, double size)
     case Qt::IconKind::Plus:    drawPlus(p);              break;
     case Qt::IconKind::Track:   drawTrack(p);             break;
     case Qt::IconKind::Via:     drawVia(p);               break;
+    case Qt::IconKind::Satellite: drawSatellite(p);       break;
     }
     p.restore();
 }
