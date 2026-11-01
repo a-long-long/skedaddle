@@ -1,9 +1,9 @@
-# navimap
+# Skedaddle（跑路了）
 
 纯 C 实现的**离线地图渲染与导航**程序。
 
-自写 OSM PBF 解码器 → 编译成自有的 `.nmbin` 产物 → `mmap` 懒加载 → SDL2 自绘渲染 +
-双向加权 A\* 路由。**零第三方地图/导航库**，除 SDL2（渲染）、SQLite3（地名库）与 zlib（PBF 解压）。
+自写 OSM PBF 解码器 → 编译成自有的 `.nmbin` 产物 → `mmap` 懒加载 → 自写像素光栅化渲染 +
+双向加权 A\* 路由。**零第三方地图/导航库**：前端用 Qt，地名库用 SQLite3，PBF 解压用 zlib。
 
 ---
 
@@ -29,14 +29,14 @@
 
 ## 依赖
 
-- **SDL2** + **SDL2_ttf**（渲染与字体）
+- **Qt5 或 Qt6**（前端 UI 与控件）
 - **SQLite3**（地名库 `places.db`）
 - **zlib**（PBF blob 解压）
 - **protobuf-c** + **protoc-c**（**仅构建期**：把 `proto/*.proto` 编成 C 代码；
   `src/pbf/` 的解码逻辑是手写的，生成产物不入库）
 - CMake ≥ 3.13、支持 C11 的编译器
 
-> 本机的 SDL2_ttf / protobuf-c 装在 `~/.local`，默认 `pkg-config` 看不见 ⇒ **构建前先 source 环境脚本**。
+> 本机的 Qt / protobuf-c 装在 `~/.local`，默认 `pkg-config` 看不见 ⇒ **构建前先 source 环境脚本**。
 
 ## 构建
 
@@ -46,7 +46,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j8
 ```
 
-`env.sh` 会在 source 时自检三条依赖并打印版本（`sdl2` / `SDL2_ttf` / `libprotobuf-c`），
+`env.sh` 会在 source 时自检依赖并打印版本（Qt / `libprotobuf-c` 等），
 没有输出说明环境没生效。
 
 ## 跨平台
@@ -74,7 +74,7 @@ source env.sh && cmake -B build && cmake --build build -j8
 cmake -B build -A x64 && cmake --build build --config Release
 ```
 
-Windows 注意：入口 `main()` 直接用（CMake 定义 `SDL_MAIN_HANDLED`，不链 SDL2main）；
+Windows 注意：入口 `main()` 直接用（CMake 不接管 WinMain，不依赖 SDL 的 main 重定义）；
 数学函数无需显式链 `libm`（仅类 Unix 平台链）；峰值内存走 `psapi`。
 字体优先级：`--font=` 命令行 > `NAVMAP_FONT` 环境变量 > 平台候选链。
 
@@ -85,16 +85,18 @@ Windows 注意：入口 `main()` 直接用（CMake 定义 `SDL_MAIN_HANDLED`，�
 
 ## Qt 前端（可选）
 
-SDL 版窗口是无边框自绘（chrome / 搜索框 / 面板都是画在 framebuffer 上的假控件），
-平台差异大、输入法与无障碍支持弱。`skedaddle` 用 **Qt 做真控件**（QMainWindow 菜单栏 /
-QLineEdit 搜索 / QDockWidget 步骤面板 / QToolBar 右栏按钮），地图仍走现有 C 光栅化器：
-`app_render_to_surface()` 画进 `SDL_Surface` → 包成 `QImage(Format_RGB32)` → `paintEvent` blit。
-**渲染 / 算路 / 搜索核心一行不改**；`App.qt_ui=1` 让 `paint_frame` 跳过 SDL 自绘 chrome。
+> 注：早期 Qt 前端曾用 `SDL_Surface` 中转（`app_render_to_surface()` 画进 SDL_Surface 再包
+> `QImage`），现架构已演进为**零 SDL**——`app_render_to_buf()` 直接把地图画进 C 像素缓冲，
+> 再包成 `QImage(Format_RGB32)` 由 `paintEvent` blit；无头出图 `src/ui/offscreen_shot.c` 同样
+> 零 SDL（malloc 缓冲 + 内建 24 位 BMP writer）。**渲染 / 算路 / 搜索核心一行不改**。
+
+`skedaddle` 用 **Qt 做真控件**（QMainWindow 菜单栏 / QLineEdit 搜索 / QDockWidget 步骤面板 /
+QToolBar 右栏按钮），地图仍走现有 C 光栅化器，仅把最终像素缓冲交给 Qt 显示。
 
 ```bash
 cmake -B build -DCMAKE_PREFIX_PATH=<Qt5 前缀>   # 找得到 Qt5Widgets 即可
 cmake --build build --target skedaddle -j8
-./build/skedaddle --graph=products/graph/beijing        # 参数与 navimap 一致
+./build/skedaddle --graph=products/graph/beijing        # 参数与旧版一致
 QT_QPA_PLATFORM=offscreen ./build/skedaddle --shot=x.png # 无人值守出图
 ```
 
@@ -129,7 +131,7 @@ QT_QPA_PLATFORM=offscreen ./build/skedaddle --shot=x.png # 无人值守出图
 不再从 nmbin 打开 `lines/areas/polyrefs` —— 这三个文件因此可以整个不落盘。
 
 ```bash
-./build/navimap --graph=products/graph --pbf-display=sources:3
+./build/skedaddle --graph=products/graph --pbf-display=sources:3
 ```
 
 解码结果与落盘文件**8 省逐字节相同**（`build/skedaddle_pbfmap_check` 可验证），渲染端零改动。
@@ -162,7 +164,7 @@ src/map/     图集、路由图构建、CSR 图、瓦片索引、覆盖度
 src/route/   双向 A*、转向限制、ALT 地标表、反向索引、堆、转向指令
 src/render/  渲染管线、自写像素光栅、字形与地名标注
 src/search/  地名 / POI 搜索
-src/ui/      SDL2 窗口与交互
+src/ui/      窗口与交互（无头离屏出图 / 状态栏 / 搜索浮层）
 src/utils/   平台抽象层（plat）、内存与文件映射约定
 tools/       20 个命令行工具（构建 / 自检 / 验收 / 诊断）
 scripts/     回归门禁、地图同步、像素对比
