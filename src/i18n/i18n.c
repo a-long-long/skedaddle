@@ -8,6 +8,13 @@ static I18nLang g_lang = I18N_ZH;   /* 默认中文 */
 
 static void i18n_load(const char *code);  /* 前向声明，定义见文件末尾 */
 
+typedef struct { const char *zh; const char *en; } TrPair;
+
+/* 运行时语言文件加载的全局状态（i18n_set_lang 切换时释放并重建） */
+static TrPair *g_pairs = NULL;
+static size_t  g_n = 0;
+static char   *g_lang_dir = NULL;
+
 void i18n_set_lang(I18nLang l)
 {
     g_lang = (l == I18N_EN) ? I18N_EN : I18N_ZH;
@@ -28,8 +35,6 @@ I18nLang i18n_lang(void)
 {
     return g_lang;
 }
-
-typedef struct { const char *zh; const char *en; } TrPair;
 
 /* 以中文为原文。en 缺失的项不在此表，i18n_tr 会原样返回中文（回退）。 */
 static const TrPair TR[] = {
@@ -411,9 +416,6 @@ static const TrPair TR[] = {
  * 内置 TR[]（与文件同源，由 scripts/export_lang.py 从 TR[] 生成）。
  * 中文是源语言（msgid），不生成文件。 */
 
-static TrPair *g_pairs = NULL;   /* 从 XML 加载的该语言映射 */
-static size_t  g_n = 0;
-static char   *g_lang_dir = NULL;
 
 static char *xstrdup(const char *s)
 {

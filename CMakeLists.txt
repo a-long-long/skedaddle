@@ -519,7 +519,15 @@ if(QT)
         qt5_add_resources(NAVIMAP_QT_RC_GEN ${NAVIMAP_QT_QRC})
     endif()
     target_sources(skedaddle PRIVATE ${NAVIMAP_QT_RC_GEN})
-    target_link_libraries(skedaddle PRIVATE navmap_core ${QT}::Widgets ${QT}::Network Threads::Threads)
+    # 直接链各子模块库（与 nm_link_tool 同款）：CMake 展开成相对路径
+    # libnavmap_*.a（链接器 cwd=build 可找到），绕开 navmap_core 空壳
+    # （navmap_core 仅含 core_anchor.c，未聚合子模块，且 CMake 会把它
+    #  展开成 -lnavmap_core 而缺 -L build，导致链接失败）。
+    target_link_libraries(skedaddle PRIVATE
+        navmap_pbf navmap_geo navmap_strpool navmap_plat navmap_mem
+        navmap_map navmap_search navmap_route navmap_render navmap_ui navmap_settings navmap_i18n
+        ${ZLIB_LIBRARIES} ${SQLITE3_LIBRARIES} ${PROTOC_LIB} ${NM_LEAF_SYS_LIBS}
+        ${QT}::Widgets ${QT}::Network Threads::Threads)
     # skedaddle 直接引用 src/ 下的头（ui/window.h、i18n/i18n.h、utils/* 等），
     # 需要源码根在 include 路径。历史上该路径靠 navmap_core 的传递 + 旧 .obj
     # 缓存"恰好能编"，reconfigure 后全量重编才暴露缺失——这里显式补上。
