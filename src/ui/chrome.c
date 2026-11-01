@@ -714,7 +714,8 @@ void chrome_act(App *a, int id, int x, int y)
         a->need_redraw = 1;
         break;
     case CH_LOCATE: {
-        if (a->sim_on) { a->view.lat = a->sim.car_lat; a->view.lon = a->sim.car_lon; }
+        if (a->ext_valid) { a->view.lat = a->ext_lat; a->view.lon = a->ext_lon; }
+        else if (a->sim_on) { a->view.lat = a->sim.car_lat; a->view.lon = a->sim.car_lon; }
         else if (a->pick_a.have) { a->view.lat = a->pick_a.lat; a->view.lon = a->pick_a.lon; }
         a->need_redraw = 1;
         break;

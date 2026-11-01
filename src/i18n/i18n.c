@@ -145,6 +145,23 @@ static const TrPair TR[] = {
     { "途经点（面板开着时点地图添加）", "Via points (click map when panel open)" },
     { "主菜单",     "Main menu" },
     { "卫星天顶图（信号强弱 / 定位状态）", "Satellite sky plot (signal / fix status)" },
+
+    /* 外部信号接入（NMEA over TCP/UDP/串口，抄 OsmAnd「Use NMEA as location source」） */
+    { "外部信号（NMEA 定位接入）", "External signal (NMEA positioning)" },
+    { "外部信号接入设置", "External signal settings" },
+    { "TCP", "TCP" },
+    { "UDP", "UDP" },
+    { "串口", "Serial" },
+    { "主机", "Host" },
+    { "端口", "Port" },
+    { "串口设备", "Serial device" },
+    { "波特率", "Baud rate" },
+    { "主机地址（TCP/UDP）", "Host address (TCP/UDP)" },
+    { "端口（TCP/UDP）", "Port (TCP/UDP)" },
+    { "串口设备（如 COM3 / /dev/ttyUSB0）", "Serial device (e.g. COM3 / /dev/ttyUSB0)" },
+    { "波特率（串口）", "Baud rate (serial)" },
+    { "从外部 GNSS / 蓝牙 GPS 接收机接入 NMEA-0183 流：TCP/UDP 填接收机或转发软件（如 gpsd、OsmAnd 的 NMEA 输出）监听的地址与端口；串口填本机连接的 GPS 模块设备。",
+      "Connect an external GNSS / Bluetooth GPS receiver via NMEA-0183: for TCP/UDP, enter the address and port the receiver or forwarding software (e.g. gpsd, OsmAnd NMEA output) listens on; for serial, enter the GPS module device on this machine." },
     { "搜索地点或道路（Ctrl+F）", "Search place or road (Ctrl+F)" },
 
     /* 搜索浮层 */

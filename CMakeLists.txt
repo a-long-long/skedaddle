@@ -493,6 +493,8 @@ sk_link_tool(skedaddle_tag_stats)
 set(QT "")
 set(HAVE_QT_POSITIONING 0)
 set(SKEDADDLE_POSITIONING_LIB "")
+set(HAVE_QT_SERIALPORT 0)
+set(SKEDADDLE_SERIALPORT_LIB "")
 find_package(Qt6 COMPONENTS Widgets Network QUIET)
 if(Qt6Widgets_FOUND)
     set(QT Qt6)
@@ -500,6 +502,11 @@ if(Qt6Widgets_FOUND)
     if(Qt6Positioning_FOUND)
         set(HAVE_QT_POSITIONING 1)
         set(SKEDADDLE_POSITIONING_LIB Qt6::Positioning)
+    endif()
+    find_package(Qt6 COMPONENTS SerialPort QUIET)
+    if(Qt6SerialPort_FOUND)
+        set(HAVE_QT_SERIALPORT 1)
+        set(SKEDADDLE_SERIALPORT_LIB Qt6::SerialPort)
     endif()
 else()
     find_package(Qt5 COMPONENTS Widgets Network QUIET)
@@ -509,6 +516,11 @@ else()
         if(Qt5Positioning_FOUND)
             set(HAVE_QT_POSITIONING 1)
             set(SKEDADDLE_POSITIONING_LIB Qt5::Positioning)
+        endif()
+        find_package(Qt5 COMPONENTS SerialPort QUIET)
+        if(Qt5SerialPort_FOUND)
+            set(HAVE_QT_SERIALPORT 1)
+            set(SKEDADDLE_SERIALPORT_LIB Qt5::SerialPort)
         endif()
     endif()
 endif()
@@ -528,7 +540,9 @@ if(QT)
         src/ui_qt/download_dialog.cpp
         src/ui_qt/skyplot_draw.cpp
         src/ui_qt/satellite_model.cpp
-        src/ui_qt/satellite_source.cpp)
+        src/ui_qt/satellite_source.cpp
+        src/ui_qt/nmea_parser.cpp
+        src/ui_qt/nmea_source.cpp)
     # 应用图标：作为 Qt 资源嵌入二进制（资源路径 :/app_icon.png），由
     # qt_main.cpp 的 QApplication::setWindowIcon 挂到所有窗口/任务栏。
     # Qt5/Qt6 各自提供对应的资源编译宏，这里按 QT 实测选择。
@@ -559,6 +573,12 @@ if(QT)
         target_compile_definitions(skedaddle PRIVATE HAVE_QT_POSITIONING=1)
         target_link_libraries(skedaddle PRIVATE ${SKEDADDLE_POSITIONING_LIB})
     endif()
+    # 串口（可选）：本机构建未带 SerialPort ⇒ 宏不定义 ⇒ nmea_source 的串口分支
+    # 编译降级为"不支持串口"提示（TCP/UDP 仍可用）。
+    if(HAVE_QT_SERIALPORT)
+        target_compile_definitions(skedaddle PRIVATE HAVE_QT_SERIALPORT=1)
+        target_link_libraries(skedaddle PRIVATE ${SKEDADDLE_SERIALPORT_LIB})
+    endif()
 
     # 语言包：拷贝到构建目录与 skedaddle.exe 同级的 lang/
     # （运行时 i18n 按 exe 目录下的 lang/<code>.xml 加载，文件缺失则回退内置 TR[]）
@@ -585,6 +605,15 @@ if(QT)
         target_compile_definitions(skedaddle_satellite_selftest PRIVATE HAVE_QT_POSITIONING=1)
         target_link_libraries(skedaddle_satellite_selftest PRIVATE ${SKEDADDLE_POSITIONING_LIB})
     endif()
+
+    # NMEA 解析单元自检（独立可执行，纯 C++，不依赖整 App / Qt）：验证外部信号
+    # 接入的解析核心（定位/海拔/速度航向/校验和/星座映射/卫星计数与在用/缺方位回退）。
+    # 与 satellite_selftest 同套路，但零 Qt 依赖，可脱离 GUI 环境验证数据链。
+    add_executable(skedaddle_nmea_selftest
+        tools/nmea_selftest.cpp
+        src/ui_qt/nmea_parser.cpp)
+    target_include_directories(skedaddle_nmea_selftest PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_compile_features(skedaddle_nmea_selftest PRIVATE cxx_std_17)
 else()
     message(STATUS "Qt 前端: 未找到 Qt6/Qt5 Widgets，跳过 skedaddle")
 endif()

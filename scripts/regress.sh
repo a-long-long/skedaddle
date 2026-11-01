@@ -390,6 +390,14 @@ if [ -x "$BUILD/skedaddle" ] || [ -x "$BUILD/skedaddle.exe" ]; then
         run qt_sat_selftest "SAT-OK" qt_run \
             "$(exefile2 "$BUILD/skedaddle_satellite_selftest")"
     fi
+
+    # NMEA 解析单元自检（独立可执行，纯 C++）：验证外部信号接入的解析核心
+    # （定位/海拔/速度航向/校验和/星座映射/卫星计数与在用/缺方位回退）。
+    # 不读设置、无需 App，与 satellite_selftest 同套路（它验的是渲染，本工具验解析）。
+    if [ -x "$(exefile2 "$BUILD/skedaddle_nmea_selftest")" ]; then
+        run qt_nmea_selftest "NMEA-OK" qt_run \
+            "$(exefile2 "$BUILD/skedaddle_nmea_selftest")"
+    fi
 fi
 
 # ---- 优先队列：每次 pop 必须是当前最小值（PLAN.md §37）----

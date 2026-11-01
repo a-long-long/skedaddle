@@ -48,6 +48,7 @@ class QWidget;
 class MapCanvas;
 class DownloadDialog;   /* 下载地图对话框（全球 Geofabrik 列表）*/
 class SkSatelliteSource;   /* 真实卫星源（仅 HAVE_QT_POSITIONING 实例化）*/
+class SkNmeaSource;        /* 外部定位信号源（NMEA over TCP/UDP/串口）*/
 
 class MainWindow : public QMainWindow {
 public:
@@ -170,6 +171,10 @@ private:
     void locate();                       /* 定位按钮：回到关注点 */
     void layoutOverlays();               /* 两个浮层贴到画布上（画布尺寸变了要重贴） */
     void toggleSatellite();              /* 右栏「卫星」按钮：切换天顶图浮层 + 持久化 */
+    void toggleExtSignal();              /* 右栏「外部信号」按钮：开/关 NMEA 信号接入 */
+    void showExtSignalDialog();          /* 外部信号连接配置对话框（协议/地址/端口/串口） */
+    void applyExtSignal();               /* 每帧把外部定位/卫星接入 App 与模型（信号丢失则回退） */
+    void connectExt();                   /* 按 settings 读连接配置并接外部信号源（启动 / 重连用） */
 
     /* ---- 下载地图（菜单「下载地图…」+ 浏览到区域外自动提示）---- */
     void showDownloadDialog();           /* 打开下载对话框（全球 Geofabrik 列表） */
@@ -235,6 +240,9 @@ private:
     QToolButton  *m_dayBtn = nullptr;
     QToolButton  *m_menuBtn = nullptr;
     QToolButton  *m_satBtn = nullptr;   /* 右栏「卫星」按钮（可勾选，亮起=天顶图开） */
+    QToolButton  *m_extBtn = nullptr;   /* 右栏「外部信号」按钮（可勾选，亮起=信号接入开） */
+    SkNmeaSource *m_nmea = nullptr;     /* 外部定位信号源（NMEA；无连接时为 nullptr） */
+    bool          m_extReal = false;    /* 当前外部信号是否处于"真实数据接管"状态（用于回退去抖） */
     int           m_lang = 0;            /* 当前语言（I18nLang 枚举值；持久化到 settings 的 lang 键） */
 };
 

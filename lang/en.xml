@@ -80,6 +80,20 @@
   <item><zh>途经点（面板开着时点地图添加）</zh><en>Via points (click map when panel open)</en></item>
   <item><zh>主菜单</zh><en>Main menu</en></item>
   <item><zh>卫星天顶图（信号强弱 / 定位状态）</zh><en>Satellite sky plot (signal / fix status)</en></item>
+  <item><zh>外部信号（NMEA 定位接入）</zh><en>External signal (NMEA positioning)</en></item>
+  <item><zh>外部信号接入设置</zh><en>External signal settings</en></item>
+  <item><zh>TCP</zh><en>TCP</en></item>
+  <item><zh>UDP</zh><en>UDP</en></item>
+  <item><zh>串口</zh><en>Serial</en></item>
+  <item><zh>主机</zh><en>Host</en></item>
+  <item><zh>端口</zh><en>Port</en></item>
+  <item><zh>串口设备</zh><en>Serial device</en></item>
+  <item><zh>波特率</zh><en>Baud rate</en></item>
+  <item><zh>主机地址（TCP/UDP）</zh><en>Host address (TCP/UDP)</en></item>
+  <item><zh>端口（TCP/UDP）</zh><en>Port (TCP/UDP)</en></item>
+  <item><zh>串口设备（如 COM3 / /dev/ttyUSB0）</zh><en>Serial device (e.g. COM3 / /dev/ttyUSB0)</en></item>
+  <item><zh>波特率（串口）</zh><en>Baud rate (serial)</en></item>
+  <item><zh>从外部 GNSS / 蓝牙 GPS 接收机接入 NMEA-0183 流：TCP/UDP 填接收机或转发软件（如 gpsd、OsmAnd 的 NMEA 输出）监听的地址与端口；串口填本机连接的 GPS 模块设备。</zh><en>Connect an external GNSS / Bluetooth GPS receiver via NMEA-0183: for TCP/UDP, enter the address and port the receiver or forwarding software (e.g. gpsd, OsmAnd NMEA output) listens on; for serial, enter the GPS module device on this machine.</en></item>
   <item><zh>搜索地点或道路（Ctrl+F）</zh><en>Search place or road (Ctrl+F)</en></item>
   <item><zh>搜索</zh><en>Search</en></item>
   <item><zh>搜索地点、道路…</zh><en>Search place, road…</en></item>

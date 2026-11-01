@@ -199,6 +199,32 @@ void drawSatellite(QPainter &p)
     p.drawLine(QPointF(cx + 4.4, cy - 7.2), QPointF(cx + 2.4, cy - 5.2));
 }
 
+/* 外部信号：广播塔（三角塔身 + 顶部发射点）+ 右侧三道向外扩散的信号弧，
+ * 一眼可辨为"外部信号源 / 无线接入"。与卫星图标的"卫星本体+太阳翼"区分开。 */
+void drawSignal(QPainter &p)
+{
+    const double cx = 8.0, cy = 6.0;     /* 塔顶发射点（信号弧的圆心） */
+    /* 塔身：三角桁架（两腰 + 底），像个广播塔 */
+    p.setPen(mkPen(1.6));
+    p.setBrush(Qt::NoBrush);
+    p.drawLine(QPointF(4.4, 16.6), QPointF(cx, cy));
+    p.drawLine(QPointF(11.6, 16.6), QPointF(cx, cy));
+    p.drawLine(QPointF(4.4, 16.6), QPointF(11.6, 16.6));
+    /* 一道横撑 */
+    p.drawLine(QPointF(6.4, 12.0), QPointF(9.6, 12.0));
+    /* 塔顶发射点（实心小圆） */
+    p.setBrush(QBrush(kInk));
+    p.setPen(Qt::NoPen);
+    p.drawEllipse(QRectF(cx - 1.6, cy - 1.6, 3.2, 3.2));
+    /* 右侧三道信号弧（圆心在塔顶，向右张开 -45°~+45°） */
+    p.setBrush(Qt::NoBrush);
+    p.setPen(mkPen(1.5));
+    for (int r = 4; r <= 8; r += 2) {
+        QRectF box(cx - r, cy - r, r * 2, r * 2);
+        p.drawArc(box, -45 * 16, 90 * 16);
+    }
+}
+
 }  /* namespace */
 
 /* ---- 直接在 QPainter 上绘制（供 IconButton 的 paintEvent 调用）----
@@ -231,6 +257,7 @@ void qt_draw_icon(QPainter &p, Qt::IconKind kind, double size)
     case Qt::IconKind::Track:   drawTrack(p);             break;
     case Qt::IconKind::Via:     drawVia(p);               break;
     case Qt::IconKind::Satellite: drawSatellite(p);       break;
+    case Qt::IconKind::Signal:    drawSignal(p);          break;
     }
     p.restore();
 }

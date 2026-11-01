@@ -121,6 +121,17 @@ typedef struct {
     int           sim_speed_idx; /* 倍速档（SPEEDS[] 下标） */
     uint64_t      sim_tick;      /* 上一帧的时刻，用来算真实 dt */
 
+    /* ---- 外部定位信号源（NMEA 接入，抄 OsmAnd「Use NMEA as location source」）----
+     * 经 TCP/UDP/串口从外部 GNSS/蓝牙 GPS 接收机接来的 NMEA 流解析出的定位。
+     * ext_valid 时，定位接入点（locate / CH_LOCATE / 每帧跟随）优先用它；
+     * 天顶图也改用真实卫星（见 SkNmeaSource）。信号丢失（stale）则回退模拟。
+     * ★ 本块由 app_init 的 memset(a,0,...) 清零，无需单独初始化。 */
+    int    ext_on;        /* 用户是否启用外部信号接入（按钮开关） */
+    int    ext_valid;     /* 当前是否有可用定位（未 stale） */
+    double ext_lat, ext_lon, ext_alt, ext_speed, ext_course;
+    int    ext_fix_mode;  /* 0/1=无 2=2D 3=3D */
+    int    ext_nsats_used;
+
     /* ---- 无地图区域提示 ----
      * "关注点"（模拟导航中=车头位置，否则=视口中心）落到没有数据的地方时，
      * 顶部弹一条横幅告诉用户**这是哪儿**（国家/省/市/区）以及**该下哪一块**。

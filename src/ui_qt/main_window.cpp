@@ -7,9 +7,11 @@
 #include "settings/settings.h"  /* settings_set_int：切基准后落盘 */
 #include "download_dialog.h"     /* 下载地图对话框（全球 Geofabrik 列表） */
 #include "i18n/i18n.h"            /* 多语言：i18n_tr / i18n_set_lang / I18nLang */
+#include "nmea_source.h"           /* 外部定位信号源（NMEA over TCP/UDP/串口） */
 #include <QMessageBox>
 #include <QLocale>       /* 探测系统区域/语言（跨平台，无需 Win32 ifdef） */
 #include <QTimer>
+#include <QDateTime>     /* applyExtSignal 用当前时刻判 staleness */
 
 /* 多语言便捷封装：以中文为 key，按当前语言返回串（默认中文原样返回）。 */
 static QString trc(const char *zh) { return QString::fromUtf8(i18n_tr(zh)); }
@@ -19,6 +21,8 @@ static QString trc(const char *zh) { return QString::fromUtf8(i18n_tr(zh)); }
 #include <QSlider>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QComboBox>
 #include <QPushButton>
 #include <QMenu>
 #include <QToolBar>
@@ -125,6 +129,17 @@ MainWindow::MainWindow(App *a, QWidget *parent)
         }
     }
 
+    /* 外部信号接入：从设置读初始开关态（持久化到 extsig_on）。
+     * 必须在 buildRightCol 之后（按钮此时已建）。start() 里按需真正去连。 */
+    {
+        bool extOn = settings_get_int(m_a->cfg, "extsig_on", 0) != 0;
+        m_a->ext_on = extOn ? 1 : 0;
+        if (m_extBtn) {
+            QSignalBlocker blk(m_extBtn);
+            m_extBtn->setChecked(extOn);
+        }
+    }
+
     /* 地图点选途经点后：面板里的"刚加的那一行"立即出现（面板开着时才点得到）。 */
     m_canvas->m_onViaPicked = [this](double, double) { refreshViaPanel(); };
 
@@ -163,6 +178,9 @@ void MainWindow::start()
         if (m_satSource->available()) m_satSource->start();
     }
 #endif
+    /* 若设置里启用了外部 NMEA 信号接入，按已存配置（协议/地址/端口/串口）
+     * 自动连上；无可用配置则留待用户点按钮时弹配置框。 */
+    if (m_a->ext_on) connectExt();
     /* 启动后探测系统区域/语言：在事件循环起来后再弹窗（不阻塞 start 返回）。
      * --ui-test / --shot 不调用 start，故无头模式不会弹窗卡住。 */
     QTimer::singleShot(0, this, [this]() { checkSystemLanguage(); });
@@ -858,6 +876,38 @@ int MainWindow::runUiSelfTest()
         check(m_satBtn && !m_satBtn->isChecked(), "卫星天顶图：关闭后按钮取消勾选");
     }
 
+    /* 外部信号按钮：存在 + 有提示 + 「点击→toggled→开关 ext_on」接线。
+     * 先塞一个假连接配置，确保 toggleExtSignal 走 connectExt 分支（不会在无头
+     * 环境弹配置对话框卡死）。测完复原，避免污染设置。 */
+    {
+        check(m_extBtn != nullptr, "外部信号：按钮存在");
+        check(m_extBtn && !m_extBtn->toolTip().isEmpty(), "外部信号：按钮有悬停提示");
+
+        QString oldHost = QString::fromUtf8(settings_get_str(m_a->cfg, "extsig_host", ""));
+        int oldPort = settings_get_int(m_a->cfg, "extsig_port", 0);
+        settings_set_str(m_a->cfg, "extsig_host", "127.0.0.1");
+        settings_set_int(m_a->cfg, "extsig_port", 1);
+
+        m_a->ext_on = 0;
+        if (m_extBtn) { QSignalBlocker blk(m_extBtn); m_extBtn->setChecked(false); }
+
+        if (m_extBtn) { emit m_extBtn->toggled(true); QApplication::processEvents(); }
+        check(m_a->ext_on == 1, "外部信号：点击后 ext_on 翻转置 1");
+        check(m_extBtn && m_extBtn->isChecked(), "外部信号：开启后按钮勾选态一致");
+        check(settings_get_int(m_a->cfg, "extsig_on", -1) == 1,
+              "外部信号：切换同步落盘 extsig_on");
+
+        if (m_extBtn) { emit m_extBtn->toggled(false); QApplication::processEvents(); }
+        check(m_a->ext_on == 0, "外部信号：再点击即关闭");
+        check(m_extBtn && !m_extBtn->isChecked(), "外部信号：关闭后按钮取消勾选");
+
+        /* 复原设置，保持整洁（测试用隔离配置目录，但避免留下假配置） */
+        settings_set_str(m_a->cfg, "extsig_host", oldHost.toUtf8().constData());
+        settings_set_int(m_a->cfg, "extsig_port", oldPort);
+        settings_set_int(m_a->cfg, "extsig_on", 0);
+        app_persist_settings(m_a);
+    }
+
     if (fail == 0) {
         printf("QT-UI-OK\n");
         return 0;
@@ -1436,6 +1486,15 @@ void MainWindow::buildRightCol()
         toggleSatellite();
     });
 
+    /* 外部信号接入按钮（可勾选：亮起 = 从外部 GNSS/蓝牙 GPS 接收机经
+     * TCP/UDP/串口接 NMEA，作为「我的位置」并接管天顶图真实卫星）。
+     * 与卫星按钮同一套路：点击开关 + 持久化（extsig_on）。 */
+    m_extBtn = bigbtn(Qt::IconKind::Signal, trc("外部信号（NMEA 定位接入）"));
+    m_extBtn->setCheckable(true);
+    connect(m_extBtn, &QToolButton::toggled, this, [this](bool) {
+        toggleExtSignal();
+    });
+
     /* 菜单按钮：弹出与菜单栏同一份 QMenu。
        Qt 5.11 的 popup 只有 (pos, at) 两参，用 sizeHint 把菜单定位到按钮左侧，
        避免从最底钮向下弹出超出屏幕。 */
@@ -1458,6 +1517,7 @@ void MainWindow::buildRightCol()
     vl->addWidget(m_trackBtn);
     vl->addWidget(m_viaBtn);
     vl->addWidget(m_satBtn);
+    vl->addWidget(m_extBtn);
     vl->addWidget(m_menuBtn);
 
     /* 外观：底板/边框/悬停高亮全部由 IconButton::paintEvent 自绘
@@ -1560,7 +1620,8 @@ void MainWindow::layoutOverlays()
 
 void MainWindow::locate()
 {
-    if (m_a->sim_on) { m_a->view.lat = m_a->sim.car_lat; m_a->view.lon = m_a->sim.car_lon; }
+    if (m_a->ext_valid) { m_a->view.lat = m_a->ext_lat; m_a->view.lon = m_a->ext_lon; }
+    else if (m_a->sim_on) { m_a->view.lat = m_a->sim.car_lat; m_a->view.lon = m_a->sim.car_lon; }
     else if (m_a->pick_a.have) { m_a->view.lat = m_a->pick_a.lat; m_a->view.lon = m_a->pick_a.lon; }
     m_a->need_redraw = 1;
 }
@@ -1665,6 +1726,168 @@ void MainWindow::toggleSatellite()
         QSignalBlocker blk(m_satBtn);
         m_satBtn->setChecked(on);
     }
+}
+
+/* 外部信号接入按钮：开/关 NMEA 信号接入。
+ * 开启：若已有保存的连接配置（TCP/UDP 有 host+port，或串口有 device）则直接连；
+ *       否则弹配置框让用户填（用户确认后才连）。关闭：断开、复位 ext_valid、
+ *       天顶图回退模拟星座。持久化到 extsig_on。 */
+void MainWindow::toggleExtSignal()
+{
+    bool on = !m_a->ext_on;
+    m_a->ext_on = on ? 1 : 0;
+    settings_set_int(m_a->cfg, "extsig_on", on ? 1 : 0);
+    app_persist_settings(m_a);          /* 落盘 */
+
+    if (on) {
+        int proto = settings_get_int(m_a->cfg, "extsig_proto", 0);  /* 0 TCP 1 UDP 2 串口 */
+        QString host = QString::fromUtf8(settings_get_str(m_a->cfg, "extsig_host", ""));
+        int     port = settings_get_int(m_a->cfg, "extsig_port", 0);
+        QString dev  = QString::fromUtf8(settings_get_str(m_a->cfg, "extsig_dev", ""));
+        bool haveCfg = (proto == 2) ? !dev.isEmpty() : (!host.isEmpty() && port > 0);
+        if (haveCfg) connectExt();
+        else         showExtSignalDialog();   /* 没配过 → 弹框引导 */
+    } else {
+        if (m_nmea) m_nmea->disconnect();
+        m_a->ext_valid = 0;
+        m_extReal = false;
+        if (m_canvas && m_canvas->satModel())
+            m_canvas->satModel()->setSimulation(true);   /* 回退模拟星座 */
+    }
+    m_a->need_redraw = 1;
+    /* ★★ setChecked 会发 toggled → 又调回本函数 ⇒ 无限递归；用 QSignalBlocker 堵。 */
+    if (m_extBtn) {
+        QSignalBlocker blk(m_extBtn);
+        m_extBtn->setChecked(on);
+    }
+}
+
+/* 按设置里保存的协议/地址/端口/串口建立外部信号连接。
+ * 真实数据由 tick() 里的 applyExtSignal() 每帧灌进 App 与天顶图模型。 */
+void MainWindow::connectExt()
+{
+    if (!m_nmea) m_nmea = new SkNmeaSource(this);
+
+    int proto = settings_get_int(m_a->cfg, "extsig_proto", 0);
+    QString host = QString::fromUtf8(settings_get_str(m_a->cfg, "extsig_host", ""));
+    int     port = settings_get_int(m_a->cfg, "extsig_port", 0);
+    QString dev  = QString::fromUtf8(settings_get_str(m_a->cfg, "extsig_dev", ""));
+    int     baud = settings_get_int(m_a->cfg, "extsig_baud", 4800);
+
+    SkNmeaSource::Proto p = (proto == 1) ? SkNmeaSource::PROTO_UDP
+                       : (proto == 2) ? SkNmeaSource::PROTO_SERIAL
+                                      : SkNmeaSource::PROTO_TCP;
+    m_nmea->connectTo(p, host, port, dev, baud);
+    if (!m_nmea->active() && !m_nmea->errorString().isEmpty())
+        qWarning("外部信号连接失败：%s", m_nmea->errorString().toUtf8().constData());
+}
+
+/* 每帧把外部定位/卫星接入 App 与天顶图模型；信号丢失（stale）则回退模拟。
+ * 由 MainWindow::tick() 在 m_canvas->tick() 之后调用。 */
+void MainWindow::applyExtSignal()
+{
+    if (!m_a->ext_on || !m_nmea) {
+        if (m_a->ext_valid) {       /* 关了但 App 还记着有效 → 复位 */
+            m_a->ext_valid = 0;
+            m_extReal = false;
+            if (m_canvas && m_canvas->satModel())
+                m_canvas->satModel()->setSimulation(true);
+            m_a->need_redraw = 1;
+        }
+        return;
+    }
+
+    qint64 now = QDateTime::currentMSecsSinceEpoch();
+    m_nmea->consume();               /* 清 dirty 标记（有新数据则已更新 m_fix/m_sats） */
+
+    if (m_nmea->stale(now, 4000)) {  /* 4s 无定位刷新 → 判为信号丢失 */
+        if (m_a->ext_valid) {
+            m_a->ext_valid = 0;
+            m_extReal = false;
+            if (m_canvas && m_canvas->satModel())
+                m_canvas->satModel()->setSimulation(true);   /* 回退模拟星座 */
+            m_a->need_redraw = 1;
+        }
+        return;
+    }
+
+    const SkNmeaFix &f = m_nmea->fix();
+    if (f.valid) {
+        m_a->ext_lat     = f.lat;
+        m_a->ext_lon     = f.lon;
+        m_a->ext_alt     = f.alt_m;
+        m_a->ext_speed   = f.speed_ms;
+        m_a->ext_course  = f.course_deg;
+        m_a->ext_fix_mode = f.mode ? f.mode : (f.quality > 0 ? 2 : 0);
+        m_a->ext_nsats_used = f.nsats_used;
+        m_a->ext_valid   = 1;
+        /* 接管天顶图：喂真实卫星，关模拟。 */
+        if (m_canvas && m_canvas->satModel()) {
+            m_canvas->satModel()->setRealSatellites(m_nmea->sats());
+            m_canvas->satModel()->setSimulation(false);
+            m_extReal = true;
+        }
+        m_a->need_redraw = 1;
+    }
+}
+
+/* 外部信号连接配置对话框：协议（TCP/UDP/串口）+ 地址/端口/设备/波特。
+ * 确认后持久化到 extsig_* 设置并立即连接；取消则不动。 */
+void MainWindow::showExtSignalDialog()
+{
+    QDialog dlg(this);
+    dlg.setWindowTitle(trc("外部信号接入设置"));
+    dlg.setMinimumWidth(380);
+    auto *vl = new QVBoxLayout(&dlg);
+
+    int proto = settings_get_int(m_a->cfg, "extsig_proto", 0);
+    QString host = QString::fromUtf8(settings_get_str(m_a->cfg, "extsig_host", ""));
+    int     port = settings_get_int(m_a->cfg, "extsig_port", 0);
+    QString dev  = QString::fromUtf8(settings_get_str(m_a->cfg, "extsig_dev", ""));
+    int     baud = settings_get_int(m_a->cfg, "extsig_baud", 4800);
+
+    auto *form = new QFormLayout();
+    auto *protoCb = new QComboBox();
+    protoCb->addItems(QStringList() << trc("TCP") << trc("UDP") << trc("串口"));
+    protoCb->setCurrentIndex(proto);
+    auto *hostLe = new QLineEdit(host);     hostLe->setPlaceholderText(trc("主机地址（TCP/UDP）"));
+    auto *portLe = new QLineEdit(port ? QString::number(port) : QString());
+    portLe->setPlaceholderText(trc("端口（TCP/UDP）"));
+    auto *devLe  = new QLineEdit(dev);      devLe->setPlaceholderText(trc("串口设备（如 COM3 / /dev/ttyUSB0）"));
+    auto *baudLe = new QLineEdit(QString::number(baud));
+    baudLe->setPlaceholderText(trc("波特率（串口）"));
+    form->addRow(trc("协议"), protoCb);
+    form->addRow(trc("主机"), hostLe);
+    form->addRow(trc("端口"), portLe);
+    form->addRow(trc("串口设备"), devLe);
+    form->addRow(trc("波特率"), baudLe);
+    vl->addLayout(form);
+
+    auto *hint = new QLabel(trc("从外部 GNSS / 蓝牙 GPS 接收机接 NMEA-0183 流：\n"
+                               "TCP/UDP 填接收机或转发软件（如 gpsd、OsmAnd 的 NMEA 输出）监听的地址与端口；\n"
+                               "串口填本机连接的 GPS 模块设备。"));
+    hint->setWordWrap(true);
+    vl->addWidget(hint);
+
+    auto *bbox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    vl->addWidget(bbox);
+    connect(bbox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(bbox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    proto = protoCb->currentIndex();
+    host  = hostLe->text().trimmed();
+    port  = portLe->text().toInt();
+    dev   = devLe->text().trimmed();
+    baud  = baudLe->text().toInt();
+    settings_set_int(m_a->cfg, "extsig_proto", proto);
+    settings_set_str(m_a->cfg, "extsig_host", host.toUtf8().constData());
+    settings_set_int(m_a->cfg, "extsig_port", port);
+    settings_set_str(m_a->cfg, "extsig_dev", dev.toUtf8().constData());
+    settings_set_int(m_a->cfg, "extsig_baud", baud);
+    app_persist_settings(m_a);
+    connectExt();
 }
 
 /* 昼夜三态换算：把 day_night_mode（0 白天 / 1 夜间 / 2 自动）写成有效
@@ -2397,6 +2620,7 @@ void MainWindow::refreshSteps()
 void MainWindow::tick()
 {
     m_canvas->tick();                    /* 收割/推进/按需渲染 */
+    applyExtSignal();                    /* 外部 NMEA 定位信号接入（每帧刷新 App 定位 + 天顶图卫星） */
     refreshSteps();
 
     /* 浏览到已下载区域外 → 自动弹窗提示下载（一次性，回到有图才复位）。
@@ -2547,6 +2771,7 @@ void MainWindow::retranslateUi()
     if (m_dayBtn)  m_dayBtn->setToolTip(trc("昼 / 夜 切换"));
     if (m_menuBtn) m_menuBtn->setToolTip(trc("主菜单"));
     if (m_satBtn)  m_satBtn->setToolTip(trc("卫星天顶图（信号强弱 / 定位状态）"));
+    if (m_extBtn)  m_extBtn->setToolTip(trc("外部信号（NMEA 定位接入）"));
     updateDatumTip();   /* 坐标网按钮提示随语言刷新 */
 
     /* 搜索浮层 */
@@ -2751,6 +2976,9 @@ void MainWindow::handleKey(int key)
         m_a->voice_on = !m_a->voice_on;
         if (m_voiceAct) m_voiceAct->setChecked(m_a->voice_on);
         m_a->need_redraw = 1;
+        break;
+    case Qt::Key_X:
+        toggleExtSignal();   /* 外部信号接入开/关（与右栏按钮同一入口） */
         break;
     default:
         if (key >= Qt::Key_0 && key <= Qt::Key_4) {
