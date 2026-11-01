@@ -80,7 +80,7 @@ done
 cat > "$DIST/start.bat" <<'EOF'
 @echo off
 cd /d "%~dp0"
-skedaddle.exe --graph=E:/navimap/products/graph/beijing
+skedaddle.exe --graph=..\..\products\graph\beijing
 EOF
 
 cat > "$DIST/README.txt" <<'EOF'
@@ -88,7 +88,7 @@ skedaddle Release 版
 ====================
 
 【运行】双击 start.bat，自动加载本机已有的北京地图
-（E:/navimap/products/graph/beijing，约 370MB，由 sync_maps.sh 生成）。
+（本仓库 products/graph/beijing，约 370MB，由 sync_maps.sh 生成）。
 或自己指定地图目录：  skedaddle.exe --graph=<地图目录>
 
 【操作】视图菜单勾选「等高线」或按 O 键开关等高线；

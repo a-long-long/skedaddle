@@ -31,7 +31,7 @@ rem   script use "$@" so argument boundaries survive intact.
 rem ===========================================================================
 setlocal
 set "MSYS_SH=D:\msys64\usr\bin\sh.exe"
-set "RETRY_SH=E:\navimap\scripts\cc_retry.sh"
+set "RETRY_SH=%~dp0cc_retry.sh"
 if not exist "%MSYS_SH%" (
     echo build_launcher.bat: cannot find %MSYS_SH% 1>&2
     exit /b 2
