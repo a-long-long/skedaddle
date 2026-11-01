@@ -68,10 +68,10 @@ int route_check(Router *r, const RouteResult *rr)
             fail = 1;
             continue;
         }
-        const uint8_t *er = s->edges.data + ei * NM_EDGE_BYTES;
-        if (nm_get_u32(er + EF_TO) != b.node) {
+        const uint8_t *er = s->edges.data + ei * SK_EDGE_BYTES;
+        if (sk_get_u32(er + EF_TO) != b.node) {
             printf("ASSERT-FAIL 段 %u 边终点 %u != 路径点 %u\n",
-                   i, nm_get_u32(er + EF_TO), b.node);
+                   i, sk_get_u32(er + EF_TO), b.node);
             fail = 1;
             continue;
         }
@@ -95,7 +95,7 @@ int route_check(Router *r, const RouteResult *rr)
             printf("ASSERT-FAIL 段 %u 边终点坐标与路径点不符\n", i);
             fail = 1;
         }
-        uint32_t dcm = nm_get_u32(er + EF_DIST_CM);
+        uint32_t dcm = sk_get_u32(er + EF_DIST_CM);
         if (llabs((long long)(dcm / 100) - (long long)rr->seg_m[i]) > 1) {
             printf("ASSERT-FAIL 段 %u 长度 %u m != 记录 %u cm\n",
                    i, rr->seg_m[i], dcm);

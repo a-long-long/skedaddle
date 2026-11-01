@@ -16,8 +16,8 @@
  *   "只淡底板、文字保持清晰"）。pct<=0 ⇒ 整个按钮不画（该浮层隐藏）。
  *   之前用的是 QGraphicsOpacityEffect，会把图标和文字一起淡掉。
  */
-#ifndef NAVIMAP_QT_ICON_BUTTON_HPP
-#define NAVIMAP_QT_ICON_BUTTON_HPP
+#ifndef SKEDADDLE_QT_ICON_BUTTON_HPP
+#define SKEDADDLE_QT_ICON_BUTTON_HPP
 
 #include <QToolButton>
 #include <QPainter>

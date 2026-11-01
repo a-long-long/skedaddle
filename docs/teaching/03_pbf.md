@@ -369,7 +369,7 @@ const char *pbf_str(PbfBlock *b, uint32_t sid)
 ## 四、与其他功能之间的联系
 
 - **下游 · 第 4 课（自描述二进制）与第 5 课（建图）**：所有消费 PBF 的工具与建图代码都走同一循环 `while (pbf_stream_next(...)==PBF_OK) { if OSMData: pbf_unpack_block }`：
-  - `map/graph_build.c` —— 建路网图（DenseNodes delta 累积 + `pbf_to_e7`，配合 `nm_fast_dist_m` 算边权）。
+  - `map/graph_build.c` —— 建路网图（DenseNodes delta 累积 + `pbf_to_e7`，配合 `sk_fast_dist_m` 算边权）。
   - `map/pbfmap.c` —— 主解码阶段（第 12 课 Qt 前端的显示层数据源）。
   - `tools/places_build.c` —— 地名/POI（第 9 课）。
   - `tools/tag_stats.c`、`skedaddle_restr_probe.c`、`skedaddle_pbf_info.c` —— 标签统计与转向限制探测。

@@ -22,7 +22,7 @@ static int  src_load_disp_tiles(MapSrc *s, const int32_t eb[4]);
 static int manifest_bbox(const char *dir, int32_t out[4])
 {
     char p[4096];
-    if (nm_path_join(p, sizeof(p), dir, "manifest.txt") != 0) return -1;
+    if (sk_path_join(p, sizeof(p), dir, "manifest.txt") != 0) return -1;
     FILE *f = fopen(p, "r");
     if (!f) return -1;
     char line[512];
@@ -219,38 +219,38 @@ static int src_load_disp_tiles(MapSrc *s, const int32_t eb[4])
         }
         /* areas：复制并把 ref_off 重基到整段 dp（np = 本 tile polyrefs 起点） */
         if (ka) {
-            size_t need_a = (size_t)(na + ka) * NM_AREA_BYTES;
+            size_t need_a = (size_t)(na + ka) * SK_AREA_BYTES;
             if (need_a > cap_a) {
                 cap_a = need_a * 2 + 4096;
                 uint8_t *t = realloc(da, cap_a);
                 if (!t) { nmbin_close(&A); nmbin_close(&L); nmbin_close(&P); goto oom; }
                 da = t;
             }
-            uint8_t *out = da + (size_t)na * NM_AREA_BYTES;
+            uint8_t *out = da + (size_t)na * SK_AREA_BYTES;
             for (uint64_t j = 0; j < ka; j++) {
-                const uint8_t *rec = A.data + j * NM_AREA_BYTES;
-                memcpy(out, rec, NM_AREA_BYTES);
-                uint32_t ro = nm_get_u32(rec + AF_REF_OFF);
-                nm_put_u32(out + AF_REF_OFF, (uint32_t)((uint64_t)np + ro));
-                out += NM_AREA_BYTES;
+                const uint8_t *rec = A.data + j * SK_AREA_BYTES;
+                memcpy(out, rec, SK_AREA_BYTES);
+                uint32_t ro = sk_get_u32(rec + AF_REF_OFF);
+                sk_put_u32(out + AF_REF_OFF, (uint32_t)((uint64_t)np + ro));
+                out += SK_AREA_BYTES;
             }
         }
         /* lines：同 areas */
         if (kl) {
-            size_t need_l = (size_t)(nl + kl) * NM_LINE_BYTES;
+            size_t need_l = (size_t)(nl + kl) * SK_LINE_BYTES;
             if (need_l > cap_l) {
                 cap_l = need_l * 2 + 4096;
                 uint8_t *t = realloc(dl, cap_l);
                 if (!t) { nmbin_close(&A); nmbin_close(&L); nmbin_close(&P); goto oom; }
                 dl = t;
             }
-            uint8_t *out = dl + (size_t)nl * NM_LINE_BYTES;
+            uint8_t *out = dl + (size_t)nl * SK_LINE_BYTES;
             for (uint64_t j = 0; j < kl; j++) {
-                const uint8_t *rec = L.data + j * NM_LINE_BYTES;
-                memcpy(out, rec, NM_LINE_BYTES);
-                uint32_t ro = nm_get_u32(rec + LF_REF_OFF);
-                nm_put_u32(out + LF_REF_OFF, (uint32_t)((uint64_t)np + ro));
-                out += NM_LINE_BYTES;
+                const uint8_t *rec = L.data + j * SK_LINE_BYTES;
+                memcpy(out, rec, SK_LINE_BYTES);
+                uint32_t ro = sk_get_u32(rec + LF_REF_OFF);
+                sk_put_u32(out + LF_REF_OFF, (uint32_t)((uint64_t)np + ro));
+                out += SK_LINE_BYTES;
             }
         }
         nmbin_close(&A); nmbin_close(&L); nmbin_close(&P);
@@ -269,14 +269,14 @@ static int src_load_disp_tiles(MapSrc *s, const int32_t eb[4])
     free(s->area_bbox); s->area_bbox = NULL;
     free(s->line_bbox); s->line_bbox = NULL;
 
-    s->dareas = da; s->dea = (size_t)na * NM_AREA_BYTES;
-    s->dlines = dl; s->del = (size_t)nl * NM_LINE_BYTES;
+    s->dareas = da; s->dea = (size_t)na * SK_AREA_BYTES;
+    s->dlines = dl; s->del = (size_t)nl * SK_LINE_BYTES;
     s->dpoly  = dp; s->depo = (size_t)np * 4;
 
     s->areas.data = da; s->areas.hdr.rec_count = na;
-    s->areas.hdr.rec_size = NM_AREA_BYTES; s->areas.mapped = 0; s->areas.data_len = s->dea;
+    s->areas.hdr.rec_size = SK_AREA_BYTES; s->areas.mapped = 0; s->areas.data_len = s->dea;
     s->lines.data = dl; s->lines.hdr.rec_count = nl;
-    s->lines.hdr.rec_size = NM_LINE_BYTES; s->lines.mapped = 0; s->lines.data_len = s->del;
+    s->lines.hdr.rec_size = SK_LINE_BYTES; s->lines.mapped = 0; s->lines.data_len = s->del;
     s->polyrefs.data = dp; s->polyrefs.hdr.rec_count = np;
     s->polyrefs.hdr.rec_size = 4; s->polyrefs.mapped = 0; s->polyrefs.data_len = s->depo;
     s->has_features = (na + nl > 0) ? 1 : 0;
@@ -526,7 +526,7 @@ static void src_unload(MapSrc *s)
 
 static inline int xl_is_v2(const MapSrc *s)
 {
-    return s->edgelist.hdr.rec_size == NM_XL2_BYTES;
+    return s->edgelist.hdr.rec_size == SK_XL2_BYTES;
 }
 
 /* 条目 pos 的 from 端坐标键；下标越界返回 ~0（调用方据 ck 比较自然判掉） */
@@ -534,12 +534,12 @@ static uint64_t xl_from_key(const MapSrc *s, uint64_t pos)
 {
     const uint8_t *xl = s->edgelist.data + pos * s->edgelist.hdr.rec_size;
     if (xl_is_v2(s))
-        return coord_key_e7(nm_get_i32(xl + XL2_FROM_LAT),
-                            nm_get_i32(xl + XL2_FROM_LON));
-    uint32_t from = nm_get_u32(xl + XL_NODE);
+        return coord_key_e7(sk_get_i32(xl + XL2_FROM_LAT),
+                            sk_get_i32(xl + XL2_FROM_LON));
+    uint32_t from = sk_get_u32(xl + XL_NODE);
     if ((uint64_t)from >= s->nodes.hdr.rec_count) return ~0ULL;
-    const uint8_t *nr = s->nodes.data + (uint64_t)from * NM_NODE_BYTES;
-    return coord_key_e7(nm_get_i32(nr + NF_LAT), nm_get_i32(nr + NF_LON));
+    const uint8_t *nr = s->nodes.data + (uint64_t)from * SK_NODE_BYTES;
+    return coord_key_e7(sk_get_i32(nr + NF_LAT), sk_get_i32(nr + NF_LON));
 }
 
 /* 条目 pos 的 {from 节点下标, CSR 边下标}；越界返回 0 */
@@ -547,11 +547,11 @@ static int xl_entry(const MapSrc *s, uint64_t pos, uint32_t *from, uint32_t *eid
 {
     const uint8_t *xl = s->edgelist.data + pos * s->edgelist.hdr.rec_size;
     if (xl_is_v2(s)) {
-        *from = nm_get_u32(xl + XL2_NODE);
-        *eidx = nm_get_u32(xl + XL2_EDGE);
+        *from = sk_get_u32(xl + XL2_NODE);
+        *eidx = sk_get_u32(xl + XL2_EDGE);
     } else {
-        *from = nm_get_u32(xl + XL_NODE);
-        *eidx = nm_get_u32(xl + XL_EDGE);
+        *from = sk_get_u32(xl + XL_NODE);
+        *eidx = sk_get_u32(xl + XL_EDGE);
     }
     return ((uint64_t)*from < s->nodes.hdr.rec_count &&
             (uint64_t)*eidx < s->edges.hdr.rec_count);
@@ -561,18 +561,18 @@ static int tile_has_coord(const MapSrc *s, int tx, int ty, uint64_t ck)
 {
     if (!s->has_tiles) return 0;
     const uint8_t *td = s->tiles.data;
-    uint32_t minx = nm_get_u32(td + TF_EDGE_OFF);
-    uint32_t miny = nm_get_u32(td + TF_EDGE_CNT);
-    uint32_t nx   = nm_get_u32(td + NM_TILE_REC_BYTES + TF_EDGE_OFF);
-    uint32_t ny   = nm_get_u32(td + NM_TILE_REC_BYTES + TF_EDGE_CNT);
+    uint32_t minx = sk_get_u32(td + TF_EDGE_OFF);
+    uint32_t miny = sk_get_u32(td + TF_EDGE_CNT);
+    uint32_t nx   = sk_get_u32(td + SK_TILE_REC_BYTES + TF_EDGE_OFF);
+    uint32_t ny   = sk_get_u32(td + SK_TILE_REC_BYTES + TF_EDGE_CNT);
     if (tx < (int)minx || ty < (int)miny ||
         tx >= (int)(minx + nx) || ty >= (int)(miny + ny))
         return 0;
     if ((uint64_t)nx * ny > s->tiles.hdr.rec_count - 2) return 0;
     size_t t = ((size_t)(ty - miny) * nx) + (tx - minx);
-    const uint8_t *dir = td + (2 + t) * NM_TILE_REC_BYTES;
-    uint32_t off = nm_get_u32(dir + TF_EDGE_OFF);
-    uint32_t cnt = nm_get_u32(dir + TF_EDGE_CNT);
+    const uint8_t *dir = td + (2 + t) * SK_TILE_REC_BYTES;
+    uint32_t off = sk_get_u32(dir + TF_EDGE_OFF);
+    uint32_t cnt = sk_get_u32(dir + TF_EDGE_CNT);
     uint64_t ne = s->edgelist.hdr.rec_count;
     for (uint32_t k = 0; k < cnt; k++) {
         uint64_t pos = (uint64_t)off + k;
@@ -586,8 +586,8 @@ int mapset_detail_prov(const MapSet *ms, int32_t lat_e7, int32_t lon_e7,
                        int fallback)
 {
     double wx, wy;
-    nm_mercator((double)lat_e7 / 1e7, (double)lon_e7 / 1e7, &wx, &wy);
-    double Z = (double)(1u << NM_TILE_Z);
+    sk_mercator((double)lat_e7 / 1e7, (double)lon_e7 / 1e7, &wx, &wy);
+    double Z = (double)(1u << SK_TILE_Z);
     int tx = (int)(wx * Z), ty = (int)(wy * Z);
     uint64_t ck = coord_key_e7(lat_e7, lon_e7);
 
@@ -638,8 +638,8 @@ static void detect_duplicates(MapSet *ms)
                 if (ck == ~0ULL) continue;
                 int32_t la = coord_key_lat(ck), lo = coord_key_lon(ck);
                 double wx, wy;
-                nm_mercator((double)la / 1e7, (double)lo / 1e7, &wx, &wy);
-                double Z = (double)(1u << NM_TILE_Z);
+                sk_mercator((double)la / 1e7, (double)lo / 1e7, &wx, &wy);
+                double Z = (double)(1u << SK_TILE_Z);
                 int tx = (int)(wx * Z), ty = (int)(wy * Z);
                 tested++;
                 if (tile_has_coord(b, tx, ty, ck)) hit++;
@@ -695,14 +695,14 @@ int mapset_load(MapSet *ms, const char *graph_dir)
     memset(ms, 0, sizeof(*ms));
 
     /* PBF 显示层后台解码：建锁 + 初始空闲任务槽（job_prov=-1 表示无在途）。 */
-    ms->dmap_mtx = nm_mutex_create();
+    ms->dmap_mtx = sk_mutex_create();
     ms->job_prov = -1;
 
     /* 单省目录：下面直接有 nodes.bin */
     char p[4096];
-    if (nm_path_join(p, sizeof(p), graph_dir, "nodes.bin") == 0 &&
-        nm_file_exists(p)) {
-        const char *nm = nm_base_name(graph_dir);
+    if (sk_path_join(p, sizeof(p), graph_dir, "nodes.bin") == 0 &&
+        sk_file_exists(p)) {
+        const char *nm = sk_base_name(graph_dir);
         if (mapset_add(ms, graph_dir, nm) != 0) {
             fprintf(stderr, "图集: %s 加载失败\n", graph_dir);
             return -1;
@@ -714,33 +714,33 @@ int mapset_load(MapSet *ms, const char *graph_dir)
        先收集名字再排序，保证加载顺序（以及日志）可复现。 */
     char **names = NULL;
     int nn = 0, cap = 0;
-    NmDir *d = nm_dir_open(graph_dir);
+    SkDir *d = sk_dir_open(graph_dir);
     if (!d) {
         fprintf(stderr, "图集: 既不是省目录也没有 nodes.bin：%s\n", graph_dir);
         return -1;
     }
     const char *de;
-    while ((de = nm_dir_next(d)) != NULL) {
+    while ((de = sk_dir_next(d)) != NULL) {
         if (de[0] == '.') continue;
         /* 跳过 sync_maps 的过渡目录：.tmp.* 是转换中的半成品，.old.* 是已换下、
            删除失败时留下的旧产物。两者都含 manifest.txt，不排除就会被当成
            一个"省"加载进来 —— 同一份数据装两遍（内存翻倍 + 渲染重复）。 */
         if (strstr(de, ".tmp.")) continue;
         if (strstr(de, ".old.")) continue;
-        if (nm_path_join(p, sizeof(p), graph_dir, de) != 0) continue;
-        if (!nm_is_dir(p)) continue;
+        if (sk_path_join(p, sizeof(p), graph_dir, de) != 0) continue;
+        if (!sk_is_dir(p)) continue;
         char mf[4096];
-        if (nm_path_join(mf, sizeof(mf), p, "manifest.txt") != 0) continue;
-        if (!nm_file_exists(mf)) continue;    /* 没有产物指纹的不算省 */
+        if (sk_path_join(mf, sizeof(mf), p, "manifest.txt") != 0) continue;
+        if (!sk_file_exists(mf)) continue;    /* 没有产物指纹的不算省 */
         if (nn == cap) {
             cap = cap ? cap * 2 : 16;
             char **t = realloc(names, (size_t)cap * sizeof(char *));
             if (!t) break;
             names = t;
         }
-        names[nn++] = nm_strdup(de);
+        names[nn++] = sk_strdup(de);
     }
-    nm_dir_close(d);
+    sk_dir_close(d);
 
     if (nn == 0) {
         fprintf(stderr, "图集: %s 下没有含 manifest.txt 的省目录\n", graph_dir);
@@ -750,7 +750,7 @@ int mapset_load(MapSet *ms, const char *graph_dir)
 
     int ok = 0;
     for (int i = 0; i < nn; i++) {
-        if (nm_path_join(p, sizeof(p), graph_dir, names[i]) == 0 &&
+        if (sk_path_join(p, sizeof(p), graph_dir, names[i]) == 0 &&
             mapset_add(ms, p, names[i]) == 0) ok++;
         free(names[i]);
     }
@@ -868,7 +868,7 @@ void mapset_ensure_loaded(MapSet *ms, int prov)
 int mapset_enable_pbf_display(MapSet *ms, const char *pbf_dir, int lru_cap)
 {
     if (!ms || !pbf_dir) return -1;
-    if (!nm_is_dir(pbf_dir)) return -1;
+    if (!sk_is_dir(pbf_dir)) return -1;
     snprintf(ms->pbf_dir, sizeof(ms->pbf_dir), "%s", pbf_dir);
     ms->dmap_lru_cap = lru_cap > 0 ? lru_cap : 3;
     ms->dmap_clock = 0;
@@ -890,7 +890,7 @@ int mapset_enable_pbf_display(MapSet *ms, const char *pbf_dir, int lru_cap)
     /* 预热：立即起后台解码线程（线程空转直到派发任务）。省得首进省时才 spawn，
      * 让解码在视口进省的第一帧就已在途，进一步压低感知延迟。 */
     if (ms->dmap_mtx && !ms->dmap_worker_started) {
-        nm_thread_spawn(dmap_worker, ms);
+        sk_thread_spawn(dmap_worker, ms);
         ms->dmap_worker_started = 1;
     }
     return 0;
@@ -908,8 +908,8 @@ int mapset_ensure_display(MapSet *ms, int prov)
     char nm[512];
     int k = snprintf(nm, sizeof(nm), "%s.osm.pbf", s->name);
     if (k <= 0 || (size_t)k >= sizeof(nm) ||
-        nm_path_join(pbf, sizeof(pbf), ms->pbf_dir, nm) != 0) return -1;
-    if (!nm_file_exists(pbf)) return -1;
+        sk_path_join(pbf, sizeof(pbf), ms->pbf_dir, nm) != 0) return -1;
+    if (!sk_file_exists(pbf)) return -1;
 
     PbfMap m;
     if (pbfmap_decode(pbf, &s->nodes, &m, NULL, NULL) != 0) return -1;
@@ -934,9 +934,9 @@ int mapset_dmap_progress(const MapSet *ms, int prov)
     const MapSrc *s = &ms->srcs[prov];
     int p = 0;
     if (ms->dmap_mtx) {
-        nm_mutex_lock(ms->dmap_mtx);
+        sk_mutex_lock(ms->dmap_mtx);
         p = s->dmap_progress;
-        nm_mutex_unlock(ms->dmap_mtx);
+        sk_mutex_unlock(ms->dmap_mtx);
     } else {
         p = s->dmap_progress;
     }
@@ -952,15 +952,15 @@ int mapset_dmap_progress(const MapSet *ms, int prov)
 static void mapset_publish_display(MapSet *ms)
 {
     if (!ms->dmap_mtx) return;
-    nm_mutex_lock(ms->dmap_mtx);
-    if (!ms->job_done) { nm_mutex_unlock(ms->dmap_mtx); return; }
+    sk_mutex_lock(ms->dmap_mtx);
+    if (!ms->job_done) { sk_mutex_unlock(ms->dmap_mtx); return; }
 
     int      p   = ms->job_done_prov;
     PbfMap   res = ms->job_result;
     int      ok  = ms->job_ok;
     ms->job_done = 0;
     memset(&ms->job_result, 0, sizeof(PbfMap));   /* 缓冲所有权已交出 */
-    nm_mutex_unlock(ms->dmap_mtx);
+    sk_mutex_unlock(ms->dmap_mtx);
 
     if (p < 0 || p >= ms->n) return;
     MapSrc *s = &ms->srcs[p];
@@ -989,19 +989,19 @@ static void mapset_dispatch_display(MapSet *ms, int prov)
     MapSrc *s = &ms->srcs[prov];
     if (s->dmap_from_pbf || s->dmap_failed || s->dmap_inflight) return;
 
-    nm_mutex_lock(ms->dmap_mtx);
+    sk_mutex_lock(ms->dmap_mtx);
     if (ms->job_prov >= 0 || ms->job_done) {       /* 已有在途/待发布，本帧不重复派发 */
-        nm_mutex_unlock(ms->dmap_mtx);
+        sk_mutex_unlock(ms->dmap_mtx);
         return;
     }
     ms->job_prov = prov;
     s->dmap_inflight = 1;
     s->dmap_progress = 0;       /* 解码开始，进度从 0 爬升 */
     if (!ms->dmap_worker_started) {
-        nm_thread_spawn(dmap_worker, ms);
+        sk_thread_spawn(dmap_worker, ms);
         ms->dmap_worker_started = 1;
     }
-    nm_mutex_unlock(ms->dmap_mtx);
+    sk_mutex_unlock(ms->dmap_mtx);
 }
 
 /* 后台解码进度回调上下文：把 pbfmap_decode 回报的 frac 写到对应省的
@@ -1013,9 +1013,9 @@ static void dmap_progress_cb(void *ud, double frac)
     DmapCbCtx *c = (DmapCbCtx *)ud;
     MapSet *ms = c->ms;
     MapSrc *s = &ms->srcs[c->prov];
-    if (ms->dmap_mtx) nm_mutex_lock(ms->dmap_mtx);
+    if (ms->dmap_mtx) sk_mutex_lock(ms->dmap_mtx);
     s->dmap_progress = (int)(frac * 100.0 + 0.5);
-    if (ms->dmap_mtx) nm_mutex_unlock(ms->dmap_mtx);
+    if (ms->dmap_mtx) sk_mutex_unlock(ms->dmap_mtx);
 }
 
 /* 后台解码线程：轮询任务槽（无 condvar，解码本身 0.6~4.4s，4ms 轮询延迟可忽略），
@@ -1025,33 +1025,33 @@ static void dmap_worker(void *arg)
 {
     MapSet *ms = (MapSet *)arg;
     for (;;) {
-        nm_sleep_ms(4);
-        nm_mutex_lock(ms->dmap_mtx);
-        if (ms->dmap_quit) { nm_mutex_unlock(ms->dmap_mtx); break; }
+        sk_sleep_ms(4);
+        sk_mutex_lock(ms->dmap_mtx);
+        if (ms->dmap_quit) { sk_mutex_unlock(ms->dmap_mtx); break; }
         int p = ms->job_prov;
         int have = (p >= 0 && !ms->job_done);
-        nm_mutex_unlock(ms->dmap_mtx);
+        sk_mutex_unlock(ms->dmap_mtx);
         if (!have) continue;
 
         int    ok = 0;
         PbfMap m; memset(&m, 0, sizeof(m));
         if (p < ms->n && ms->srcs[p].loaded) {
             MapSrc *s = &ms->srcs[p];
-            char pbf[4096], nm_[512];
-            int k = snprintf(nm_, sizeof(nm_), "%s.osm.pbf", s->name);
-            if (k > 0 && (size_t)k < sizeof(nm_) &&
-                nm_path_join(pbf, sizeof(pbf), ms->pbf_dir, nm_) == 0 &&
-                nm_file_exists(pbf)) {
+            char pbf[4096], sk_[512];
+            int k = snprintf(sk_, sizeof(sk_), "%s.osm.pbf", s->name);
+            if (k > 0 && (size_t)k < sizeof(sk_) &&
+                sk_path_join(pbf, sizeof(pbf), ms->pbf_dir, sk_) == 0 &&
+                sk_file_exists(pbf)) {
                 DmapCbCtx cbctx = { ms, p };
                 ok = (pbfmap_decode(pbf, &s->nodes, &m, dmap_progress_cb,
                                    &cbctx) == 0);
             }
         }
 
-        nm_mutex_lock(ms->dmap_mtx);
+        sk_mutex_lock(ms->dmap_mtx);
         if (ms->dmap_quit) {            /* 让出：放弃半成品，不发布 */
             if (!ok) pbfmap_free(&m);
-            nm_mutex_unlock(ms->dmap_mtx);
+            sk_mutex_unlock(ms->dmap_mtx);
             break;
         }
         ms->job_result    = m;
@@ -1059,7 +1059,7 @@ static void dmap_worker(void *arg)
         ms->job_done      = 1;
         ms->job_done_prov = p;
         ms->job_prov      = -1;         /* 释放任务槽，主线程可派发下一省 */
-        nm_mutex_unlock(ms->dmap_mtx);
+        sk_mutex_unlock(ms->dmap_mtx);
     }
     ms->dmap_stopped = 1;
 }
@@ -1072,10 +1072,10 @@ void mapset_free(MapSet *ms)
     if (ms->dmap_worker_started) {
         ms->dmap_quit = 1;
         for (int i = 0; i < 2000 && !ms->dmap_stopped; i++)
-            nm_sleep_ms(5);
+            sk_sleep_ms(5);
     }
     if (ms->dmap_mtx) {
-        nm_mutex_destroy(ms->dmap_mtx);
+        sk_mutex_destroy(ms->dmap_mtx);
         ms->dmap_mtx = NULL;
     }
     for (int i = 0; i < ms->n; i++)
@@ -1102,7 +1102,7 @@ const char *mapset_edge_lanes(const MapSet *ms, int prov, uint32_t edge)
     const MapSrc *s = &ms->srcs[prov];
     if (!s->loaded || !s->has_lanes || !s->lnp.ready || !s->lanes.data) return NULL;
     if ((uint64_t)edge >= s->lanes.hdr.rec_count) return NULL;
-    uint32_t sid = nm_get_u32(s->lanes.data + (size_t)edge * 4);
+    uint32_t sid = sk_get_u32(s->lanes.data + (size_t)edge * 4);
     if (sid == 0 || sid > s->lnp.n) return NULL;       /* 0 = 无车道信息 */
     return s->lnp.blob + s->lnp.off[sid];
 }
@@ -1119,10 +1119,10 @@ int mapset_query_tile(const MapSet *ms, int tx, int ty, MapsetTileFn fn, void *u
         if (!s->loaded || !s->has_tiles) continue;
 
         const uint8_t *td = s->tiles.data;
-        uint32_t minx = nm_get_u32(td + TF_EDGE_OFF);
-        uint32_t miny = nm_get_u32(td + TF_EDGE_CNT);
-        uint32_t nx   = nm_get_u32(td + NM_TILE_REC_BYTES + TF_EDGE_OFF);
-        uint32_t ny   = nm_get_u32(td + NM_TILE_REC_BYTES + TF_EDGE_CNT);
+        uint32_t minx = sk_get_u32(td + TF_EDGE_OFF);
+        uint32_t miny = sk_get_u32(td + TF_EDGE_CNT);
+        uint32_t nx   = sk_get_u32(td + SK_TILE_REC_BYTES + TF_EDGE_OFF);
+        uint32_t ny   = sk_get_u32(td + SK_TILE_REC_BYTES + TF_EDGE_CNT);
         if (tx < (int)minx || ty < (int)miny ||
             tx >= (int)(minx + nx) || ty >= (int)(miny + ny))
             continue;                       /* 该省没这片 */
@@ -1130,9 +1130,9 @@ int mapset_query_tile(const MapSet *ms, int tx, int ty, MapsetTileFn fn, void *u
         size_t t = ((size_t)(ty - miny) * nx) + (tx - minx);
         uint64_t ntile_dir = s->tiles.hdr.rec_count - 2;
         if ((uint64_t)nx * ny > ntile_dir) continue;
-        const uint8_t *dir = td + (2 + t) * NM_TILE_REC_BYTES;
-        uint32_t off = nm_get_u32(dir + TF_EDGE_OFF);
-        uint32_t cnt = nm_get_u32(dir + TF_EDGE_CNT);
+        const uint8_t *dir = td + (2 + t) * SK_TILE_REC_BYTES;
+        uint32_t off = sk_get_u32(dir + TF_EDGE_OFF);
+        uint32_t cnt = sk_get_u32(dir + TF_EDGE_CNT);
 
         uint64_t ne = s->edgelist.hdr.rec_count;
         for (uint32_t k = 0; k < cnt; k++) {

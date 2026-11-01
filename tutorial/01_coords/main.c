@@ -16,7 +16,7 @@
 #define H 360
 static uint32_t buf[W * H];
 
-/* —— 内部坐标：1e-7 度 int32（与项目 nm_lat_to_i32 同约定） —— */
+/* —— 内部坐标：1e-7 度 int32（与项目 sk_lat_to_i32 同约定） —— */
 static int32_t lat_to_i32(double lat) { return (int32_t)(lat * 1e7); }
 static double i32_to_lat(int32_t v)   { return v / 1e7; }
 

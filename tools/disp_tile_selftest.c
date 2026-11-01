@@ -35,8 +35,8 @@ static int seq_match(const uint8_t *mpoly, uint64_t moff, uint32_t mcnt,
                      const uint8_t *tpoly, uint64_t toff, uint32_t tcnt) {
     if (mcnt != tcnt) return 0;
     for (uint32_t k = 0; k < mcnt; k++) {
-        uint32_t a = nm_get_u32(mpoly + (moff + k) * 4);
-        uint32_t b = nm_get_u32(tpoly + (toff + k) * 4);
+        uint32_t a = sk_get_u32(mpoly + (moff + k) * 4);
+        uint32_t b = sk_get_u32(tpoly + (toff + k) * 4);
         if (a != b) return 0;
     }
     return 1;
@@ -59,7 +59,7 @@ static int check_layer(const char *dir, const char *disp, const char *mono_name,
     if (!keys) { nmbin_close(&mono); nmbin_close(&monop); return 1; }
     for (uint64_t i = 0; i < n; i++) {
         const uint8_t *r = mono.data + i * mono.hdr.rec_size;
-        keys[i].osm = nm_get_u64(r + 0);
+        keys[i].osm = sk_get_u64(r + 0);
         keys[i].idx = (int)i;
     }
     qsort(keys, (size_t)n, sizeof(Key), cmp_key);
@@ -83,15 +83,15 @@ static int check_layer(const char *dir, const char *disp, const char *mono_name,
         tile_total += nt;
         for (uint64_t j = 0; j < nt; j++) {
             const uint8_t *tr = ta.data + j * ta.hdr.rec_size;
-            uint64_t tosm = nm_get_u64(tr + 0);
-            uint32_t toff = nm_get_u32(tr + off_field);
-            uint32_t tcnt = nm_get_u32(tr + cnt_field);
+            uint64_t tosm = sk_get_u64(tr + 0);
+            uint32_t toff = sk_get_u32(tr + off_field);
+            uint32_t tcnt = sk_get_u32(tr + cnt_field);
             int mi = find_osm(keys, (int)n, tosm);
             if (mi < 0) continue;
             if (found[mi]) continue;
             const uint8_t *mr = mono.data + (uint64_t)mi * mono.hdr.rec_size;
-            uint32_t moff = nm_get_u32(mr + off_field);
-            uint32_t mcnt = nm_get_u32(mr + cnt_field);
+            uint32_t moff = sk_get_u32(mr + off_field);
+            uint32_t mcnt = sk_get_u32(mr + cnt_field);
             if (seq_match(monop.data, moff, mcnt, tp.data, toff, tcnt))
                 found[mi] = 1;
         }

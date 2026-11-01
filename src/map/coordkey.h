@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_COORDKEY_H
-#define NAVIMAP_COORDKEY_H
+#ifndef SKEDADDLE_COORDKEY_H
+#define SKEDADDLE_COORDKEY_H
 
 #include <stdint.h>
 

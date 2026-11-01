@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_QT_ICONS_H
-#define NAVIMAP_QT_ICONS_H
+#ifndef SKEDADDLE_QT_ICONS_H
+#define SKEDADDLE_QT_ICONS_H
 
 #include <QIcon>
 #include <QPixmap>

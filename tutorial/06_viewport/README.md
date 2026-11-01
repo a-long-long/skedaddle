@@ -5,7 +5,7 @@
 
 **累加内容**：打通"地理坐标 ↔ 屏幕像素"。本课实现 `MapView`（中心经纬度 + zoom + 画布尺寸），
 投影用【缓存 + 惰性失效】——只有视口参数真变了才重算；`mv_project`/`mv_unproj` 互为逆；
-`nm_tile_of` 给出标准 slippy 瓦片键，决定"按需加载哪几块瓦片"。
+`sk_tile_of` 给出标准 slippy 瓦片键，决定"按需加载哪几块瓦片"。
 
 **运行**：
 ```bash
@@ -18,8 +18,8 @@ gcc -std=c11 -O2 -o tut main.c && ./tut
 **关键概念（项目里一致）**：
 1. **投影缓存惰性失效**：只有 `lat/lon/zoom/w/h/rot` 真变了才重算 `scale`，否则复用——避免每帧重投影。
    缓存键 `c_lat/c_lon/c_zoom/c_rot/...` 就是干这个的。
-2. **瓦片键三版本**：真实项目里 `nm_tile_of`（查表+边界回退）/`nm_tile_of_raw`（纯查表）/
-   `nm_tile_of_exact`（sin+log 参考）三者逐点比对——因为 `lround` 会掩盖 ULP 差异，
+2. **瓦片键三版本**：真实项目里 `sk_tile_of`（查表+边界回退）/`sk_tile_of_raw`（纯查表）/
+   `sk_tile_of_exact`（sin+log 参考）三者逐点比对——因为 `lround` 会掩盖 ULP 差异，
    所以 `skedaddle_tile_selftest` 对 5228 万真实节点**逐点**验证而非抽样。
 3. **跨省接边**：用坐标直接做瓦片键，北京→天津不需要"本省→全局"映射表（第 10 课路由也用同一思路）。
 

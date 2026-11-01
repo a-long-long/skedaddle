@@ -22,13 +22,13 @@ static void sew_cb(const MapSrc *s, uint32_t from, uint32_t edge, void *ud)
     SewCtx *c = ud;
     (void)edge;
     int prov = (int)(s - c->ms->srcs);
-    const uint8_t *nr = s->nodes.data + (uint64_t)from * NM_NODE_BYTES;
+    const uint8_t *nr = s->nodes.data + (uint64_t)from * SK_NODE_BYTES;
     if (c->n == c->cap) {
         c->cap = c->cap ? c->cap * 2 : 1024;
         c->v = xrealloc(c->v, c->cap * sizeof(SewEnt));
     }
     SewEnt e;
-    e.coord = coord_key_e7(nm_get_i32(nr + NF_LAT), nm_get_i32(nr + NF_LON));
+    e.coord = coord_key_e7(sk_get_i32(nr + NF_LAT), sk_get_i32(nr + NF_LON));
     e.prov = (uint32_t)prov;
     e.node = from;
     c->v[c->n++] = e;
@@ -63,17 +63,17 @@ int tile_prov_count(const MapSet *ms, int tx, int ty)
         const MapSrc *s = &ms->srcs[i];
         if (!s->has_tiles) continue;
         const uint8_t *td = s->tiles.data;
-        uint32_t minx = nm_get_u32(td + TF_EDGE_OFF);
-        uint32_t miny = nm_get_u32(td + TF_EDGE_CNT);
-        uint32_t nx   = nm_get_u32(td + NM_TILE_REC_BYTES + TF_EDGE_OFF);
-        uint32_t ny   = nm_get_u32(td + NM_TILE_REC_BYTES + TF_EDGE_CNT);
+        uint32_t minx = sk_get_u32(td + TF_EDGE_OFF);
+        uint32_t miny = sk_get_u32(td + TF_EDGE_CNT);
+        uint32_t nx   = sk_get_u32(td + SK_TILE_REC_BYTES + TF_EDGE_OFF);
+        uint32_t ny   = sk_get_u32(td + SK_TILE_REC_BYTES + TF_EDGE_CNT);
         if (tx < (int)minx || ty < (int)miny ||
             tx >= (int)(minx + nx) || ty >= (int)(miny + ny))
             continue;
         if ((uint64_t)nx * ny > s->tiles.hdr.rec_count - 2) continue;
         size_t t = ((size_t)(ty - miny) * nx) + (tx - minx);
-        const uint8_t *dir = td + (2 + t) * NM_TILE_REC_BYTES;
-        if (nm_get_u32(dir + TF_EDGE_CNT) == 0) continue;
+        const uint8_t *dir = td + (2 + t) * SK_TILE_REC_BYTES;
+        if (sk_get_u32(dir + TF_EDGE_CNT) == 0) continue;
         int root = i;
         while (root >= 0 && ms->srcs[root].dup_of >= 0) root = ms->srcs[root].dup_of;
         int dup = 0;

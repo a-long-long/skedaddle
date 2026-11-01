@@ -12,9 +12,9 @@
  *
  * ★★★ 本工具跑的就是**生产路径本身**：
  *     navsim_advance() → navsim_next_maneuver() → **voice_wire.c 的
- *     nav_voice_frame()** → nm_tts_speak()
+ *     nav_voice_frame()** → sk_tts_speak()
  *   唯一不同的是"发声"的**观测方式**：GUI 让 TTS 引擎念，这里把
- *   NAVIMAP_TTS_DRYRUN 打开，让 nm_tts_speak() 同步把话术写进文件，
+ *   SKEDADDLE_TTS_DRYRUN 打开，让 sk_tts_speak() 同步把话术写进文件，
  *   于是判据断言的是"**窗口真正交出去的那句话**"。
  *   ⇒ 接线坏掉（发声循环断了、收尾语被吞了）自测必然变红。
  *   ★ 这一条是本工具存在的核心理由：上一版自测把接线**复刻**了一份，
@@ -154,7 +154,7 @@ static void fx_maneuvers(Fixture *f, const int *type, const char *const *road,
 /* ---------------------------------------------------------------------------
  * 记录器：把"窗口真正交出去的话"收集起来。
  *
- * ★ 怎么捕获：nm_tts_speak() 在 NAVIMAP_TTS_DRYRUN 指向的文件里**同步**
+ * ★ 怎么捕获：sk_tts_speak() 在 SKEDADDLE_TTS_DRYRUN 指向的文件里**同步**
  *   追加一行（见 plat.c 的 tts_dryrun_write）⇒ 每帧播报完立刻读文件，
  *   拿到的就是这一帧真正发出去的话，顺序也一样。
  *   这比"在 e2e 里复刻一遍接线再收集"强得多：复刻版和实现可以一起错。
@@ -173,9 +173,9 @@ static void dry_reset(void);
 
 static void dry_open(void)
 {
-    snprintf(g_dry_path, sizeof g_dry_path, "%s/navimap_voice_e2e_%d.txt",
-             nm_temp_dir(), (int)nm_get_pid());
-    nm_setenv("NAVIMAP_TTS_DRYRUN", g_dry_path);
+    snprintf(g_dry_path, sizeof g_dry_path, "%s/skedaddle_voice_e2e_%d.txt",
+             sk_temp_dir(), (int)sk_get_pid());
+    sk_setenv("SKEDADDLE_TTS_DRYRUN", g_dry_path);
     dry_reset();
 }
 
@@ -275,7 +275,7 @@ static int log_has_dist(const Log *lg, const char *sub, double lo, double hi)
  * 推进模拟车并逐帧收集播报 —— **走生产接线**。
  *
  * ★★★ 这里的帧循环与 src/ui/window.c 的 app_nav_sim_tick() **同一条路径**：
- *     navsim_advance → navsim_locate → nav_voice_frame → nm_tts_speak
+ *     navsim_advance → navsim_locate → nav_voice_frame → sk_tts_speak
  *   差别只有两处：
  *     · 时钟是合成的（now_ms 由步长累加），冷却判据可复现；
  *     · 发声被 DRYRUN 截下来供断言（GUI 里是真念出来）。
@@ -777,8 +777,8 @@ int main(void)
     case_b1_order();
     case_b2_same_text_cooldown();
 
-    nm_setenv("NAVIMAP_TTS_DRYRUN", "");
-    nm_unlink(g_dry_path);
+    sk_setenv("SKEDADDLE_TTS_DRYRUN", "");
+    sk_unlink(g_dry_path);
 
     if (g_fail == 0) { printf("VOICE-E2E-OK\n"); return 0; }
     fprintf(stderr, "VOICE-E2E FAILED: %d 项\n", g_fail);

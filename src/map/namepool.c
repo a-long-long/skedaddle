@@ -29,7 +29,7 @@ int name_pool_open(NamePool *np, const char *names_path)
     if (nmbin_open(names_path, &nf) != 0) return -1;
 
     const uint8_t *d = nf.data;
-    uint32_t cnt = nm_get_u32(d);
+    uint32_t cnt = sk_get_u32(d);
     size_t offs_bytes = (size_t)(cnt + 1) * 4;
     if (nf.data_len < 4 + offs_bytes) { nmbin_close(&nf); return -1; }
 
@@ -42,7 +42,7 @@ int name_pool_open(NamePool *np, const char *names_path)
         return -1;
     }
     for (uint32_t i = 0; i <= cnt; i++)
-        np->off[i] = nm_get_u32(d + 4 + (size_t)i * 4);
+        np->off[i] = sk_get_u32(d + 4 + (size_t)i * 4);
     memcpy(np->blob, d + 4 + offs_bytes, nf.data_len - 4 - offs_bytes);
     np->blob[nf.data_len - 4 - offs_bytes] = '\0';
 

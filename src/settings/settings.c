@@ -65,7 +65,7 @@ static void set_raw(Settings *s, const char *key, const char *v)
 {
     int i = find_idx(s, key);
     if (i >= 0) {
-        char *nv = nm_strdup(v);
+        char *nv = sk_strdup(v);
         if (!nv) return;
         free(s->e[i].val);
         s->e[i].val = nv;
@@ -73,8 +73,8 @@ static void set_raw(Settings *s, const char *key, const char *v)
         return;
     }
     if (ensure_cap(s) != 0) return;
-    s->e[s->n].key = nm_strdup(key);
-    s->e[s->n].val = nm_strdup(v);
+    s->e[s->n].key = sk_strdup(key);
+    s->e[s->n].val = sk_strdup(v);
     if (!s->e[s->n].key || !s->e[s->n].val) { /* 部分失败：回收已分配部分 */
         free(s->e[s->n].key); s->e[s->n].key = NULL;
         free(s->e[s->n].val);  s->e[s->n].val  = NULL;
@@ -101,12 +101,12 @@ void settings_destroy(Settings *s)
 static void ensure_path(Settings *s)
 {
     if (s->path[0]) return;
-    const char *env = getenv("NAVMAP_SETTINGS");
+    const char *env = getenv("SKEDADDLE_SETTINGS");
     if (env && *env) {
         snprintf(s->path, sizeof(s->path), "%s", env);
         return;
     }
-    const char *d = nm_config_dir();
+    const char *d = sk_config_dir();
     snprintf(s->path, sizeof(s->path), "%s/settings.ini", d);
 }
 
@@ -157,7 +157,7 @@ int settings_save(Settings *s)
     snprintf(dir, sizeof(dir), "%s", s->path);
     char *sl = strrchr(dir, '/');
     if (!sl) sl = strrchr(dir, '\\');
-    if (sl) { *sl = '\0'; if (nm_mkdir_p(dir) != 0) return -1; }
+    if (sl) { *sl = '\0'; if (sk_mkdir_p(dir) != 0) return -1; }
 
     FILE *f = fopen(s->path, "wb");
     if (!f) return -1;

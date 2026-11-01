@@ -1,7 +1,7 @@
 # 第 5 课：建图：PBF → 路网
 
 > 模块：`src/map/graph_build.{c,h}`、`src/map/coordkey.h`
-> 前置：第 3 课 PBF 解析、第 4 课 NMBIN 自描述二进制、第 1 课 `nm_fast_dist_m` 边权近似。
+> 前置：第 3 课 PBF 解析、第 4 课 NMBIN 自描述二进制、第 1 课 `sk_fast_dist_m` 边权近似。
 
 ## 一、教学目的
 
@@ -78,7 +78,7 @@ static int write_disp_tiles(Graph *g, const char *dir, const char *src,
     uint8_t *used = calloc(nt, 1);
     if (!dtA || !dtL || !dtP || !used) { free(dtA); free(dtL); free(dtP); free(used); return -1; }
     for (uint64_t t = 0; t < nt; t++) {
-        dtA[t].esz = NM_AREA_BYTES; dtL[t].esz = NM_LINE_BYTES; dtP[t].esz = 4;
+        dtA[t].esz = SK_AREA_BYTES; dtL[t].esz = SK_LINE_BYTES; dtP[t].esz = 4;
     }
 
     size_t nlines = g->lines.n / sizeof(LineRec);
@@ -94,7 +94,7 @@ static int write_disp_tiles(Graph *g, const char *dir, const char *src,
         int32_t fo0 = 180*10000000, fo1 = -180*10000000;
         int got = 0;
         for (uint32_t k = 0; k < rc; k++) {
-            uint32_t idx = nm_get_u32((const uint8_t *)pr->p + ((size_t)ro + k) * 4);
+            uint32_t idx = sk_get_u32((const uint8_t *)pr->p + ((size_t)ro + k) * 4);
             if ((uint64_t)idx >= g->n_ids) continue;
             int32_t la = g->lat[idx], lo = g->lon[idx];
             if (la < fa0) fa0 = la;
@@ -112,17 +112,17 @@ static int write_disp_tiles(Graph *g, const char *dir, const char *src,
         if (c1 >= ncols) c1 = ncols - 1;
         if (r0 < 0) r0 = 0;
         if (r1 >= nrows) r1 = nrows - 1;
-        uint8_t rec[NM_LINE_BYTES]; memset(rec, 0, sizeof(rec));
-        nm_put_u64(rec + LF_OSM_ID,  (uint64_t)lr[i].osm_id);
-        nm_put_u32(rec + LF_REF_OFF, 0);
-        nm_put_u32(rec + LF_REF_CNT, rc);
+        uint8_t rec[SK_LINE_BYTES]; memset(rec, 0, sizeof(rec));
+        sk_put_u64(rec + LF_OSM_ID,  (uint64_t)lr[i].osm_id);
+        sk_put_u32(rec + LF_REF_OFF, 0);
+        sk_put_u32(rec + LF_REF_CNT, rc);
         rec[LF_CLASS]  = lr[i].cls;
         rec[LF_FLAGS]  = lr[i].flags;
-        nm_put_u32(rec + LF_NAME_ID, lr[i].name_id);
+        sk_put_u32(rec + LF_NAME_ID, lr[i].name_id);
         for (long r = r0; r <= r1; r++)
             for (long c = c0; c <= c1; c++) {
                 uint64_t tc = (uint64_t)r * (uint64_t)ncols + (uint64_t)c;
-                if (disp_append(&dtL[tc], &dtP[tc], rec, NM_LINE_BYTES,
+                if (disp_append(&dtL[tc], &dtP[tc], rec, SK_LINE_BYTES,
                                 (const uint8_t *)pr->p, ro, rc, LF_REF_OFF) != 0) goto fail;
                 used[tc] = 1;
             }
@@ -135,7 +135,7 @@ static int write_disp_tiles(Graph *g, const char *dir, const char *src,
         int32_t fo0 = 180*10000000, fo1 = -180*10000000;
         int got = 0;
         for (uint32_t k = 0; k < rc; k++) {
-            uint32_t idx = nm_get_u32((const uint8_t *)pr->p + ((size_t)ro + k) * 4);
+            uint32_t idx = sk_get_u32((const uint8_t *)pr->p + ((size_t)ro + k) * 4);
             if ((uint64_t)idx >= g->n_ids) continue;
             int32_t la = g->lat[idx], lo = g->lon[idx];
             if (la < fa0) fa0 = la;
@@ -153,15 +153,15 @@ static int write_disp_tiles(Graph *g, const char *dir, const char *src,
         if (c1 >= ncols) c1 = ncols - 1;
         if (r0 < 0) r0 = 0;
         if (r1 >= nrows) r1 = nrows - 1;
-        uint8_t rec[NM_AREA_BYTES]; memset(rec, 0, sizeof(rec));
-        nm_put_u64(rec + AF_OSM_ID,  (uint64_t)ar[i].osm_id);
-        nm_put_u32(rec + AF_REF_OFF, 0);
-        nm_put_u32(rec + AF_REF_CNT, rc);
+        uint8_t rec[SK_AREA_BYTES]; memset(rec, 0, sizeof(rec));
+        sk_put_u64(rec + AF_OSM_ID,  (uint64_t)ar[i].osm_id);
+        sk_put_u32(rec + AF_REF_OFF, 0);
+        sk_put_u32(rec + AF_REF_CNT, rc);
         rec[AF_KIND] = ar[i].kind;
         for (long r = r0; r <= r1; r++)
             for (long c = c0; c <= c1; c++) {
                 uint64_t tc = (uint64_t)r * (uint64_t)ncols + (uint64_t)c;
-                if (disp_append(&dtA[tc], &dtP[tc], rec, NM_AREA_BYTES,
+                if (disp_append(&dtA[tc], &dtP[tc], rec, SK_AREA_BYTES,
                                 (const uint8_t *)pr->p, ro, rc, AF_REF_OFF) != 0) goto fail;
                 used[tc] = 1;
             }
@@ -174,12 +174,12 @@ static int write_disp_tiles(Graph *g, const char *dir, const char *src,
         for (uint64_t tc = 0; tc < nt; tc++) {
             if (!used[tc]) continue;
             long r = (long)(tc / (uint64_t)ncols), c = (long)(tc % (uint64_t)ncols);
-            uint64_t na = dtA[tc].n / NM_AREA_BYTES;
-            uint64_t nl = dtL[tc].n / NM_LINE_BYTES;
+            uint64_t na = dtA[tc].n / SK_AREA_BYTES;
+            uint64_t nl = dtL[tc].n / SK_LINE_BYTES;
             uint64_t np = dtP[tc].n / 4;
             /* areas */
             snprintf(path, sizeof(path), "%s/t_%ld_%ld.areas", dir, c, r);
-            NMBinWriter *w = nmbin_create(path, NMBIN_KIND_AREAS, NM_AREA_BYTES, src);
+            NMBinWriter *w = nmbin_create(path, NMBIN_KIND_AREAS, SK_AREA_BYTES, src);
             if (!w) goto fail;
             nmbin_add_field(w, "osm_id",  AF_OSM_ID,  NMT_U64, 8);
             nmbin_add_field(w, "ref_off", AF_REF_OFF, NMT_U32, 4);
@@ -189,7 +189,7 @@ static int write_disp_tiles(Graph *g, const char *dir, const char *src,
             if (nmbin_finalize(w) != 0) { nmbin_abort(w); goto fail; }
             /* lines */
             snprintf(path, sizeof(path), "%s/t_%ld_%ld.lines", dir, c, r);
-            w = nmbin_create(path, NMBIN_KIND_LINES, NM_LINE_BYTES, src);
+            w = nmbin_create(path, NMBIN_KIND_LINES, SK_LINE_BYTES, src);
             if (!w) goto fail;
             nmbin_add_field(w, "osm_id",  LF_OSM_ID,  NMT_U64, 8);
             nmbin_add_field(w, "ref_off", LF_REF_OFF, NMT_U32, 4);
@@ -308,7 +308,7 @@ static int write_lines_areas(Graph *g, const char *dir, const char *src)
        丢弃条目在中间的话，剩余条目的 ref_off 已经各自正确，
        只是记录之间有洞，直接顺序写有效条目即可。 */
     w = nmbin_create(OUTF2(path, dir, "lines.bin"), NMBIN_KIND_LINES,
-                     NM_LINE_BYTES, src);
+                     SK_LINE_BYTES, src);
     if (!w) { buf_free(&pr); return -1; }
     nmbin_add_field(w, "osm_id",  LF_OSM_ID,  NMT_U64, 8);
     nmbin_add_field(w, "ref_off", LF_REF_OFF, NMT_U32, 4);
@@ -318,14 +318,14 @@ static int write_lines_areas(Graph *g, const char *dir, const char *src)
     nmbin_add_field(w, "name_id", LF_NAME_ID, NMT_U32, 4);
     for (size_t i = 0; i < nlines; i++) {
         if (lr[i].ref_cnt == 0) continue;
-        uint8_t rec[NM_LINE_BYTES];
+        uint8_t rec[SK_LINE_BYTES];
         memset(rec, 0, sizeof(rec));
-        nm_put_u64(rec + LF_OSM_ID,  (uint64_t)lr[i].osm_id);
-        nm_put_u32(rec + LF_REF_OFF, lr[i].ref_off);
-        nm_put_u32(rec + LF_REF_CNT, lr[i].ref_cnt);
+        sk_put_u64(rec + LF_OSM_ID,  (uint64_t)lr[i].osm_id);
+        sk_put_u32(rec + LF_REF_OFF, lr[i].ref_off);
+        sk_put_u32(rec + LF_REF_CNT, lr[i].ref_cnt);
         rec[LF_CLASS]  = lr[i].cls;
         rec[LF_FLAGS]  = lr[i].flags;
-        nm_put_u32(rec + LF_NAME_ID, lr[i].name_id);
+        sk_put_u32(rec + LF_NAME_ID, lr[i].name_id);
         if (nmbin_write_records(w, rec, 1) != 0) {
             nmbin_abort(w); buf_free(&pr); return -1;
         }
@@ -334,7 +334,7 @@ static int write_lines_areas(Graph *g, const char *dir, const char *src)
 
     /* ---- areas.bin ---- */
     w = nmbin_create(OUTF2(path, dir, "areas.bin"), NMBIN_KIND_AREAS,
-                     NM_AREA_BYTES, src);
+                     SK_AREA_BYTES, src);
     if (!w) { buf_free(&pr); return -1; }
     nmbin_add_field(w, "osm_id",  AF_OSM_ID,  NMT_U64, 8);
     nmbin_add_field(w, "ref_off", AF_REF_OFF, NMT_U32, 4);
@@ -342,11 +342,11 @@ static int write_lines_areas(Graph *g, const char *dir, const char *src)
     nmbin_add_field(w, "kind",    AF_KIND,    NMT_U8,  1);
     for (size_t i = 0; i < nareas; i++) {
         if (ar[i].ref_cnt == 0) continue;
-        uint8_t rec[NM_AREA_BYTES];
+        uint8_t rec[SK_AREA_BYTES];
         memset(rec, 0, sizeof(rec));
-        nm_put_u64(rec + AF_OSM_ID,  (uint64_t)ar[i].osm_id);
-        nm_put_u32(rec + AF_REF_OFF, ar[i].ref_off);
-        nm_put_u32(rec + AF_REF_CNT, ar[i].ref_cnt);
+        sk_put_u64(rec + AF_OSM_ID,  (uint64_t)ar[i].osm_id);
+        sk_put_u32(rec + AF_REF_OFF, ar[i].ref_off);
+        sk_put_u32(rec + AF_REF_CNT, ar[i].ref_cnt);
         rec[AF_KIND] = ar[i].kind;
         if (nmbin_write_records(w, rec, 1) != 0) {
             nmbin_abort(w); buf_free(&pr); return -1;
@@ -382,15 +382,15 @@ static int write_spatial_index(Graph *g, const char *dir, const char *src)
     uint32_t minx = UINT32_MAX, maxx = 0, miny = UINT32_MAX, maxy = 0;
     for (size_t i = 0; i < ne; i++) {
         double wx, wy;
-        nm_mercator(g->lat[ef[i]] / 1e7, g->lon[ef[i]] / 1e7, &wx, &wy);
-        tx0[i] = (uint32_t)(wx * (1u << NM_TILE_Z));
-        ty0[i] = (uint32_t)(wy * (1u << NM_TILE_Z));
-        /* Buf.p 是 char*，而 nm_get_u32 收的是 uint8_t*：char 的符号性由平台定，
+        sk_mercator(g->lat[ef[i]] / 1e7, g->lon[ef[i]] / 1e7, &wx, &wy);
+        tx0[i] = (uint32_t)(wx * (1u << SK_TILE_Z));
+        ty0[i] = (uint32_t)(wy * (1u << SK_TILE_Z));
+        /* Buf.p 是 char*，而 sk_get_u32 收的是 uint8_t*：char 的符号性由平台定，
            不加转换会触发 -Wpointer-sign */
-        uint32_t to = nm_get_u32((const uint8_t *)g->e_to.p + i * 4);
-        nm_mercator(g->lat[to] / 1e7, g->lon[to] / 1e7, &wx, &wy);
-        tx1[i] = (uint32_t)(wx * (1u << NM_TILE_Z));
-        ty1[i] = (uint32_t)(wy * (1u << NM_TILE_Z));
+        uint32_t to = sk_get_u32((const uint8_t *)g->e_to.p + i * 4);
+        sk_mercator(g->lat[to] / 1e7, g->lon[to] / 1e7, &wx, &wy);
+        tx1[i] = (uint32_t)(wx * (1u << SK_TILE_Z));
+        ty1[i] = (uint32_t)(wy * (1u << SK_TILE_Z));
         /* from 和 to 端都要进 bbox：死端节点只作为 to 出现，它的 tile
            可能超出"所有 from 端"的范围，不纳入会导致下面越界写 */
         if (tx0[i] < minx) minx = tx0[i];
@@ -448,7 +448,7 @@ static int write_spatial_index(Graph *g, const char *dir, const char *src)
 
     /* v2：条目自带坐标/等级（渲染时只读顺序数据，见 binfmt.h 的说明）。
        总条数 = Σcnt，一条边进几个 tile 就有几条，所以这里比边数大。 */
-    uint8_t *xl = malloc((size_t)acc * NM_XL2_BYTES);
+    uint8_t *xl = malloc((size_t)acc * SK_XL2_BYTES);
     if (!xl) {
         free(cnt); free(off);
         free(tx0); free(ty0); free(tx1); free(ty1);
@@ -469,18 +469,18 @@ static int write_spatial_index(Graph *g, const char *dir, const char *src)
         for (uint32_t y = cy; y <= dy; y++)
             for (uint32_t x = ax; x <= bx; x++) {
                 size_t t = ((size_t)(y - miny) * nx) + (x - minx);
-                uint8_t *rec = xl + (size_t)off[t] * NM_XL2_BYTES;
-                uint32_t to = nm_get_u32((const uint8_t *)g->e_to.p + i * 4);
-                nm_put_i32(rec + XL2_FROM_LAT, g->lat[ef[i]]);
-                nm_put_i32(rec + XL2_FROM_LON, g->lon[ef[i]]);
-                nm_put_i32(rec + XL2_TO_LAT,   g->lat[to]);
-                nm_put_i32(rec + XL2_TO_LON,   g->lon[to]);
-                nm_put_u16(rec + XL2_FLAGS,
-                           nm_get_u16((const uint8_t *)g->e_flags.p + i * 2));
+                uint8_t *rec = xl + (size_t)off[t] * SK_XL2_BYTES;
+                uint32_t to = sk_get_u32((const uint8_t *)g->e_to.p + i * 4);
+                sk_put_i32(rec + XL2_FROM_LAT, g->lat[ef[i]]);
+                sk_put_i32(rec + XL2_FROM_LON, g->lon[ef[i]]);
+                sk_put_i32(rec + XL2_TO_LAT,   g->lat[to]);
+                sk_put_i32(rec + XL2_TO_LON,   g->lon[to]);
+                sk_put_u16(rec + XL2_FLAGS,
+                           sk_get_u16((const uint8_t *)g->e_flags.p + i * 2));
                 rec[XL2_CLS] = ((const uint8_t *)g->e_cls.p)[i];
                 rec[XL2_PAD] = 0;
-                nm_put_u32(rec + XL2_EDGE, csr[i]);
-                nm_put_u32(rec + XL2_NODE, ef[i]);
+                sk_put_u32(rec + XL2_EDGE, csr[i]);
+                sk_put_u32(rec + XL2_NODE, ef[i]);
                 off[t]++;
             }
     }
@@ -489,7 +489,7 @@ static int write_spatial_index(Graph *g, const char *dir, const char *src)
     int rc = 0;
     /* edgelist.bin */
     NMBinWriter *w = nmbin_create(OUTF2(path, dir, "edgelist.bin"),
-                                  NMBIN_KIND_EDGELIST, NM_XL2_BYTES, src);
+                                  NMBIN_KIND_EDGELIST, SK_XL2_BYTES, src);
     if (!w) rc = -1;
     if (!rc) {
         nmbin_add_field(w, "from_lat", XL2_FROM_LAT, NMT_I32, 4);
@@ -507,22 +507,22 @@ static int write_spatial_index(Graph *g, const char *dir, const char *src)
        {x0,y0} 和 {nx,ny}（复用 rec 布局，避免破坏 rec_size 校验） */
     if (!rc) {
         w = nmbin_create(OUTF2(path, dir, "tiles.bin"),
-                         NMBIN_KIND_TILES, NM_TILE_REC_BYTES, src);
+                         NMBIN_KIND_TILES, SK_TILE_REC_BYTES, src);
         if (!w) rc = -1;
         else {
             nmbin_add_field(w, "edge_off", TF_EDGE_OFF, NMT_U32, 4);
             nmbin_add_field(w, "edge_cnt", TF_EDGE_CNT, NMT_U32, 4);
-            uint8_t meta0[NM_TILE_REC_BYTES], meta1[NM_TILE_REC_BYTES];
-            nm_put_u32(meta0 + TF_EDGE_OFF, minx);
-            nm_put_u32(meta0 + TF_EDGE_CNT, miny);
-            nm_put_u32(meta1 + TF_EDGE_OFF, nx);
-            nm_put_u32(meta1 + TF_EDGE_CNT, ny);
+            uint8_t meta0[SK_TILE_REC_BYTES], meta1[SK_TILE_REC_BYTES];
+            sk_put_u32(meta0 + TF_EDGE_OFF, minx);
+            sk_put_u32(meta0 + TF_EDGE_CNT, miny);
+            sk_put_u32(meta1 + TF_EDGE_OFF, nx);
+            sk_put_u32(meta1 + TF_EDGE_CNT, ny);
             if (nmbin_write_records(w, meta0, 1) != 0 ||
                 nmbin_write_records(w, meta1, 1) != 0) rc = -1;
             for (size_t t = 0; t < ntile && !rc; t++) {
-                uint8_t rec[NM_TILE_REC_BYTES];
-                nm_put_u32(rec + TF_EDGE_OFF, off0[t]);
-                nm_put_u32(rec + TF_EDGE_CNT, cnt[t]);
+                uint8_t rec[SK_TILE_REC_BYTES];
+                sk_put_u32(rec + TF_EDGE_OFF, off0[t]);
+                sk_put_u32(rec + TF_EDGE_CNT, cnt[t]);
                 if (nmbin_write_records(w, rec, 1) != 0) rc = -1;
             }
             if (!rc && nmbin_finalize(w) != 0) rc = -1;
@@ -544,8 +544,8 @@ static int write_spatial_index(Graph *g, const char *dir, const char *src)
 ### 1. 公共头 `graph_build.h`（完整体）
 
 ```h
-#ifndef NAVIMAP_GRAPH_BUILD_H
-#define NAVIMAP_GRAPH_BUILD_H
+#ifndef SKEDADDLE_GRAPH_BUILD_H
+#define SKEDADDLE_GRAPH_BUILD_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -601,8 +601,8 @@ int graph_build(const char *pbf_path, const char *out_dir, GraphBuildStats *st);
 ### 2. 坐标主键 `coordkey.h`（完整体）
 
 ```h
-#ifndef NAVIMAP_COORDKEY_H
-#define NAVIMAP_COORDKEY_H
+#ifndef SKEDADDLE_COORDKEY_H
+#define SKEDADDLE_COORDKEY_H
 
 #include <stdint.h>
 
@@ -652,7 +652,7 @@ int graph_build(const char *pbf_path, const char *out_dir, GraphBuildStats *st)
     g.ways.esz = sizeof(WayRec);
     g.refs.esz = sizeof(int64_t);
     g.restr.esz = sizeof(PendRestr);
-    g.out_restr.esz = NM_RESTR_BYTES;
+    g.out_restr.esz = SK_RESTR_BYTES;
     g.lines.esz = sizeof(LineRec);
     g.areas.esz = sizeof(AreaRec);
     if (!g.names || !g.lane_names) return -1;
@@ -744,7 +744,7 @@ static int pass2(Graph *g, const char *path)
 
 ### 5. 建边与 CSR `build_edges()`（完整体）
 
-把 way 内相邻 node 对变成有向边：`oneway==0` 双向（第二方向打 `EF_REVERSE`），`oneway==2` 只允许按节点顺序逆向走（**不能**打 `EF_REVERSE`，否则会被渲染当成回程边跳掉）。边权用 `nm_fast_dist_m` 近似成厘米。最后按 `from` 做**计数排序**成 CSR（`node_edge_begin/count`、`csr_of`）。
+把 way 内相邻 node 对变成有向边：`oneway==0` 双向（第二方向打 `EF_REVERSE`），`oneway==2` 只允许按节点顺序逆向走（**不能**打 `EF_REVERSE`，否则会被渲染当成回程边跳掉）。边权用 `sk_fast_dist_m` 近似成厘米。最后按 `from` 做**计数排序**成 CSR（`node_edge_begin/count`、`csr_of`）。
 
 ```c
 static int build_edges(Graph *g)
@@ -776,7 +776,7 @@ static int build_edges(Graph *g)
                 g->st.dropped_missing_node++;
                 continue;
             }
-            double d = nm_fast_dist_m(g->lat[pa], g->lon[pa], g->lat[pb], g->lon[pb]);
+            double d = sk_fast_dist_m(g->lat[pa], g->lon[pa], g->lat[pb], g->lon[pb]);
             uint32_t dcm = (uint32_t)(d * 100.0 + 0.5);
             if (dcm == 0) dcm = 1;
 
@@ -878,7 +878,7 @@ static int build_edges(Graph *g)
 ```c
 static int write_nodes(Graph *g, const char *path, const char *src)
 {
-    NMBinWriter *w = nmbin_create(path, NMBIN_KIND_NODES, NM_NODE_BYTES, src);
+    NMBinWriter *w = nmbin_create(path, NMBIN_KIND_NODES, SK_NODE_BYTES, src);
     if (!w) return -1;
     nmbin_add_field(w, "lat_e7",      NF_LAT,        NMT_I32, 4);
     nmbin_add_field(w, "lon_e7",      NF_LON,        NMT_I32, 4);
@@ -888,23 +888,23 @@ static int write_nodes(Graph *g, const char *path, const char *src)
     nmbin_add_field(w, "osm_id",      NF_OSM_ID,     NMT_U64, 8);
     nmbin_add_field(w, "class_mask",  NF_CLASS_MASK, NMT_U32, 4);
 
-    uint8_t rec[NM_NODE_BYTES];
+    uint8_t rec[SK_NODE_BYTES];
     const size_t CHUNK = 8192;
-    uint8_t *bulk = malloc(CHUNK * NM_NODE_BYTES);
+    uint8_t *bulk = malloc(CHUNK * SK_NODE_BYTES);
     if (!bulk) { nmbin_abort(w); return -1; }
     size_t i = 0;
     while (i < g->n_ids) {
         size_t n = g->n_ids - i < CHUNK ? g->n_ids - i : CHUNK;
         for (size_t k = 0; k < n; k++) {
             memset(rec, 0, sizeof(rec));
-            nm_put_i32(rec + NF_LAT,        g->lat[i + k]);
-            nm_put_i32(rec + NF_LON,        g->lon[i + k]);
-            nm_put_u32(rec + NF_EDGE_BEGIN, g->node_edge_begin[i + k]);
-            nm_put_u16(rec + NF_EDGE_COUNT, g->node_edge_count[i + k]);
-            nm_put_u16(rec + NF_NODE_FLAGS, (uint16_t)g->node_flags[i + k]);
-            nm_put_u64(rec + NF_OSM_ID,     (uint64_t)g->osm_id[i + k]);
-            nm_put_u32(rec + NF_CLASS_MASK, g->node_class_mask[i + k]);
-            memcpy(bulk + k * NM_NODE_BYTES, rec, NM_NODE_BYTES);
+            sk_put_i32(rec + NF_LAT,        g->lat[i + k]);
+            sk_put_i32(rec + NF_LON,        g->lon[i + k]);
+            sk_put_u32(rec + NF_EDGE_BEGIN, g->node_edge_begin[i + k]);
+            sk_put_u16(rec + NF_EDGE_COUNT, g->node_edge_count[i + k]);
+            sk_put_u16(rec + NF_NODE_FLAGS, (uint16_t)g->node_flags[i + k]);
+            sk_put_u64(rec + NF_OSM_ID,     (uint64_t)g->osm_id[i + k]);
+            sk_put_u32(rec + NF_CLASS_MASK, g->node_class_mask[i + k]);
+            memcpy(bulk + k * SK_NODE_BYTES, rec, SK_NODE_BYTES);
         }
         if (nmbin_write_records(w, bulk, n) != 0) { free(bulk); nmbin_abort(w); return -1; }
         i += n;
@@ -920,7 +920,7 @@ static int write_nodes(Graph *g, const char *path, const char *src)
 - **上游 · 第 4 课 NMBIN 自描述二进制**：本课所有 `write_*` 都走 `nmbin_create`/`nmbin_add_field`/`nmbin_write_records`/`nmbin_finalize`，落盘格式即 L4 定义的图集。
 - **下游 · 第 10 课路由**：本课的 `nodes/edges/restrictions/...` 即 `mapset_load` 加载内容，`route.c`/`sew.c` 基于此寻路。本课是 L4 图集与 L10 路由之间的"数据生产"环节。
 - **下游 · 第 11 课导航语音 / 第 12 课 Qt 前端**：`names.bin` 的路名池、`lanes.bin` 的转向车道串是播报和 UI 的数据源。
-- **跨省缝合 · 第 10 课 `sew.c`**：`coord_key_e7`（`coordkey.h`）把 L5 建出的节点 e7 坐标打包成主键，配合 L6 的 `nm_tile_of` 把不同省的同一坐标合成一个图节点，实现跨省接边。
+- **跨省缝合 · 第 10 课 `sew.c`**：`coord_key_e7`（`coordkey.h`）把 L5 建出的节点 e7 坐标打包成主键，配合 L6 的 `sk_tile_of` 把不同省的同一坐标合成一个图节点，实现跨省接边。
 - **空间索引 · 第 8 课渲染管线**：`write_spatial_index` 产出的 `edgelist.bin`/`tiles.bin` 让 L8 渲染按需加载视口内 tile，而非整省全量扫描。
 
 ## 五、演示、练习与验收

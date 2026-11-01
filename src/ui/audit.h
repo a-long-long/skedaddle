@@ -16,8 +16,8 @@
  * 全量定义而反向引用 ui/window.h ⇒ render→ui 倒置 + 符号级环。现移到 ui/：
  * 审计是**验收通道**的一部分（读 App 状态 + 像素缓冲做断言），不是渲染算法。
  */
-#ifndef NM_UI_AUDIT_H
-#define NM_UI_AUDIT_H
+#ifndef SK_UI_AUDIT_H
+#define SK_UI_AUDIT_H
 
 #include <stdint.h>
 
@@ -47,4 +47,4 @@ int app_offscreen_audit(const App *a, const uint8_t *buf, int w, int h, int stri
 }
 #endif
 
-#endif /* NM_UI_AUDIT_H */
+#endif /* SK_UI_AUDIT_H */

@@ -78,9 +78,9 @@ static void road_name_of(const RouteResult *rr, const MapSet *ms,
     mapset_ensure_loaded((MapSet *)ms, (int)prov);   /* 该省可能已被 set_view 卸载 */
     const MapSrc *src = &ms->srcs[prov];
     if ((uint64_t)eidx >= src->edges.hdr.rec_count) return;
-    const uint8_t *er = src->edges.data + (uint64_t)eidx * NM_EDGE_BYTES;
+    const uint8_t *er = src->edges.data + (uint64_t)eidx * SK_EDGE_BYTES;
     if (cls_out) *cls_out = er[EF_CLASS];
-    uint32_t nid = nm_get_u32(er + EF_NAME_ID);
+    uint32_t nid = sk_get_u32(er + EF_NAME_ID);
     const NamePool *np = &src->np;
     if (!nid || !np->ready || nid > np->n) return;
     const char *s2 = np->blob + np->off[nid];
@@ -116,9 +116,9 @@ static int count_side_exits(const MapSet *ms, const RouteResult *rr, uint32_t k)
     const MapSrc *s = &ms->srcs[prov];
     uint32_t node = rr->pts[k].node;
     if ((uint64_t)node >= s->nodes.hdr.rec_count) return 0;
-    const uint8_t *nr = s->nodes.data + (uint64_t)node * NM_NODE_BYTES;
-    uint32_t b = nm_get_u32(nr + NF_EDGE_BEGIN);
-    uint16_t c = nm_get_u16(nr + NF_EDGE_COUNT);
+    const uint8_t *nr = s->nodes.data + (uint64_t)node * SK_NODE_BYTES;
+    uint32_t b = sk_get_u32(nr + NF_EDGE_BEGIN);
+    uint16_t c = sk_get_u16(nr + NF_EDGE_COUNT);
     uint64_t ne = s->edges.hdr.rec_count;
     uint32_t prev = k > 0 ? rr->pts[k - 1].node : 0xFFFFFFFFu;
 
@@ -126,10 +126,10 @@ static int count_side_exits(const MapSet *ms, const RouteResult *rr, uint32_t k)
     for (uint32_t i = 0; i < c; i++) {
         uint64_t e = (uint64_t)b + i;
         if (e >= ne) break;
-        const uint8_t *er = s->edges.data + e * NM_EDGE_BYTES;
-        uint32_t to = nm_get_u32(er + EF_TO);
+        const uint8_t *er = s->edges.data + e * SK_EDGE_BYTES;
+        uint32_t to = sk_get_u32(er + EF_TO);
         if (to == prev) continue;                     /* 回头路不算出口 */
-        if (nm_get_u16(er + EF_FLAGS) & EF_ROUNDABOUT) continue;
+        if (sk_get_u16(er + EF_FLAGS) & EF_ROUNDABOUT) continue;
         cnt++;
     }
     return cnt;

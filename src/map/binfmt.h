@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_BINFMT_H
-#define NAVIMAP_BINFMT_H
+#ifndef SKEDADDLE_BINFMT_H
+#define SKEDADDLE_BINFMT_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -19,7 +19,7 @@
 /* v2：restrictions.bin 记录 16→20 字节（新增 RF_PREV_EDGE，支持 via=way 两段限制）。
    旧数据必须重抽——记录变长后按旧长度读会整表错位，宁可让 sync_maps 全量重建。
    v3：edgelist.bin 条目 8 → 28 字节（自带坐标/等级/标志，渲染不再随机访存，
-   见下面 NM_XL2_* 的说明）。虽然读取端能按 rec_size 同时认两版、旧目录也能
+   见下面 SK_XL2_* 的说明）。虽然读取端能按 rec_size 同时认两版、旧目录也能
    正常画（走慢路径），但**混合图集要不得**：一半省 v1、一半省 v2 时文件体积
    和帧时间都不一样而画面完全一样，出了问题没人会想到是版本混装。所以这里
    照例顶版本号，逼 sync_maps / 启动自愈全量重抽。 */
@@ -102,20 +102,20 @@ void nmbin_close(NMBinFile *f);
 int  nmbin_check(const NMBinFile *f, char *err, size_t err_cap);  /* 结构自检 */
 
 /* 小端读写助手 */
-void     nm_put_u16(uint8_t *p, uint16_t v);
-void     nm_put_u32(uint8_t *p, uint32_t v);
-void     nm_put_i32(uint8_t *p, int32_t v);
-void     nm_put_u64(uint8_t *p, uint64_t v);
-uint16_t nm_get_u16(const uint8_t *p);
-uint32_t nm_get_u32(const uint8_t *p);
-int32_t  nm_get_i32(const uint8_t *p);
-uint64_t nm_get_u64(const uint8_t *p);
+void     sk_put_u16(uint8_t *p, uint16_t v);
+void     sk_put_u32(uint8_t *p, uint32_t v);
+void     sk_put_i32(uint8_t *p, int32_t v);
+void     sk_put_u64(uint8_t *p, uint64_t v);
+uint16_t sk_get_u16(const uint8_t *p);
+uint32_t sk_get_u32(const uint8_t *p);
+int32_t  sk_get_i32(const uint8_t *p);
+uint64_t sk_get_u64(const uint8_t *p);
 
 /* 各文件记录布局（也写进文件头，这里只是建图时的常量） */
-#define NM_NODE_BYTES 28
-#define NM_EDGE_BYTES 18
-#define NM_RESTR_BYTES 20
-#define NM_OSMID_BYTES 8
+#define SK_NODE_BYTES 28
+#define SK_EDGE_BYTES 18
+#define SK_RESTR_BYTES 20
+#define SK_OSMID_BYTES 8
 
 /* nodes.bin 记录字段偏移 */
 #define NF_LAT        0    /* i32  1e-7 度 */
@@ -155,7 +155,7 @@ uint64_t nm_get_u64(const uint8_t *p);
 #define RF_PREV_EDGE 16   /* u32  kind=2 时有效：三段序列里的第一条边 */
 
 /* lines.bin：线要素（步行道/铁路/水系线）。ref_off 指向 polyrefs.bin 的 u32 下标 */
-#define NM_LINE_BYTES 24
+#define SK_LINE_BYTES 24
 #define LF_OSM_ID   0    /* u64 */
 #define LF_REF_OFF  8    /* u32 */
 #define LF_REF_CNT  12   /* u32 */
@@ -164,7 +164,7 @@ uint64_t nm_get_u64(const uint8_t *p);
 #define LF_NAME_ID  20   /* u32 名字池 id，0 = 无名 */
 
 /* areas.bin：面要素。ref_off 指向 polyrefs.bin，节点按环绕顺序，首尾同点 */
-#define NM_AREA_BYTES 20
+#define SK_AREA_BYTES 20
 #define AF_OSM_ID   0    /* u64 */
 #define AF_REF_OFF  8    /* u32 */
 #define AF_REF_CNT  12   /* u32 */
@@ -175,8 +175,8 @@ uint64_t nm_get_u64(const uint8_t *p);
  * 但语义不同：osm_id 槽存"高程（米，u64）"，ref_off/ref_cnt 指向
  * contours_polyrefs.bin（u32 序列），每个下标再指向 contours_pts.bin 的顶点。
  * class 字段区分"计曲线（每 index 一条加粗/加深）"与"首曲线"。
- * 不进 OSM 导入管线，由 skedaddle_gen_contours 直接产出 navimap 专属二进制。 */
-#define NM_CONTOUR_BYTES 24
+ * 不进 OSM 导入管线，由 skedaddle_gen_contours 直接产出 skedaddle 专属二进制。 */
+#define SK_CONTOUR_BYTES 24
 #define CF_ELEV      0    /* u64  高程（米）— 复用 lines 的 LF_OSM_ID 槽 */
 #define CF_REF_OFF   8    /* u32 */
 #define CF_REF_CNT   12   /* u32 */
@@ -185,7 +185,7 @@ uint64_t nm_get_u64(const uint8_t *p);
 #define CF_NAME_ID   20   /* u32 保留（等高线无名） */
 
 /* contour_pts.bin：等高线顶点池（不依赖 OSM 节点）。每条 8 字节。 */
-#define NM_CONTOUR_PT_BYTES 8
+#define SK_CONTOUR_PT_BYTES 8
 #define CP_LAT  0    /* i32  e7 度 */
 #define CP_LON  4    /* i32  e7 度 */
 
@@ -197,11 +197,11 @@ uint64_t nm_get_u64(const uint8_t *p);
  * 每 tile 在 edgelist 里的 [off, off+cnt) 目录。
  * tiles.bin 的 payload 前置 16 字节网格元数据：x0,y0,nx,ny（u32）。
  * 长边会加入两端点覆盖的所有 tile（重复出现无害，画两次而已）。 */
-#define NM_TILE_Z          14
-#define NM_TILE_REC_BYTES  8
+#define SK_TILE_Z          14
+#define SK_TILE_REC_BYTES  8
 #define TF_EDGE_OFF 0    /* u32 edgelist 起始下标 */
 #define TF_EDGE_CNT 4    /* u32 */
-#define NM_XL_BYTES 8
+#define SK_XL_BYTES 8
 #define XL_NODE     0    /* u32 from 节点内部下标 */
 #define XL_EDGE     4    /* u32 CSR 边下标 */
 
@@ -224,7 +224,7 @@ uint64_t nm_get_u64(const uint8_t *p);
  *   不是性能问题，不能为了省 4 字节让它们退化成"再随机读一次 nodes.bin"。
  *   渲染是顺序扫，多带 4 字节只是多 14% 的顺序带宽，换来的却是
  *   路由/覆盖/去重三条路径零改动。 */
-#define NM_XL2_BYTES 28
+#define SK_XL2_BYTES 28
 #define XL2_FROM_LAT 0    /* i32 e7 */
 #define XL2_FROM_LON 4    /* i32 e7 */
 #define XL2_TO_LAT   8    /* i32 e7 */

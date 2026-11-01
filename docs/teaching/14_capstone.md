@@ -79,7 +79,7 @@ for arg in "$@"; do
 done
 
 # 二进制链接了 ~/.local 里的 protobuf-c / SDL2，不 source 就跑不起来
-NAVMAP_ENV_QUIET=1 . "$ROOT/env.sh"
+SKEDADDLE_ENV_QUIET=1 . "$ROOT/env.sh"
 
 # ---- 跨平台小工具（GNU 与 BSD/macOS 双兼容）--------------------------------
 # stat：GNU 用 -c %s/%Y，BSD/macOS 用 -f %z/%m（macOS 的 stat 没有 -c）。
@@ -459,7 +459,7 @@ if [ "${#ready[@]}" -gt 0 ]; then
             "$n" "$(mani_get nodes "$m")" "$(mani_get edges "$m")" "$OUT_ROOT/$n"
     done
     printf '\n启动（一次只能加载一个，跨省索引还没做）：\n'
-    printf '  ./build/navimap --graph=%s/%s\n' "$OUT_ROOT" "${ready[0]}"
+    printf '  ./build/skedaddle --graph=%s/%s\n' "$OUT_ROOT" "${ready[0]}"
 fi
 
 [ "$n_fail" -eq 0 ] || exit 1
@@ -517,12 +517,12 @@ int main(int argc, char **argv)
         fprintf(stderr, "用法: %s --out=<目录> <file.osm.pbf>\n", argv[0]);
         return 2;
     }
-    nm_mkdir_p(out_dir);
+    sk_mkdir_p(out_dir);
 
     /* 源文件指纹：同步脚本靠 size+mtime 判断产物是否过期 */
     uint64_t src_bytes = 0;
     int64_t  src_mtime = 0;
-    nm_stat_file(src, &src_bytes, &src_mtime);
+    sk_stat_file(src, &src_bytes, &src_mtime);
 
     GraphBuildStats st;
     memset(&st, 0, sizeof(st));
@@ -583,7 +583,7 @@ int main(int argc, char **argv)
     snprintf(mp, sizeof(mp), "%s/manifest.txt", out_dir);
     FILE *f = fopen(mp, "wb");
     if (f) {
-        fprintf(f, "# NavMap 路网抽取结果（自描述二进制 NAVMBIN v%d）\n", NMBIN_VERSION);
+        fprintf(f, "# Skedaddle 路网抽取结果（自描述二进制 NAVMBIN v%d）\n", NMBIN_VERSION);
         fprintf(f, "source         %s\n", src);
         fprintf(f, "src_bytes      %" PRIu64 "\n", src_bytes);
         fprintf(f, "src_mtime      %" PRId64 "\n", src_mtime);
@@ -881,11 +881,11 @@ area_lod_tier() {             # area_lod_tier <名字> <zoom> <dotted_lo> <dotte
 
 ## 四、与其他功能之间的联系
 
-- **L1 坐标系 / L2 平台抽象**：全程底座。`utils/geo`（墨卡托投影、`nm_haversine_m`）与 `utils/plat`（线程 / mmap / 临时目录）被 L3–L12 所有模块依赖，是纯 DAG 的最底端叶子，反向绝不被依赖。
+- **L1 坐标系 / L2 平台抽象**：全程底座。`utils/geo`（墨卡托投影、`sk_haversine_m`）与 `utils/plat`（线程 / mmap / 临时目录）被 L3–L12 所有模块依赖，是纯 DAG 的最底端叶子，反向绝不被依赖。
 - **L3 PBF 解析 → L4 自描述二进制与图集 → L5 建图**：`skedaddle_graph_extract`（L5）消费 `pbf/pbf_stream`（L3），产出 `nmbin` 自描述二进制（L4），再由 `map/mapset`（L4）在运行时按视口加载。这是 `mapset_set_view`（L6）在视野变化时加载的内容，也是路由（L10）的输入。
 - **L6 视口投影 → L7 软件光栅 → L8 渲染管线**：`mv_visible_bbox`/`mv_project`（L6）决定可见范围，喂给 `paint_areas/roads/lines`（L7），由 `paint_frame`（L8，`offscreen_shot.c` 的 `render_buffer` → `app_render_to_buf` → `paint_frame`）按 9 步编排成一帧。
 - **L9 搜索 → L10 路由 → L11 导航语音**：UI 上触发先后出现；`skedaddle_route_cli`/`app_nav_plan_sync`（L10）出 `RouteResult`，交给 `maneuver`（L11）生成指令，再经 `navsim`/`voice`/`ui/voice_wire`（L11）播报。
-- **L12 Qt 前端**：只是外壳——`qt_main.cpp` 启动事件循环，每帧 `MapCanvas::tick()` 驱动 `paint_frame`；它只链 `navimap_core + Qt Widgets`，不链 SDL。
+- **L12 Qt 前端**：只是外壳——`qt_main.cpp` 启动事件循环，每帧 `MapCanvas::tick()` 驱动 `paint_frame`；它只链 `skedaddle_core + Qt Widgets`，不链 SDL。
 - **L13 架构门禁**：守护前面所有课——`check_layers.sh` 把纯 DAG 锁死，`skedaddle_core_no_sdl` 把“L12 不链 SDL”锁死，`regress.sh` 把 L7/L8/L10/L11/L12 的几十个用例串成回归门禁。
 - **纯 DAG 总结**：`utils ← pbf ← map ← route ← render ← ui ← ui_qt`。`map` 只许依赖 `pbf,utils`；`route` 只许依赖 `map,utils`；`render` 纯光栅、零 ui 依赖；`ui` 依赖 `render` 但绝不被 `render/map/route` 反向依赖；`ui_qt` 只依赖 `map,render,settings,ui,utils`。任何反向依赖会被链接器（第一道）与 `check_layers.sh`（第二道）同时抓出。
 

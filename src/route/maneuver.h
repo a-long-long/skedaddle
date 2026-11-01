@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_MANEUVER_H
-#define NAVIMAP_MANEUVER_H
+#ifndef SKEDADDLE_MANEUVER_H
+#define SKEDADDLE_MANEUVER_H
 
 #include <stdint.h>
 #include <stddef.h>

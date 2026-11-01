@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_CHROME_H
-#define NAVIMAP_CHROME_H
+#ifndef SKEDADDLE_CHROME_H
+#define SKEDADDLE_CHROME_H
 
 #include "ui/window.h"
 #include "render/raster.h"

@@ -6,11 +6,11 @@
  *     ② 字体有字形，但**渲染方**没拿到（Qt 侧没注册 / 没设应用字体）→ 修接入。
  *   本工具只管 ①，而且是"整条候选链"级别的断言 —— 因为
  *   render/font.c（地图文字，stb_truetype）和 ui_qt/qt_font.cpp（Qt 控件文字）
- *   **共用同一条候选链**（plat.c 的 nm_font_candidates）。链条里没有 CJK 字体，
+ *   **共用同一条候选链**（plat.c 的 sk_font_candidates）。链条里没有 CJK 字体，
  *   两边都会变方框。
  *
  * 判据：
- *   遍历 nm_font_candidates()，对每个能打开的文件查 cmap 里有没有常用汉字
+ *   遍历 sk_font_candidates()，对每个能打开的文件查 cmap 里有没有常用汉字
  *   （用 stb_truetype 的 FindGlyphIndex + 实际光栅化出的非零像素数）。
  *   ★ 必须**两个条件都满足**：glyph index 非 0（cmap 里有）
  *     且光栅化后非零像素 > 0（真的有形状）。只看 index 会漏掉
@@ -74,7 +74,7 @@ int main(int argc, char **argv)
     }
 
     size_t n = 0;
-    const char *const *cands = nm_font_candidates(&n);
+    const char *const *cands = sk_font_candidates(&n);
     if (n == 0) {
         fprintf(stderr, "FONT-CJK-FAIL  字体候选链是空的\n");
         return 1;

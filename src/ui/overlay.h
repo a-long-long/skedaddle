@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_OVERLAY_H
-#define NAVIMAP_OVERLAY_H
+#ifndef SKEDADDLE_OVERLAY_H
+#define SKEDADDLE_OVERLAY_H
 
 #include <stdint.h>
 
@@ -42,7 +42,7 @@ typedef enum {
     OVL_SEARCH,         /* 搜索框 + 结果列表 */
     OVL_TRACK,          /* 轨迹 / 收藏面板 */
     OVL_COUNT
-} NmOverlay;
+} SkOverlay;
 
 #define OVL_ALPHA_DEFAULT 75     /* 百分比：需求指定的默认半透明 */
 #define OVL_ALPHA_MIN     0
@@ -53,9 +53,9 @@ typedef enum {
 #define OVL_FE_C  1u             /* C 核心自绘（chrome.c/navdraw.c） */
 #define OVL_FE_QT 2u             /* Qt 前端控件 */
 
-const char *ovl_key(NmOverlay id);        /* "alpha_title" …；越界返回 NULL */
-const char *ovl_label(NmOverlay id);      /* "标题栏" …；越界返回 "?" */
-unsigned    ovl_frontends(NmOverlay id);  /* OVL_FE_* 位掩码 */
+const char *ovl_key(SkOverlay id);        /* "alpha_title" …；越界返回 NULL */
+const char *ovl_label(SkOverlay id);      /* "标题栏" …；越界返回 "?" */
+unsigned    ovl_frontends(SkOverlay id);  /* OVL_FE_* 位掩码 */
 int         ovl_by_key(const char *key);  /* 反查；找不到返回 -1 */
 
 int ovl_clamp_pct(int pct);               /* 夹到 [0,100] */
@@ -74,4 +74,4 @@ void ovl_store_all(Settings *cfg, const int v[OVL_COUNT]);
 }
 #endif
 
-#endif /* NAVIMAP_OVERLAY_H */
+#endif /* SKEDADDLE_OVERLAY_H */

@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_WINDOW_H
-#define NAVIMAP_WINDOW_H
+#ifndef SKEDADDLE_WINDOW_H
+#define SKEDADDLE_WINDOW_H
 
 #include <stdint.h>
 #include "utils/plat.h"
@@ -100,7 +100,7 @@ typedef struct {
     int           have_alts;     /* 是否已有多方案可对比 */
     int           sel_alt;       /* 选中的方案下标（0..n-1） */
     ManeuverList  man;
-    NmMutex      *nav_mu;
+    SkMutex      *nav_mu;
     int           nav_busy;      /* 后台在算（nav_mu 保护） */
     int           nav_pending;   /* 排队中的新请求（nav_mu 保护） */
     NavPick       req_a, req_b;
@@ -154,7 +154,7 @@ typedef struct {
      * 这些是纯 UI 状态，与导航/渲染算法无关；改它们不影响算路结果。 */
     int           day_night;      /* 有效值：0 昼 / 1 夜（夜间半透明蒙版），由 day_night_mode 推算 */
     int           day_night_mode; /* 昼夜模式：0 白天(手动) / 1 夜间(手动) / 2 自动(日出日落) */
-    int           gpu_available;  /* 运行环境是否检测到 GPU（nm_has_gpu），仅信息展示用 */
+    int           gpu_available;  /* 运行环境是否检测到 GPU（sk_has_gpu），仅信息展示用 */
     int           mode;           /* 顶栏模式页签：0 浏览 / 1 导航 */
     int           datum;          /* 坐标系（大地基准）：0 WGS84 / 1 CGCS2000 / 2 北京54 / 3 西安80（只管坐标读数） */
     int           grid_type;      /* 网格类型（与坐标系解耦）：0 经纬网(WGS84，默认) / 1 方里格(高斯-克吕格公里网) */
@@ -232,7 +232,7 @@ void app_refresh_coverage(App *a);
  * ★ 用 pct*255/100 而不是 pct*2.55：关键是 **100 必须严格等于 255**（不透明），
  *   否则"调回不透明"会残留一层灰；0 必须严格是 0（完全隐藏该浮层）。
  *   中间值按四舍五入（+50 再整除），75% → 191。 */
-static inline uint8_t app_ovl_a(const App *a, NmOverlay id)
+static inline uint8_t app_ovl_a(const App *a, SkOverlay id)
 {
     if (!a || id < 0 || id >= OVL_COUNT) return 255;
     int pct = a->ovl_alpha[id];
@@ -255,7 +255,7 @@ void app_shutdown(App *a);
  * 把 App→配置并写盘。面板编辑 / 键位 / 菜单切换后调用后者即时落盘。 */
 void app_apply_settings(App *a);
 /* 浮层透明度：改单个（pct 会被夹到 0~100）/ 全部恢复默认 75%。 */
-void app_ovl_alpha_set(App *a, NmOverlay id, int pct);
+void app_ovl_alpha_set(App *a, SkOverlay id, int pct);
 void app_ovl_alpha_reset(App *a);
 void app_persist_settings(App *a);
 

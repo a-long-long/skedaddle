@@ -28,7 +28,7 @@
 
 static uint64_t mono_ms(void)
 {
-    return nm_now_ms();                /* 平台层：clock_gettime / QPC */
+    return sk_now_ms();                /* 平台层：clock_gettime / QPC */
 }
 
 
@@ -109,11 +109,11 @@ int main(int argc, char **argv)
 
     LmDist d;
     uint64_t npop = 0, npush = 0;
-    double ru0 = nm_peak_rss_mb();     /* 平台层：getrusage / GetProcessMemoryInfo */
+    double ru0 = sk_peak_rss_mb();     /* 平台层：getrusage / GetProcessMemoryInfo */
     uint64_t t0 = mono_ms();
     int rc = lm_dijkstra(r, a, &d, &npop, &npush);
     uint64_t t1 = mono_ms();
-    double ru1 = nm_peak_rss_mb();
+    double ru1 = sk_peak_rss_mb();
     if (rc != 0) {
         printf("LM-DIST-FAIL Dijkstra 返回 %d\n", rc);
         router_destroy(r); mapset_free(&ms); return 1;

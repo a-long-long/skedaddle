@@ -1081,7 +1081,7 @@ static void clear_per_file(Builder *b)
 
 static double now_ms(void)
 {
-    return (double)nm_now_ms();       /* 平台层：clock_gettime / QPC */
+    return (double)sk_now_ms();       /* 平台层：clock_gettime / QPC */
 }
 
 static void acc_stats(BuildStats *tot, const BuildStats *st)
@@ -1155,7 +1155,7 @@ static int write_meta(const char *meta_path, const char *db_path,
 {
     FILE *f = fopen(meta_path, "w");
     if (!f) { fprintf(stderr, "写不了 %s\n", meta_path); return -1; }
-    fprintf(f, "# NavMap 自动地名库（skedaddle_places_build 生成）\n");
+    fprintf(f, "# Skedaddle 自动地名库（skedaddle_places_build 生成）\n");
     fprintf(f, "db           = %s\n", db_path);
     fprintf(f, "sources      = %d\n", nsrc);
     for (int i = 0; i < nsrc; i++) {
@@ -1169,7 +1169,7 @@ static int write_meta(const char *meta_path, const char *db_path,
         }
         {
             int64_t mt = 0;
-            if (nm_stat_file(srcs[i], NULL, &mt) == 0) mtime = (long)mt;
+            if (sk_stat_file(srcs[i], NULL, &mt) == 0) mtime = (long)mt;
         }
         fprintf(f, "source[%d]    = %s\n", i, srcs[i]);
         fprintf(f, "src_bytes[%d] = %ld\n", i, bytes);
@@ -1302,12 +1302,12 @@ int main(int argc, char **argv)
     } else {
         /* 目录枚举 + 排序：顺序必须可复现（旧版用 scandir+alphasort，
            平台层只保证"枚举到"，排序自己来）。 */
-        NmDir *d = nm_dir_open(src_dir);
+        SkDir *d = sk_dir_open(src_dir);
         if (!d) { fprintf(stderr, "读不了目录 %s\n", src_dir); return 2; }
         char **names = NULL;
         int nn = 0, cap = 0;
         const char *de;
-        while ((de = nm_dir_next(d)) != NULL) {
+        while ((de = sk_dir_next(d)) != NULL) {
             if (!ends_with(de, ".osm.pbf")) continue;
             if (nn == cap) {
                 cap = cap ? cap * 2 : 16;
@@ -1315,15 +1315,15 @@ int main(int argc, char **argv)
                 if (!t) break;
                 names = t;
             }
-            names[nn++] = nm_strdup(de);
+            names[nn++] = sk_strdup(de);
         }
-        nm_dir_close(d);
+        sk_dir_close(d);
         qsort(names, (size_t)nn, sizeof(char *), cmp_str);
         srcs = calloc((size_t)(nn > 0 ? nn : 1), sizeof(char *));
         for (int i = 0; i < nn; i++) {
             char p[4096];
-            if (nm_path_join(p, sizeof(p), src_dir, names[i]) != 0) continue;
-            srcs[nsrc++] = nm_strdup(p);
+            if (sk_path_join(p, sizeof(p), src_dir, names[i]) != 0) continue;
+            srcs[nsrc++] = sk_strdup(p);
             free(names[i]);
         }
         free(names);

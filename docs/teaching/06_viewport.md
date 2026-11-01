@@ -1,7 +1,7 @@
 # 第 6 课：视口、投影与瓦片键
 
 > 模块：`src/map/map_view.{c,h}`、`src/map/tileidx.{c,h}`
-> 前置：第 1 课 `nm_mercator`/`nm_mercator_y_fast`、墨卡托世界坐标概念。
+> 前置：第 1 课 `sk_mercator`/`sk_mercator_y_fast`、墨卡托世界坐标概念。
 
 ## 一、教学目的
 
@@ -12,7 +12,7 @@
 | 文件 | 职责 |
 |---|---|
 | `map_view.c/h` | `MapView`（视口状态 + 投影缓存）；`mv_project`/`mv_unproj`/`mv_fit_bbox`/`mv_proj_begin`/`mv_proj` |
-| `tileidx.c/h` | 瓦片键三版本：`nm_tile_of` / `nm_tile_of_raw` / `nm_tile_of_exact` |
+| `tileidx.c/h` | 瓦片键三版本：`sk_tile_of` / `sk_tile_of_raw` / `sk_tile_of_exact` |
 
 **`MapView`**（`map_view.h:14-30`）：`lat/lon/zoom/w/h/rot` 视口状态 + 投影缓存 `cx,cy,scale` 与惰性失效键 `c_valid/c_lat/c_lon/c_zoom/c_rot/c_w/c_h`。
 
@@ -35,9 +35,9 @@
 | `void mv_fit_bbox(MapView *v, double lat0, double lon0, double lat1, double lon1, double margin_px)` | `map_view.c:133-152` | 让矩形刚好装进视口 |
 | `static inline void mv_proj(const MvProj *p, double lat, double lon, int *x, int *y)` | `map_view.h:59-75` | 批量投影（内联，无缓存键比对） |
 | `static inline void mv_proj_e7(const MvProj *p, int32_t lat_e7, int32_t lon_e7, int *x, int *y)` | `map_view.h:81-85` | e7 整数版投影（逐位等价） |
-| `void nm_tile_of(double lat, double lon, int *tx, int *ty)` | `tileidx.c:47-67` | 生产用：查表+边界回退 |
-| `void nm_tile_of_raw(double lat, double lon, int *tx, int *ty)` | `tileidx.c:34-45` | 仅自检：查表无回退 |
-| `void nm_tile_of_exact(double lat, double lon, int *tx, int *ty)` | `tileidx.c:20-31` | 参考：sin+log 精确版 |
+| `void sk_tile_of(double lat, double lon, int *tx, int *ty)` | `tileidx.c:47-67` | 生产用：查表+边界回退 |
+| `void sk_tile_of_raw(double lat, double lon, int *tx, int *ty)` | `tileidx.c:34-45` | 仅自检：查表无回退 |
+| `void sk_tile_of_exact(double lat, double lon, int *tx, int *ty)` | `tileidx.c:20-31` | 参考：sin+log 精确版 |
 
 ## 三、完整实现代码
 
@@ -71,7 +71,7 @@ typedef struct {
 static inline void mv_proj(const MvProj *p, double lat, double lon, int *x, int *y)
 {
     double wx = (lon + 180.0) / 360.0;
-    double wy = nm_mercator_y_fast(lat);
+    double wy = sk_mercator_y_fast(lat);
     double sx = (wx - p->cx) * p->scale;
     double sy = (wy - p->cy) * p->scale;
     /* rot==0 时这一支恒不进，热路径与改造前逐位等价 */
@@ -99,7 +99,7 @@ static inline void mv_proj_e7(const MvProj *p, int32_t lat_e7, int32_t lon_e7,
 
 ### 2. 投影缓存与单点投影 `mv_prepare` / `mv_project`（完整体）
 
-`mv_prepare` 用**逐字段比对缓存键**做惰性失效——`window.c` 到处直接改 `view.lat/zoom`，要求"改完必须 `invalidate`"迟早会漏；漏了就是画面错位。`mv_project` 走 `nm_mercator_y_fast` 查表插值而非精确 `nm_mercator`，因为一帧几十万次调用里 `sin+log` 是真花钱的。
+`mv_prepare` 用**逐字段比对缓存键**做惰性失效——`window.c` 到处直接改 `view.lat/zoom`，要求"改完必须 `invalidate`"迟早会漏；漏了就是画面错位。`mv_project` 走 `sk_mercator_y_fast` 查表插值而非精确 `sk_mercator`，因为一帧几十万次调用里 `sin+log` 是真花钱的。
 
 ```c
 static void mv_prepare(const MapView *v)
@@ -110,7 +110,7 @@ static void mv_prepare(const MapView *v)
         m->c_rot == v->rot &&
         m->c_w == v->w && m->c_h == v->h)
         return;
-    nm_mercator(v->lat, v->lon, &m->cx, &m->cy);
+    sk_mercator(v->lat, v->lon, &m->cx, &m->cy);
     m->scale = 256.0 * pow(2.0, v->zoom);
     m->c_lat = v->lat; m->c_lon = v->lon; m->c_zoom = v->zoom;
     m->c_rot = v->rot;
@@ -122,11 +122,11 @@ int mv_project(const MapView *v, double lat, double lon, int *x, int *y)
 {
     mv_prepare(v);
     MapView *m = (MapView *)v;
-    /* ★ 这里不用 nm_mercator：那个 sin+log 版本在每帧几十万次调用的场合
+    /* ★ 这里不用 sk_mercator：那个 sin+log 版本在每帧几十万次调用的场合
        是真花钱的（z9 一帧 30 ms）。墨卡托的 x 本来就只跟经度线性相关，
        y 只跟纬度相关且足够光滑 → 走查表插值版，见 geo.c 的误差账。 */
     double wx = (lon + 180.0) / 360.0;
-    double wy = nm_mercator_y_fast(lat);
+    double wy = sk_mercator_y_fast(lat);
     double sx = (wx - m->cx) * m->scale;
     double sy = (wy - m->cy) * m->scale;
     if (m->rot != 0.0) {
@@ -179,7 +179,7 @@ void mv_unproject(const MapView *v, int x, int y, double *lat, double *lon)
     }
     double wx = m->cx + sx / m->scale;
     double wy = m->cy + sy / m->scale;
-    nm_mercator_inv(wx, wy, lat, lon);
+    sk_mercator_inv(wx, wy, lat, lon);
 }
 ```
 
@@ -192,8 +192,8 @@ void mv_fit_bbox(MapView *v, double lat0, double lon0,
                  double lat1, double lon1, double margin_px)
 {
     double x0, y0, x1, y1;
-    nm_mercator(lat0, lon0, &x0, &y0);
-    nm_mercator(lat1, lon1, &x1, &y1);
+    sk_mercator(lat0, lon0, &x0, &y0);
+    sk_mercator(lat1, lon1, &x1, &y1);
     double dx = fabs(x1 - x0), dy = fabs(y1 - y0);
     if (dx < 1e-9) dx = 1e-9;
     if (dy < 1e-9) dy = 1e-9;
@@ -206,19 +206,19 @@ void mv_fit_bbox(MapView *v, double lat0, double lon0,
     v->zoom = log2(s / 256.0);
 
     /* 中心 = 墨卡托矩形的中点（不是经纬度中点，否则高纬会偏） */
-    nm_mercator_inv((x0 + x1) / 2.0, (y0 + y1) / 2.0, &v->lat, &v->lon);
+    sk_mercator_inv((x0 + x1) / 2.0, (y0 + y1) / 2.0, &v->lat, &v->lon);
 }
 ```
 
-### 6. 瓦片键三版本 `nm_tile_of` / `nm_tile_of_raw` / `nm_tile_of_exact`（完整体）
+### 6. 瓦片键三版本 `sk_tile_of` / `sk_tile_of_raw` / `sk_tile_of_exact`（完整体）
 
-Z14（`NM_TILE_Z=14`，约 2.4km/格@北京）。`nm_tile_of_exact` 用精确 `nm_mercator`；`nm_tile_of_raw` 用 `nm_mercator_y_fast` 查表但**不做边界回退**——它存在的意义是"证明边界回退确有必要"。生产版在瓦片边界带（`TILE_EDGE_EPS=2e-3` 瓦片，必须大于查表最坏误差 3.6e-4）回退精确公式定夺。
+Z14（`SK_TILE_Z=14`，约 2.4km/格@北京）。`sk_tile_of_exact` 用精确 `sk_mercator`；`sk_tile_of_raw` 用 `sk_mercator_y_fast` 查表但**不做边界回退**——它存在的意义是"证明边界回退确有必要"。生产版在瓦片边界带（`TILE_EDGE_EPS=2e-3` 瓦片，必须大于查表最坏误差 3.6e-4）回退精确公式定夺。
 
 ```c
 /* 边界带宽（单位：瓦片）。
    ★ 它必须**大于查表的最坏误差**，否则回退根本不触发（第一版取 1e-4，
      tools/tile_selftest 的定向构造立刻抓到 6536 处差异）。
-     误差账：nm_mercator_y_fast 的插值误差 = h²/8·|y''|，h = 0.0052°，
+     误差账：sk_mercator_y_fast 的插值误差 = h²/8·|y''|，h = 0.0052°，
      y''(度²) = (π/180)²·sinφ/(2π·cos²φ)。
        φ=45°  → 3.8e-6 瓦片        φ=53°（中国最北）→ 6e-6 瓦片
        φ=85°  → 3.6e-4 瓦片（cos²φ→0，误差被放大近 100 倍）
@@ -226,13 +226,13 @@ Z14（`NM_TILE_Z=14`，约 2.4km/格@北京）。`nm_tile_of_exact` 用精确 `n
    （京→郑 85 万次里约 3400 次 × 55 ns ≈ 0.2 ms，可忽略）。 */
 #define TILE_EDGE_EPS 2e-3
 
-/* 参考实现：就是 nm_mercator 的精确公式，跟本项目其他所有瓦片计算
+/* 参考实现：就是 sk_mercator 的精确公式，跟本项目其他所有瓦片计算
    （mapset.c / coverage.c / graph_build.c）逐位一致。别改它，它是尺子。 */
-void nm_tile_of_exact(double lat, double lon, int *tx, int *ty)
+void sk_tile_of_exact(double lat, double lon, int *tx, int *ty)
 {
     double wx, wy;
-    nm_mercator(lat, lon, &wx, &wy);
-    double Z = (double)(1u << NM_TILE_Z);
+    sk_mercator(lat, lon, &wx, &wy);
+    double Z = (double)(1u << SK_TILE_Z);
     int x = (int)(wx * Z), y = (int)(wy * Z);
     if (x < 0) x = 0;
     if (y < 0) y = 0;
@@ -242,11 +242,11 @@ void nm_tile_of_exact(double lat, double lon, int *tx, int *ty)
 }
 
 /* 查表版（不带边界回退）。生产代码不要用 —— 只给自检当"对照组"。 */
-void nm_tile_of_raw(double lat, double lon, int *tx, int *ty)
+void sk_tile_of_raw(double lat, double lon, int *tx, int *ty)
 {
-    double Z  = (double)(1u << NM_TILE_Z);
+    double Z  = (double)(1u << SK_TILE_Z);
     double wx = (lon + 180.0) / 360.0;
-    double wy = nm_mercator_y_fast(lat);
+    double wy = sk_mercator_y_fast(lat);
     int x = (int)floor(wx * Z), y = (int)floor(wy * Z);
     if (x < 0) x = 0;
     if (y < 0) y = 0;
@@ -255,17 +255,17 @@ void nm_tile_of_raw(double lat, double lon, int *tx, int *ty)
     *tx = x; *ty = y;
 }
 
-void nm_tile_of(double lat, double lon, int *tx, int *ty)
+void sk_tile_of(double lat, double lon, int *tx, int *ty)
 {
-    double Z  = (double)(1u << NM_TILE_Z);
+    double Z  = (double)(1u << SK_TILE_Z);
     double wx = (lon + 180.0) / 360.0;
-    double wy = nm_mercator_y_fast(lat);
+    double wy = sk_mercator_y_fast(lat);
     double fx = wx * Z, fy = wy * Z;
     double ix = floor(fx), iy = floor(fy);
     if (fx - ix < TILE_EDGE_EPS || fx - ix > 1.0 - TILE_EDGE_EPS ||
         fy - iy < TILE_EDGE_EPS || fy - iy > 1.0 - TILE_EDGE_EPS) {
         /* 贴着瓦片边界：查表的 3.8e-6 瓦片误差可能跨格，用精确公式定夺 */
-        nm_mercator(lat, lon, &wx, &wy);
+        sk_mercator(lat, lon, &wx, &wy);
         fx = wx * Z; fy = wy * Z;
         ix = floor(fx); iy = floor(fy);
     }
@@ -280,14 +280,14 @@ void nm_tile_of(double lat, double lon, int *tx, int *ty)
 
 ## 四、与其他功能之间的联系
 
-- **上游 · 第 1 课**：`mv_project`/`mv_unproject`/`mv_fit_bbox` 依赖 `nm_mercator`/`nm_mercator_y_fast`/`nm_mercator_inv`；`nm_tile_of` 三版本同样以 `nm_mercator` 为"尺子"。
+- **上游 · 第 1 课**：`mv_project`/`mv_unproject`/`mv_fit_bbox` 依赖 `sk_mercator`/`sk_mercator_y_fast`/`sk_mercator_inv`；`sk_tile_of` 三版本同样以 `sk_mercator` 为"尺子"。
 - **下游 · 第 7/8 课渲染管线**：`render/paint.c` 在每 pass 开头 `mv_proj_begin`，循环内用 `mv_proj`（`paint.c:265,462,805,927,1038`）；`ui/window.c` 的 `app_update_coverage`/`paint_frame` 用 `mv_proj_begin`/`mv_proj` 统一驱动。
-- **下游 · 第 10 课跨省缝合**：L5 用同样 Z14 切 tile，`nm_tile_of` 在 `coverage.c`/`mapset_detail_prov` 定 tile；`route/sew.c` 经 `mapset_query_tile` 取跨省边，`sew_cb` 用 `coord_key_e7(node lat/lon)`（见 L5 `coordkey.h`）把不同省的同一坐标合成一个图节点，实现 `sew` 缝合。
-- **自检 · 第 13 课架构门禁**：`skedaddle_tile_selftest` 对全图 5228 万真实节点逐点比 `nm_tile_of` vs 精确版，并以 `--expect-diff` 证明 `nm_tile_of_raw` 必须有差异（否则回退是死代码）。
+- **下游 · 第 10 课跨省缝合**：L5 用同样 Z14 切 tile，`sk_tile_of` 在 `coverage.c`/`mapset_detail_prov` 定 tile；`route/sew.c` 经 `mapset_query_tile` 取跨省边，`sew_cb` 用 `coord_key_e7(node lat/lon)`（见 L5 `coordkey.h`）把不同省的同一坐标合成一个图节点，实现 `sew` 缝合。
+- **自检 · 第 13 课架构门禁**：`skedaddle_tile_selftest` 对全图 5228 万真实节点逐点比 `sk_tile_of` vs 精确版，并以 `--expect-diff` 证明 `sk_tile_of_raw` 必须有差异（否则回退是死代码）。
 
 ## 五、演示、练习与验收
 
 - **演示**：`./build_rel/skedaddle_tile_selftest`（查表版 vs 精确版 逐点等价）；`./build_rel/skedaddle_tile_xcheck`（跨省接边验证）。
-- **练习**：给定两个经纬度，手算 Z14 瓦片坐标，再用 `nm_tile_of` 验证（`TILE_EDGE_EPS` 边界带内会触发精确回退）；观察 `skedaddle_tile_selftest` 对 5228 万节点的逐点比对输出。
+- **练习**：给定两个经纬度，手算 Z14 瓦片坐标，再用 `sk_tile_of` 验证（`TILE_EDGE_EPS` 边界带内会触发精确回退）；观察 `skedaddle_tile_selftest` 对 5228 万节点的逐点比对输出。
 - **投影链路验证**：在 `mv_project`（`map_view.c:38`）与 `mv_proj`（`map_view.h:59`）分别打桩，对同一组经纬度比较输出，确认二者逐位一致；再在 `mv_proj_begin` 后修改 `view.zoom` 再调 `mv_proj` 应看出差异（证明快照只对本帧有效）。
 - **验收**：能写出"经纬度 → 屏幕像素"调用链，并说明投影缓存（惰性失效键）与瓦片键边界回退（`TILE_EDGE_EPS` > 最坏插值误差）各自为什么必要。

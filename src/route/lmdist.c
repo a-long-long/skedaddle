@@ -104,16 +104,16 @@ int lm_dijkstra(Router *r, RNode from, LmDist *out,
         size_t nmem = members_of(r, ck, pi, nd, mem);
 
         /* ② 展开出边（只对"到达时那个"省节点做；跨缝的成员由它们自己 pop 时展开） */
-        uint32_t eb = nm_get_u32(s->nodes.data + (uint64_t)nd * NM_NODE_BYTES +
+        uint32_t eb = sk_get_u32(s->nodes.data + (uint64_t)nd * SK_NODE_BYTES +
                                  NF_EDGE_BEGIN);
-        uint32_t ec = nm_get_u16(s->nodes.data + (uint64_t)nd * NM_NODE_BYTES +
+        uint32_t ec = sk_get_u16(s->nodes.data + (uint64_t)nd * SK_NODE_BYTES +
                                  NF_EDGE_COUNT);
         uint64_t ne = s->edges.hdr.rec_count;
         for (uint32_t k = 0; k < ec; k++) {
             uint64_t ei = (uint64_t)eb + k;
             if (ei >= ne) break;
-            const uint8_t *er = s->edges.data + ei * NM_EDGE_BYTES;
-            uint16_t fl = nm_get_u16(er + EF_FLAGS);
+            const uint8_t *er = s->edges.data + ei * SK_EDGE_BYTES;
+            uint16_t fl = sk_get_u16(er + EF_FLAGS);
             if (fl & EF_NO_ACCESS) continue;
             if (r->opt.avoid_toll && (fl & EF_TOLL)) continue;
             if (r->opt.avoid_unpaved && (fl & EF_UNPAVED)) continue;
@@ -127,7 +127,7 @@ int lm_dijkstra(Router *r, RNode from, LmDist *out,
             }
             double c = edge_cost(r, er, NULL);
             if (c <= 0) continue;
-            uint32_t to = nm_get_u32(er + EF_TO);
+            uint32_t to = sk_get_u32(er + EF_TO);
             if ((uint64_t)to >= s->nodes.hdr.rec_count) continue;
             uint64_t nf = out->off[pi] + to;
             uint64_t nv = D + (uint64_t)(c * LM_SCALE + 0.5);

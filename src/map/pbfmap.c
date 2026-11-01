@@ -157,8 +157,8 @@ int pbfmap_decode(const char *pbf_path, const NMBinFile *nodes_index,
     int64_t *node_ids = malloc((n_nodes ? n_nodes : 1) * sizeof(int64_t));
     if (!node_ids) return -1;
     for (uint64_t i = 0; i < n_nodes; i++) {
-        const uint8_t *nr = nodes_index->data + i * NM_NODE_BYTES;
-        node_ids[i] = (int64_t)nm_get_u64(nr + NF_OSM_ID);
+        const uint8_t *nr = nodes_index->data + i * SK_NODE_BYTES;
+        node_ids[i] = (int64_t)sk_get_u64(nr + NF_OSM_ID);
     }
     /* 保险：确认是升序（否则二分查表会错）。不该发生，但代价只是 O(n)。 */
     int sorted = 1;
@@ -341,54 +341,54 @@ int pbfmap_decode(const char *pbf_path, const NMBinFile *nodes_index,
 
     /* lines：跳过 ref_cnt==0 的丢弃条目 */
     {
-        Buf lb; memset(&lb, 0, sizeof(lb)); lb.esz = NM_LINE_BYTES;
+        Buf lb; memset(&lb, 0, sizeof(lb)); lb.esz = SK_LINE_BYTES;
         for (size_t i = 0; i < nlines; i++) {
             if (lr[i].ref_cnt == 0) continue;
-            uint8_t rec[NM_LINE_BYTES];
+            uint8_t rec[SK_LINE_BYTES];
             memset(rec, 0, sizeof(rec));
-            nm_put_u64(rec + LF_OSM_ID,  (uint64_t)lr[i].osm_id);
-            nm_put_u32(rec + LF_REF_OFF, lr[i].ref_off);
-            nm_put_u32(rec + LF_REF_CNT, lr[i].ref_cnt);
+            sk_put_u64(rec + LF_OSM_ID,  (uint64_t)lr[i].osm_id);
+            sk_put_u32(rec + LF_REF_OFF, lr[i].ref_off);
+            sk_put_u32(rec + LF_REF_CNT, lr[i].ref_cnt);
             rec[LF_CLASS]  = lr[i].cls;
             rec[LF_FLAGS]  = lr[i].flags;
-            nm_put_u32(rec + LF_NAME_ID, lr[i].name_id);
+            sk_put_u32(rec + LF_NAME_ID, lr[i].name_id);
             if (buf_reserve(&lb, sizeof(rec)) != 0) { rc_ret = -1; break; }
             memcpy(lb.p + lb.n, rec, sizeof(rec));
             lb.n += sizeof(rec);
         }
-        memfile_init(&out->lines, NMBIN_KIND_LINES, NM_LINE_BYTES, src_hint);
+        memfile_init(&out->lines, NMBIN_KIND_LINES, SK_LINE_BYTES, src_hint);
         memfile_add_field(&out->lines, "osm_id",  LF_OSM_ID,  NMT_U64, 8);
         memfile_add_field(&out->lines, "ref_off", LF_REF_OFF, NMT_U32, 4);
         memfile_add_field(&out->lines, "ref_cnt", LF_REF_CNT, NMT_U32, 4);
         memfile_add_field(&out->lines, "class",   LF_CLASS,   NMT_U8,  1);
         memfile_add_field(&out->lines, "flags",   LF_FLAGS,   NMT_U8,  1);
         memfile_add_field(&out->lines, "name_id", LF_NAME_ID, NMT_U32, 4);
-        if (rc_ret == 0 && memfile_finish(&out->lines, &lb, lb.n / NM_LINE_BYTES) != 0)
+        if (rc_ret == 0 && memfile_finish(&out->lines, &lb, lb.n / SK_LINE_BYTES) != 0)
             rc_ret = -1;
         buf_free(&lb);
     }
 
     /* areas */
     {
-        Buf ab; memset(&ab, 0, sizeof(ab)); ab.esz = NM_AREA_BYTES;
+        Buf ab; memset(&ab, 0, sizeof(ab)); ab.esz = SK_AREA_BYTES;
         for (size_t i = 0; i < nareas; i++) {
             if (ar[i].ref_cnt == 0) continue;
-            uint8_t rec[NM_AREA_BYTES];
+            uint8_t rec[SK_AREA_BYTES];
             memset(rec, 0, sizeof(rec));
-            nm_put_u64(rec + AF_OSM_ID,  (uint64_t)ar[i].osm_id);
-            nm_put_u32(rec + AF_REF_OFF, ar[i].ref_off);
-            nm_put_u32(rec + AF_REF_CNT, ar[i].ref_cnt);
+            sk_put_u64(rec + AF_OSM_ID,  (uint64_t)ar[i].osm_id);
+            sk_put_u32(rec + AF_REF_OFF, ar[i].ref_off);
+            sk_put_u32(rec + AF_REF_CNT, ar[i].ref_cnt);
             rec[AF_KIND] = ar[i].kind;
             if (buf_reserve(&ab, sizeof(rec)) != 0) { rc_ret = -1; break; }
             memcpy(ab.p + ab.n, rec, sizeof(rec));
             ab.n += sizeof(rec);
         }
-        memfile_init(&out->areas, NMBIN_KIND_AREAS, NM_AREA_BYTES, src_hint);
+        memfile_init(&out->areas, NMBIN_KIND_AREAS, SK_AREA_BYTES, src_hint);
         memfile_add_field(&out->areas, "osm_id",  AF_OSM_ID,  NMT_U64, 8);
         memfile_add_field(&out->areas, "ref_off", AF_REF_OFF, NMT_U32, 4);
         memfile_add_field(&out->areas, "ref_cnt", AF_REF_CNT, NMT_U32, 4);
         memfile_add_field(&out->areas, "kind",    AF_KIND,    NMT_U8,  1);
-        if (rc_ret == 0 && memfile_finish(&out->areas, &ab, ab.n / NM_AREA_BYTES) != 0)
+        if (rc_ret == 0 && memfile_finish(&out->areas, &ab, ab.n / SK_AREA_BYTES) != 0)
             rc_ret = -1;
         buf_free(&ab);
     }

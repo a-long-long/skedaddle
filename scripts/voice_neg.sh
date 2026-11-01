@@ -125,12 +125,12 @@ inject "短隧道不丢弃" "$SRC" \
 
 # ---- 8) 接线层不发声（接线断了） ----
 # ★ 目标就是 src/ui/voice_wire.c（接线的**唯一实现**，window.c 只是薄封装）。
-#   破坏发声循环体：把 `nm_tts_speak(vf.text[i]);` 套一层永假的 `if (n < 0)`，
+#   破坏发声循环体：把 `sk_tts_speak(vf.text[i]);` 套一层永假的 `if (n < 0)`，
 #   这样常规播报一句都不出（A1~A7 期望的转向提示全没 ⇒ 必红）。
 #   ★ 用 `if (n < 0)` 而不是 `i < 0`：后者会让 n 变成"未使用变量"
 #     ⇒ -Werror 直接编译失败 ⇒ 跑的还是旧 exe ⇒ 判据假绿（编译失败不等于抓到）。
 inject "接线：窗口不播报" "$WIRE" \
-  '            nm_tts_speak(vf.text[i]);|||            if (n < 0) nm_tts_speak(vf.text[i]);'
+  '            sk_tts_speak(vf.text[i]);|||            if (n < 0) sk_tts_speak(vf.text[i]);'
 
 # ---- 9) 收尾语被暂停挡掉（就是那个真 bug 的形状，锁 ① 收尾语） ----
 #   复现 GUI 里"到达收尾语从没响过"：把收尾语的播报条件加上 !paused 依赖。

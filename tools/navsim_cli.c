@@ -250,9 +250,9 @@ int main(int argc, char **argv)
             if (router_plan(r, na, b, &rr2) != 0) {
                 FAIL("偏航后重算失败\n");
             } else {
-                double d0 = nm_haversine_m(rr2.lat_e7[0] / 1e7, rr2.lon_e7[0] / 1e7,
+                double d0 = sk_haversine_m(rr2.lat_e7[0] / 1e7, rr2.lon_e7[0] / 1e7,
                                            ola, olo);
-                double d1 = nm_haversine_m(rr2.lat_e7[rr2.n - 1] / 1e7,
+                double d1 = sk_haversine_m(rr2.lat_e7[rr2.n - 1] / 1e7,
                                            rr2.lon_e7[rr2.n - 1] / 1e7,
                                            rr.lat_e7[rr.n - 1] / 1e7,
                                            rr.lon_e7[rr.n - 1] / 1e7);

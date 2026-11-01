@@ -183,10 +183,10 @@ typedef struct {
 static int tile_range(const NMBinFile *tiles, const MapView *v, TileRange *tr)
 {
     /* tiles.bin payload：rec0 = {minx,miny}，rec1 = {nx,ny}，其后 ntile 条目录 */
-    uint32_t minx = nm_get_u32(tiles->data + TF_EDGE_OFF);
-    uint32_t miny = nm_get_u32(tiles->data + TF_EDGE_CNT);
-    uint32_t nx   = nm_get_u32(tiles->data + NM_TILE_REC_BYTES + TF_EDGE_OFF);
-    uint32_t ny   = nm_get_u32(tiles->data + NM_TILE_REC_BYTES + TF_EDGE_CNT);
+    uint32_t minx = sk_get_u32(tiles->data + TF_EDGE_OFF);
+    uint32_t miny = sk_get_u32(tiles->data + TF_EDGE_CNT);
+    uint32_t nx   = sk_get_u32(tiles->data + SK_TILE_REC_BYTES + TF_EDGE_OFF);
+    uint32_t ny   = sk_get_u32(tiles->data + SK_TILE_REC_BYTES + TF_EDGE_CNT);
     uint64_t ntile_dir = tiles->hdr.rec_count - 2;
     if (nx == 0 || ny == 0 || (uint64_t)nx * ny > ntile_dir)
         return 0;                               /* 目录不完整，放弃 */
@@ -194,10 +194,10 @@ static int tile_range(const NMBinFile *tiles, const MapView *v, TileRange *tr)
     double bb[4];
     mv_visible_bbox(v, bb);
     double wxa, wya, wxb, wyb;
-    nm_mercator(bb[0], bb[1], &wxa, &wya);
-    nm_mercator(bb[2], bb[3], &wxb, &wyb);
+    sk_mercator(bb[0], bb[1], &wxa, &wya);
+    sk_mercator(bb[2], bb[3], &wxb, &wyb);
 
-    double Z = (double)(1u << NM_TILE_Z);
+    double Z = (double)(1u << SK_TILE_Z);
     int tx_lo = (int)( (wxa < wxb ? wxa : wxb) * Z) - 1;
     int tx_hi = (int)( (wxa > wxb ? wxa : wxb) * Z) + 1;
     int ty_lo = (int)( (wya < wyb ? wya : wyb) * Z) - 1;
@@ -218,25 +218,25 @@ static int tile_range(const NMBinFile *tiles, const MapView *v, TileRange *tr)
 static uint32_t tile_cnt_at(const NMBinFile *tiles, int tx, int ty)
 {
     if (!tiles || tiles->hdr.rec_count < 2) return 0;
-    uint32_t minx = nm_get_u32(tiles->data + TF_EDGE_OFF);
-    uint32_t miny = nm_get_u32(tiles->data + TF_EDGE_CNT);
-    uint32_t nx   = nm_get_u32(tiles->data + NM_TILE_REC_BYTES + TF_EDGE_OFF);
-    uint32_t ny   = nm_get_u32(tiles->data + NM_TILE_REC_BYTES + TF_EDGE_CNT);
+    uint32_t minx = sk_get_u32(tiles->data + TF_EDGE_OFF);
+    uint32_t miny = sk_get_u32(tiles->data + TF_EDGE_CNT);
+    uint32_t nx   = sk_get_u32(tiles->data + SK_TILE_REC_BYTES + TF_EDGE_OFF);
+    uint32_t ny   = sk_get_u32(tiles->data + SK_TILE_REC_BYTES + TF_EDGE_CNT);
     if (nx == 0 || ny == 0) return 0;
     if (tx < (int)minx || ty < (int)miny ||
         tx >= (int)(minx + nx) || ty >= (int)(miny + ny)) return 0;
     if ((uint64_t)nx * ny > tiles->hdr.rec_count - 2) return 0;
     size_t t = ((size_t)(ty - miny) * nx) + (tx - minx);
-    return nm_get_u32(tiles->data + (2 + t) * NM_TILE_REC_BYTES + TF_EDGE_CNT);
+    return sk_get_u32(tiles->data + (2 + t) * SK_TILE_REC_BYTES + TF_EDGE_CNT);
 }
 
 static void tile_dir(const NMBinFile *tiles, const TileRange *tr, int tx, int ty,
                      uint32_t *off, uint32_t *cnt)
 {
     size_t t = ((size_t)(ty - (int)tr->miny) * tr->nx) + (tx - (int)tr->minx);
-    const uint8_t *dir = tiles->data + (2 + t) * NM_TILE_REC_BYTES;
-    *off = nm_get_u32(dir + TF_EDGE_OFF);
-    *cnt = nm_get_u32(dir + TF_EDGE_CNT);
+    const uint8_t *dir = tiles->data + (2 + t) * SK_TILE_REC_BYTES;
+    *off = sk_get_u32(dir + TF_EDGE_OFF);
+    *cnt = sk_get_u32(dir + TF_EDGE_CNT);
 }
 
 /* tile 驱动路径：只遍历视口覆盖的 tile（±1 格 margin）。 */
@@ -280,7 +280,7 @@ static void paint_roads_tiled(Raster *rs, const MapView *v,
        整条路径只顺序扫 edgelist，nodes.bin 一次都不读、edges.bin 只在
        z≥15 取路名时读（那时视口里就几百条边）。这就是 PLAN.md §21 里
        "预取和缓存都压不下去的随机访存"的唯一根治法：不访问。 */
-    if (edgelist->hdr.rec_size == NM_XL2_BYTES) {
+    if (edgelist->hdr.rec_size == SK_XL2_BYTES) {
         for (int ty = tr.ty_lo; ty <= tr.ty_hi; ty++) {
             for (int tx = tr.tx_lo; tx <= tr.tx_hi; tx++) {
                 uint32_t off, cnt;
@@ -294,16 +294,16 @@ static void paint_roads_tiled(Raster *rs, const MapView *v,
                     if (cov < 2) ddt = NULL;
                 }
                 const uint8_t *xl = edgelist->data +
-                                    (size_t)off * NM_XL2_BYTES;
-                for (uint32_t k = 0; k < cnt; k++, xl += NM_XL2_BYTES) {
+                                    (size_t)off * SK_XL2_BYTES;
+                for (uint32_t k = 0; k < cnt; k++, xl += SK_XL2_BYTES) {
                     uint8_t cls = xl[XL2_CLS];
                     if (cls > eff_max) continue;
-                    if (nm_get_u16(xl + XL2_FLAGS) & EF_REVERSE) continue;
+                    if (sk_get_u16(xl + XL2_FLAGS) & EF_REVERSE) continue;
 
-                    int32_t fla = nm_get_i32(xl + XL2_FROM_LAT);
-                    int32_t flo = nm_get_i32(xl + XL2_FROM_LON);
-                    int32_t tla = nm_get_i32(xl + XL2_TO_LAT);
-                    int32_t tlo = nm_get_i32(xl + XL2_TO_LON);
+                    int32_t fla = sk_get_i32(xl + XL2_FROM_LAT);
+                    int32_t flo = sk_get_i32(xl + XL2_FROM_LON);
+                    int32_t tla = sk_get_i32(xl + XL2_TO_LAT);
+                    int32_t tlo = sk_get_i32(xl + XL2_TO_LON);
 
                     int x0, y0, x1, y1;
                     mv_proj_e7(P, fla, flo, &x0, &y0);
@@ -352,10 +352,10 @@ static void paint_roads_tiled(Raster *rs, const MapView *v,
 
                     if (cls <= 2 && zoom >= 15.0 &&
                         x0 >= 0 && x0 < W && y0 >= 0 && y0 < H) {
-                        uint32_t eidx = nm_get_u32(xl + XL2_EDGE);
+                        uint32_t eidx = sk_get_u32(xl + XL2_EDGE);
                         if ((uint64_t)eidx < ne) {
-                            uint32_t nid = nm_get_u32(edges->data +
-                                              (uint64_t)eidx * NM_EDGE_BYTES +
+                            uint32_t nid = sk_get_u32(edges->data +
+                                              (uint64_t)eidx * SK_EDGE_BYTES +
                                               EF_NAME_ID);
                             if (nid) road_labels_add(np, nid,
                                                      (x0 + x1) / 2, (y0 + y1) / 2);
@@ -377,24 +377,24 @@ static void paint_roads_tiled(Raster *rs, const MapView *v,
             uint32_t off, cnt;
             tile_dir(tiles, &tr, tx, ty, &off, &cnt);
             for (uint32_t k = 0; k < cnt; k++) {
-                const uint8_t *xl = edgelist->data + ((size_t)off + k) * NM_XL_BYTES;
-                uint32_t from = nm_get_u32(xl + XL_NODE);
-                uint32_t eidx = nm_get_u32(xl + XL_EDGE);
+                const uint8_t *xl = edgelist->data + ((size_t)off + k) * SK_XL_BYTES;
+                uint32_t from = sk_get_u32(xl + XL_NODE);
+                uint32_t eidx = sk_get_u32(xl + XL_EDGE);
                 if ((uint64_t)from >= nn || (uint64_t)eidx >= ne) continue;
 
-                const uint8_t *nr = nodes->data + (uint64_t)from * NM_NODE_BYTES;
-                const uint8_t *er = edges->data + (uint64_t)eidx * NM_EDGE_BYTES;
+                const uint8_t *nr = nodes->data + (uint64_t)from * SK_NODE_BYTES;
+                const uint8_t *er = edges->data + (uint64_t)eidx * SK_EDGE_BYTES;
                 uint8_t cls = er[EF_CLASS];
                 if (cls > eff_max) continue;
-                if (nm_get_u16(er + EF_FLAGS) & EF_REVERSE) continue;
+                if (sk_get_u16(er + EF_FLAGS) & EF_REVERSE) continue;
 
-                uint32_t to = nm_get_u32(er + EF_TO);
+                uint32_t to = sk_get_u32(er + EF_TO);
                 if ((uint64_t)to >= nn) continue;
-                const uint8_t *tnr = nodes->data + (uint64_t)to * NM_NODE_BYTES;
+                const uint8_t *tnr = nodes->data + (uint64_t)to * SK_NODE_BYTES;
 
                 int x0, y0, x1, y1;
-                mv_proj_e7(P, nm_get_i32(nr + NF_LAT), nm_get_i32(nr + NF_LON), &x0, &y0);
-                mv_proj_e7(P, nm_get_i32(tnr + NF_LAT), nm_get_i32(tnr + NF_LON), &x1, &y1);
+                mv_proj_e7(P, sk_get_i32(nr + NF_LAT), sk_get_i32(nr + NF_LON), &x0, &y0);
+                mv_proj_e7(P, sk_get_i32(tnr + NF_LAT), sk_get_i32(tnr + NF_LON), &x1, &y1);
                 if ((x0 < -margin && x1 < -margin) || (x0 > W + margin && x1 > W + margin) ||
                     (y0 < -margin && y1 < -margin) || (y0 > H + margin && y1 > H + margin))
                     continue;
@@ -405,10 +405,10 @@ static void paint_roads_tiled(Raster *rs, const MapView *v,
                          重复，整条路会消失。
                        ★ 必须用和 v2 相同的键：否则"一半省 v1、一半省 v2"的
                          混合图集里两套键互不相认，跨省重复路会被画两遍。 */
-                    if (dedup_seen(dd, coord_key_e7(nm_get_i32(nr + NF_LAT),
-                                                    nm_get_i32(nr + NF_LON)),
-                                       coord_key_e7(nm_get_i32(tnr + NF_LAT),
-                                                    nm_get_i32(tnr + NF_LON)))) {
+                    if (dedup_seen(dd, coord_key_e7(sk_get_i32(nr + NF_LAT),
+                                                    sk_get_i32(nr + NF_LON)),
+                                       coord_key_e7(sk_get_i32(tnr + NF_LAT),
+                                                    sk_get_i32(tnr + NF_LON)))) {
                         st->dedup_skipped++;
                         continue;
                     }
@@ -420,7 +420,7 @@ static void paint_roads_tiled(Raster *rs, const MapView *v,
                                   ccls[cls > 4 ? 4 : cls]);
                 st->drawn++;
 
-                uint32_t nid = nm_get_u32(er + EF_NAME_ID);
+                uint32_t nid = sk_get_u32(er + EF_NAME_ID);
                 if (nid && cls <= 2 && zoom >= 15.0 &&
                     x0 >= 0 && x0 < W && y0 >= 0 && y0 < H)
                     road_labels_add(np, nid, (x0 + x1) / 2, (y0 + y1) / 2);
@@ -471,31 +471,31 @@ void paint_roads(Raster *rs, const MapView *v,
     double lo0 = bb[1] - pad_lon, lo1 = bb[3] + pad_lon;
 
     for (uint64_t i = 0; i < nn; i++) {
-        const uint8_t *nr = nd + i * NM_NODE_BYTES;
-        int32_t la = nm_get_i32(nr + NF_LAT);
-        int32_t lo = nm_get_i32(nr + NF_LON);
+        const uint8_t *nr = nd + i * SK_NODE_BYTES;
+        int32_t la = sk_get_i32(nr + NF_LAT);
+        int32_t lo = sk_get_i32(nr + NF_LON);
 
         double dla = (double)la / 1e7, dlo = (double)lo / 1e7;
         int in_a = (dla >= la0 && dla <= la1 && dlo >= lo0 && dlo <= lo1);
 
-        uint32_t b = nm_get_u32(nr + NF_EDGE_BEGIN);
-        uint16_t c = nm_get_u16(nr + NF_EDGE_COUNT);
+        uint32_t b = sk_get_u32(nr + NF_EDGE_BEGIN);
+        uint16_t c = sk_get_u16(nr + NF_EDGE_COUNT);
         for (uint32_t k = 0; k < c; k++) {
             uint64_t e = (uint64_t)b + k;
             if (e >= ne) break;
             st->visited++;
-            const uint8_t *er = ed + e * NM_EDGE_BYTES;
+            const uint8_t *er = ed + e * SK_EDGE_BYTES;
             uint8_t cls = er[EF_CLASS];
             if (cls > max_class) continue;
             /* EF_REVERSE = 双向路的回程边，几何与去程重复，画一次就够 */
-            uint16_t fl = nm_get_u16(er + EF_FLAGS);
+            uint16_t fl = sk_get_u16(er + EF_FLAGS);
             if (fl & EF_REVERSE) continue;      /* 双向路的回程边，几何重复 */
 
-            uint32_t to = nm_get_u32(er + EF_TO);
+            uint32_t to = sk_get_u32(er + EF_TO);
             if (to >= nn) continue;
-            const uint8_t *tr = nd + (uint64_t)to * NM_NODE_BYTES;
-            int32_t la2 = nm_get_i32(tr + NF_LAT);
-            int32_t lo2 = nm_get_i32(tr + NF_LON);
+            const uint8_t *tr = nd + (uint64_t)to * SK_NODE_BYTES;
+            int32_t la2 = sk_get_i32(tr + NF_LAT);
+            int32_t lo2 = sk_get_i32(tr + NF_LON);
 
             double dla2 = (double)la2 / 1e7, dlo2 = (double)lo2 / 1e7;
             int in_b = (dla2 >= la0 && dla2 <= la1 && dlo2 >= lo0 && dlo2 <= lo1);
@@ -525,7 +525,7 @@ void paint_roads(Raster *rs, const MapView *v,
             st->drawn++;
 
             /* 顺带收集路名锚点：主干以上、有名、屏幕内 */
-            uint32_t nid = nm_get_u32(er + EF_NAME_ID);
+            uint32_t nid = sk_get_u32(er + EF_NAME_ID);
             if (nid && cls <= 2 && v->zoom >= 15.0 &&
                 x0 >= 0 && x0 < W && y0 >= 0 && y0 < H)
                 road_labels_add(np, nid, (x0 + x1) / 2, (y0 + y1) / 2);
@@ -702,7 +702,7 @@ static void fill_polygon(Raster *rs, const int *px, const int *py, int n,
  *     抽样很容易"全绿"）⇒ 不可用。
  *   - §20 实测：纯等价改法（把查表内联 + 表指针随快照传）只值 **1 ms**，
  *     不值得多养一套"内联版 vs 外部版"的双实现（两套迟早漂移）。
- *     ⇒ 而且本项目**已经拿到这 1 ms**：LTO 下 nm_mercator_y_fast 已被完全内联
+ *     ⇒ 而且本项目**已经拿到这 1 ms**：LTO 下 sk_mercator_y_fast 已被完全内联
  *       （exe 里 nm 里它没有任何调用点）。
  *   - "坐标内联进 polyrefs"（消除 nodes.bin 随机读）实测只省 **8 ms / 7%**，
  *     却要改落盘格式 + 全量重建 8 省 + polyrefs 4B→8B ⇒ 代价远大于收益。
@@ -741,11 +741,11 @@ static int project_ring(const MvProj *P, const NMBinFile *nodes,
     if (cnt > RING_CAP) cnt = RING_CAP;
     uint32_t m = 0;
     for (uint32_t k = 0; k < cnt; k++) {
-        uint32_t idx = nm_get_u32(polyrefs->data + ((uint64_t)off + k) * 4);
+        uint32_t idx = sk_get_u32(polyrefs->data + ((uint64_t)off + k) * 4);
         if ((uint64_t)idx >= nn) return -1;
-        const uint8_t *nr = nodes->data + (uint64_t)idx * NM_NODE_BYTES;
-        rla[m] = nm_get_i32(nr + NF_LAT);
-        rlo[m] = nm_get_i32(nr + NF_LON);
+        const uint8_t *nr = nodes->data + (uint64_t)idx * SK_NODE_BYTES;
+        rla[m] = sk_get_i32(nr + NF_LAT);
+        rlo[m] = sk_get_i32(nr + NF_LON);
         m++;
     }
     int n = 0;
@@ -780,16 +780,16 @@ int paint_areas(Raster *rs, const MapView *v,
         int32_t *bb = calloc((size_t)na * 4, sizeof(int32_t));
         if (!bb) return -1;
         for (uint64_t i = 0; i < na; i++) {
-            const uint8_t *ar = areas->data + i * NM_AREA_BYTES;
-            uint32_t off = nm_get_u32(ar + AF_REF_OFF);
-            uint32_t cnt = nm_get_u32(ar + AF_REF_CNT);
+            const uint8_t *ar = areas->data + i * SK_AREA_BYTES;
+            uint32_t off = sk_get_u32(ar + AF_REF_OFF);
+            uint32_t cnt = sk_get_u32(ar + AF_REF_CNT);
             int32_t la0 = 90 * 10000000, la1 = -90 * 10000000;
             int32_t lo0 = 180 * 10000000, lo1 = -180 * 10000000;
             for (uint32_t k = 0; k < cnt; k++) {
-                uint32_t idx = nm_get_u32(polyrefs->data + ((uint64_t)off + k) * 4);
+                uint32_t idx = sk_get_u32(polyrefs->data + ((uint64_t)off + k) * 4);
                 if ((uint64_t)idx >= nn) continue;
-                const uint8_t *nr = nodes->data + (uint64_t)idx * NM_NODE_BYTES;
-                int32_t la = nm_get_i32(nr + NF_LAT), lo = nm_get_i32(nr + NF_LON);
+                const uint8_t *nr = nodes->data + (uint64_t)idx * SK_NODE_BYTES;
+                int32_t la = sk_get_i32(nr + NF_LAT), lo = sk_get_i32(nr + NF_LON);
                 if (la < la0) la0 = la;
                 if (la > la1) la1 = la;
                 if (lo < lo0) lo0 = lo;
@@ -815,7 +815,7 @@ int paint_areas(Raster *rs, const MapView *v,
        最后一个不覆盖视口的省会把计数清成 0）。一帧的清零只在 paint_frame 开头
        做一次，见那里的注释。 */
     for (uint64_t i = 0; i < na; i++) {
-        const uint8_t *ar = areas->data + i * NM_AREA_BYTES;
+        const uint8_t *ar = areas->data + i * SK_AREA_BYTES;
         uint8_t kind = ar[AF_KIND];
         if (kind == AK_NONE || kind > AK_OTHER) continue;
         /* LOD：低 zoom 只画大片水面/绿地，建筑到中高 zoom 才出现 */
@@ -824,8 +824,8 @@ int paint_areas(Raster *rs, const MapView *v,
         const int32_t *bb = *bbox_cache + i * 4;
         if (bb[0] > vla1 || bb[2] < vla0 || bb[1] > vlo1 || bb[3] < vlo0) continue;
 
-        uint32_t off = nm_get_u32(ar + AF_REF_OFF);
-        uint32_t cnt = nm_get_u32(ar + AF_REF_CNT);
+        uint32_t off = sk_get_u32(ar + AF_REF_OFF);
+        uint32_t cnt = sk_get_u32(ar + AF_REF_CNT);
         if (cnt < 4) continue;
 
         /* ★ 面要素不做跨省去重：填充/描边都是不透明色，同一条要素被两省各画
@@ -901,16 +901,16 @@ int paint_lines(Raster *rs, const MapView *v,
         int32_t *bb = calloc((size_t)nl * 4, sizeof(int32_t));
         if (!bb) return -1;
         for (uint64_t i = 0; i < nl; i++) {
-            const uint8_t *lr = lines->data + i * NM_LINE_BYTES;
-            uint32_t off = nm_get_u32(lr + LF_REF_OFF);
-            uint32_t cnt = nm_get_u32(lr + LF_REF_CNT);
+            const uint8_t *lr = lines->data + i * SK_LINE_BYTES;
+            uint32_t off = sk_get_u32(lr + LF_REF_OFF);
+            uint32_t cnt = sk_get_u32(lr + LF_REF_CNT);
             int32_t a0 = 90 * 10000000, a1 = -90 * 10000000;
             int32_t o0 = 180 * 10000000, o1 = -180 * 10000000;
             for (uint32_t k = 0; k < cnt; k++) {
-                uint32_t idx = nm_get_u32(polyrefs->data + ((uint64_t)off + k) * 4);
+                uint32_t idx = sk_get_u32(polyrefs->data + ((uint64_t)off + k) * 4);
                 if ((uint64_t)idx >= nn) continue;
-                const uint8_t *nr = nodes->data + (uint64_t)idx * NM_NODE_BYTES;
-                int32_t la = nm_get_i32(nr + NF_LAT), lo = nm_get_i32(nr + NF_LON);
+                const uint8_t *nr = nodes->data + (uint64_t)idx * SK_NODE_BYTES;
+                int32_t la = sk_get_i32(nr + NF_LAT), lo = sk_get_i32(nr + NF_LON);
                 if (la < a0) a0 = la;
                 if (la > a1) a1 = la;
                 if (lo < o0) o0 = lo;
@@ -943,7 +943,7 @@ int paint_lines(Raster *rs, const MapView *v,
                 bb[i * 4 + 3] < vlo0 || bb[i * 4 + 1] > vlo1)
                 continue;
         }
-        const uint8_t *lr = lines->data + i * NM_LINE_BYTES;
+        const uint8_t *lr = lines->data + i * SK_LINE_BYTES;
         uint8_t cls = lr[LF_CLASS];
         /* LOD：步行道细节多、密度大，中高 zoom 才显示 */
         if (cls == RC_PATH && zoom < 14.0) continue;
@@ -951,18 +951,18 @@ int paint_lines(Raster *rs, const MapView *v,
 
         /* ★ 线要素同样不去重（理由同面要素，见 PLAN.md §23）。 */
 
-        uint32_t off = nm_get_u32(lr + LF_REF_OFF);
-        uint32_t cnt = nm_get_u32(lr + LF_REF_CNT);
+        uint32_t off = sk_get_u32(lr + LF_REF_OFF);
+        uint32_t cnt = sk_get_u32(lr + LF_REF_CNT);
         if ((uint64_t)off + cnt > np) continue;
 
         int vis = 0;
         int px[4096], py[4096];
         int n = 0;
         for (uint32_t k = 0; k < cnt && n < 4096; k++) {
-            uint32_t idx = nm_get_u32(polyrefs->data + ((uint64_t)off + k) * 4);
+            uint32_t idx = sk_get_u32(polyrefs->data + ((uint64_t)off + k) * 4);
             if ((uint64_t)idx >= nn) continue;
-            const uint8_t *nr = nodes->data + (uint64_t)idx * NM_NODE_BYTES;
-            int32_t ila = nm_get_i32(nr + NF_LAT), ilo = nm_get_i32(nr + NF_LON);
+            const uint8_t *nr = nodes->data + (uint64_t)idx * SK_NODE_BYTES;
+            int32_t ila = sk_get_i32(nr + NF_LAT), ilo = sk_get_i32(nr + NF_LON);
             double la = (double)ila / 1e7;
             double lo = (double)ilo / 1e7;
             if (la >= la0 && la <= la1 && lo >= lo0 && lo <= lo1) vis = 1;
@@ -1013,16 +1013,16 @@ int paint_contours(Raster *rs, const MapView *v,
         int32_t *bb = calloc((size_t)nc * 4, sizeof(int32_t));
         if (!bb) return -1;
         for (uint64_t i = 0; i < nc; i++) {
-            const uint8_t *cr = contours->data + i * NM_CONTOUR_BYTES;
-            uint32_t off = nm_get_u32(cr + CF_REF_OFF);
-            uint32_t cnt = nm_get_u32(cr + CF_REF_CNT);
+            const uint8_t *cr = contours->data + i * SK_CONTOUR_BYTES;
+            uint32_t off = sk_get_u32(cr + CF_REF_OFF);
+            uint32_t cnt = sk_get_u32(cr + CF_REF_CNT);
             int32_t a0 = 90 * 10000000, a1 = -90 * 10000000;
             int32_t o0 = 180 * 10000000, o1 = -180 * 10000000;
             for (uint32_t k = 0; k < cnt; k++) {
-                uint32_t idx = nm_get_u32(polyrefs->data + ((uint64_t)off + k) * 4);
+                uint32_t idx = sk_get_u32(polyrefs->data + ((uint64_t)off + k) * 4);
                 if ((uint64_t)idx >= npts) continue;
-                const uint8_t *pp = pts->data + (uint64_t)idx * NM_CONTOUR_PT_BYTES;
-                int32_t la = nm_get_i32(pp + CP_LAT), lo = nm_get_i32(pp + CP_LON);
+                const uint8_t *pp = pts->data + (uint64_t)idx * SK_CONTOUR_PT_BYTES;
+                int32_t la = sk_get_i32(pp + CP_LAT), lo = sk_get_i32(pp + CP_LON);
                 if (la < a0) a0 = la;
                 if (la > a1) a1 = la;
                 if (lo < o0) o0 = lo;
@@ -1059,25 +1059,25 @@ int paint_contours(Raster *rs, const MapView *v,
                 bb[i * 4 + 3] < vlo0 || bb[i * 4 + 1] > vlo1)
                 continue;
         }
-        const uint8_t *cr = contours->data + i * NM_CONTOUR_BYTES;
+        const uint8_t *cr = contours->data + i * SK_CONTOUR_BYTES;
         uint8_t cls = cr[CF_CLASS];
         /* LOD：低 zoom 只画计曲线（每 index 一条，密度低不糊）；
          * zoom>=11 才把首曲线（密集）也画出来。 */
         if (zoom < 9.0) continue;
         if (cls == 0 && zoom < 11.0) continue;
 
-        uint32_t off = nm_get_u32(cr + CF_REF_OFF);
-        uint32_t cnt = nm_get_u32(cr + CF_REF_CNT);
+        uint32_t off = sk_get_u32(cr + CF_REF_OFF);
+        uint32_t cnt = sk_get_u32(cr + CF_REF_CNT);
         if ((uint64_t)off + cnt > np) continue;
 
         int vis = 0;
         int px[4096], py[4096];
         int n = 0;
         for (uint32_t k = 0; k < cnt && n < 4096; k++) {
-            uint32_t idx = nm_get_u32(polyrefs->data + ((uint64_t)off + k) * 4);
+            uint32_t idx = sk_get_u32(polyrefs->data + ((uint64_t)off + k) * 4);
             if ((uint64_t)idx >= npts) continue;
-            const uint8_t *pp = pts->data + (uint64_t)idx * NM_CONTOUR_PT_BYTES;
-            int32_t ila = nm_get_i32(pp + CP_LAT), ilo = nm_get_i32(pp + CP_LON);
+            const uint8_t *pp = pts->data + (uint64_t)idx * SK_CONTOUR_PT_BYTES;
+            int32_t ila = sk_get_i32(pp + CP_LAT), ilo = sk_get_i32(pp + CP_LON);
             double la = (double)ila / 1e7;
             double lo = (double)ilo / 1e7;
             if (la >= la0 && la <= la1 && lo >= lo0 && lo <= lo1) vis = 1;
@@ -1109,7 +1109,7 @@ int paint_contours(Raster *rs, const MapView *v,
          * ★ 防重叠：本帧已放下的标签 MIN_LABEL_GAP 像素内不再放，控制密度。 */
         if (font && cls == 1 && n >= 2) {
             char eb[24];
-            uint64_t elev = nm_get_u64(cr + CF_ELEV);
+            uint64_t elev = sk_get_u64(cr + CF_ELEV);
             snprintf(eb, sizeof(eb), "%llu", (unsigned long long)elev);
             int mid = n / 2;
             int lx = px[mid] + 2, ly = py[mid] - 9;

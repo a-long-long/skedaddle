@@ -1,9 +1,9 @@
 # OsmAnd-app 项目功能 / 模块汇总
 
 > 用途：本文件汇总 `/data/home/along/osmand-app` 工作区的功能与模块结构，
-> 作为 navimap 的**参考与路线图**（不是复制对象）。
-> 数据来源：2026-10-22 对本机工作区的目录勘察 + 同工作区 `nav-desktop/NAVIMAP-COMPARISON.md`
-> 的功能对照。navimap 自身只**参考 OsmAnd 的少数算法思路**（坐标键、加权 A\*，
+> 作为 skedaddle 的**参考与路线图**（不是复制对象）。
+> 数据来源：2026-10-22 对本机工作区的目录勘察 + 同工作区 `nav-desktop/SKEDADDLE-COMPARISON.md`
+> 的功能对照。skedaddle 自身只**参考 OsmAnd 的少数算法思路**（坐标键、加权 A\*，
 > 见 `arch.md` §2-3 与 `src/map/coordkey.h` 注释），不复制其代码、设置或界面。
 
 ---
@@ -17,7 +17,7 @@
 | 其余 12 个 | OsmAnd 官方生态的依赖 / 源码 / 资源仓库，平时只拉不改（除本机已做的 aarch64 适配） |
 | 技术栈 | C++（核心引擎）+ Java（android / nav-desktop）+ Qt / Skia（渲染依赖） |
 
-**一句话**：osmand-app 是完整导航产品（安卓 + 桌面），navimap 是其**功能子集 + 极致性能**的从零重写（纯 C + SDL2）。
+**一句话**：osmand-app 是完整导航产品（安卓 + 桌面），skedaddle 是其**功能子集 + 极致性能**的从零重写（纯 C + SDL2）。
 
 ---
 
@@ -121,9 +121,9 @@
 
 ---
 
-## 7. 关键功能域总览（对照 navimap 已有能力）
+## 7. 关键功能域总览（对照 skedaddle 已有能力）
 
-| 功能域 | osmand-app 能力 | navimap 现状 |
+| 功能域 | osmand-app 能力 | skedaddle 现状 |
 |---|---|---|
 | **地图数据** | OBF 官方格式、PBF→OBF 转换、在线下载（约 1048 项）、无图区反查 | 自研 NMBIN v3，只吃 `.osm.pbf`；手动放 `sources/`；离线转图 `sync_maps.sh` |
 | **渲染** | render.xml 样式引擎（14+9 套）、昼夜、POI 图标 4878、3D、地形/等高线、在线瓦片 | 自写软件光栅化 `raster.c` + 固定 4 层样式；无图标/昼夜/3D/地形 |
@@ -134,15 +134,15 @@
 
 ---
 
-## 8. 与 navimap 的关系
+## 8. 与 skedaddle 的关系
 
-- **可借鉴（.navimap 路线图来源）**：第 7 节里标「❌/缺失」的每一项，都可按"先算法后产品"的顺序补进 navimap。
-- **不可照搬**：osmand-app 是 GPL（引擎）/ MIT（PR）授权；navimap 应继续坚持
+- **可借鉴（.skedaddle 路线图来源）**：第 7 节里标「❌/缺失」的每一项，都可按"先算法后产品"的顺序补进 skedaddle。
+- **不可照搬**：osmand-app 是 GPL（引擎）/ MIT（PR）授权；skedaddle 应继续坚持
   「借鉴思想 + 注明出处 + 不同语言/框架独立实现」的干净路径（见 `coordkey.h` 注释范式），
   不逐字复制代码。
-- **已验证的非复制证据**：navimap 全代码库 0 个 OsmAnd 专有符号作为真实代码
+- **已验证的非复制证据**：skedaddle 全代码库 0 个 OsmAnd 专有符号作为真实代码
   （`RouteCalculationSegment`/`ObfRoutingSectionReader`/`shared_ptr`/`QMap` 仅出现在注释里）；
-  坐标键实现已从 OsmAnd 的 `(x31<<31)|y31` 改写为 navimap 的 e7 精度 `(lat_e7<<32)|lon_e7`。
+  坐标键实现已从 OsmAnd 的 `(x31<<31)|y31` 改写为 skedaddle 的 e7 精度 `(lat_e7<<32)|lon_e7`。
 
 ---
 

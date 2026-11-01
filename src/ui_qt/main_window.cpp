@@ -2,7 +2,7 @@
 #include "map_canvas.h"
 #include "qt_icons.h"
 #include "qt_icon_button.hpp"
-#include "utils/geo.h"    /* nm_sun_is_night：自动昼夜推算 */
+#include "utils/geo.h"    /* sk_sun_is_night：自动昼夜推算 */
 #include "utils/datum.h"   /* 坐标系（大地基准）：枚举与标签 */
 #include "settings/settings.h"  /* settings_set_int：切基准后落盘 */
 #include "download_dialog.h"     /* 下载地图对话框（全球 Geofabrik 列表） */
@@ -479,12 +479,12 @@ int MainWindow::runUiSelfTest()
     /* GPX 轨迹链路：导入（内嵌 GPX，不依赖外部文件）→ 面板出现条目 →
      * 删除 → 条目消失。这条链把 C 模块（gpx.c）、App 入口
      * （app_gpx_import/del）和 UI 面板（refreshTrackPanel）全串起来。
-     * 写临时文件用 nm_temp_dir()，不碰用户目录；导入会写 tracks.db
+     * 写临时文件用 sk_temp_dir()，不碰用户目录；导入会写 tracks.db
      * （app_gpx_import 的语义就是"导入即入库"），但测完把这条轨迹删掉，
      * 库记录一并清掉，最终不残留（最多留下一个空库文件，无害）。 */
     {
         char gpath[1024];
-        snprintf(gpath, sizeof(gpath), "%s/navimap_uitest.gpx", nm_temp_dir());
+        snprintf(gpath, sizeof(gpath), "%s/skedaddle_uitest.gpx", sk_temp_dir());
         FILE *gf = fopen(gpath, "wb");
         if (gf) {
             fputs("<gpx version=\"1.1\"><trk><name>自检轨迹</name><trkseg>"
@@ -1595,7 +1595,7 @@ void MainWindow::applyDayNight()
     if (m_a->day_night_mode == 1)        eff = 1;
     else if (m_a->day_night_mode == 2) {
         time_t now = time(NULL);
-        eff = nm_sun_is_night(m_a->view.lat, m_a->view.lon, now) ? 1 : 0;
+        eff = sk_sun_is_night(m_a->view.lat, m_a->view.lon, now) ? 1 : 0;
     } else                                 eff = 0;
     m_a->day_night = eff;
     if (m_dayNightAct)     m_dayNightAct->setChecked(eff);
@@ -1717,7 +1717,7 @@ void MainWindow::showOverlayAlphaDialog()
     QList<QSlider *> sliders;
     QList<QLabel *>  vals;
     for (int i = 0; i < ovl_count(); i++) {
-        const NmOverlay id = (NmOverlay)i;
+        const SkOverlay id = (SkOverlay)i;
         QHBoxLayout *row = new QHBoxLayout();
         QString name = QString::fromUtf8(ovl_label(id));
         const bool inQt = (ovl_frontends(id) & OVL_FE_QT) != 0;
@@ -2239,7 +2239,7 @@ void MainWindow::importGpx()
 void MainWindow::exportGpx()
 {
     QString path = QFileDialog::getSaveFileName(
-        this, trc("导出全部为 GPX"), QStringLiteral("navimap-tracks.gpx"),
+        this, trc("导出全部为 GPX"), QStringLiteral("skedaddle-tracks.gpx"),
         QString(trc("GPX 轨迹") + " (*.gpx);;" + trc("所有文件") + " (*)"));
     if (path.isEmpty()) return;
     if (!path.endsWith(QStringLiteral(".gpx"), Qt::CaseInsensitive))

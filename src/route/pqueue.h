@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_PQUEUE_H
-#define NAVIMAP_PQUEUE_H
+#ifndef SKEDADDLE_PQUEUE_H
+#define SKEDADDLE_PQUEUE_H
 /* A* / Dijkstra 的优先队列：数组实现的 **d 叉最小堆**（懒删除，无 decrease-key）。
  *
  * ★ 叉数不是拍脑袋定的，是实测扫出来的（京→郑 693 km：push 89 万 / pop 88 万 /
@@ -117,4 +117,4 @@ static inline double pq_peek_f(const PQueue *q)
 static inline void pq_clear(PQueue *q) { q->n = 0; }
 static inline void pq_free(PQueue *q)  { free(q->a); q->a = NULL; q->n = q->cap = 0; }
 
-#endif /* NAVIMAP_PQUEUE_H */
+#endif /* SKEDADDLE_PQUEUE_H */

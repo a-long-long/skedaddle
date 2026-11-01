@@ -26,7 +26,7 @@ for a in "$@"; do
         *) echo "未知参数: $a" >&2; exit 2 ;;
     esac
 done
-SHOTS=${SHOTS:-${TMPDIR:-/tmp}/navimap_regress}
+SHOTS=${SHOTS:-${TMPDIR:-/tmp}/skedaddle_regress}
 mkdir -p "$SHOTS"
 
 if [ "$DO_BUILD" = 1 ]; then
@@ -190,7 +190,7 @@ run rev_verify "REV-VERIFY-OK" "$BUILD/skedaddle_revbuild_cli" --graph="$GRAPH" 
 # 2) 回退路径必须活着：临时图集只链数据、不链 rev.bin（符号链接，零复制），
 #    路由必须照常算出**同样**的里程。"没有缓存就自己建"这条自愈路径平时
 #    不走，不走就不会被发现坏掉——所以必须有一条用例专门走它。
-# 3) 改坏的 rev.bin 在严格模式（NAVIMAP_REV_STRICT=1）下必须被拒绝并回退：
+# 3) 改坏的 rev.bin 在严格模式（SKEDADDLE_REV_STRICT=1）下必须被拒绝并回退：
 #    结构校验（magic/规模/尾哨兵）挡不住正文单字节损坏，这是刻意的取舍，
 #    但严格模式必须能挡住，否则那条取舍就没有兜底。
 REVT=$SHOTS/revtest
@@ -220,7 +220,7 @@ LN_FROM=41.8057,123.4315
 LN_TO=38.9140,121.6147
 run rev_cached "ROUTE-OK" "$BUILD/skedaddle_route_cli" --graph="$REVT/ok"   --from=$LN_FROM --to=$LN_TO
 run rev_norev  "ROUTE-OK" "$BUILD/skedaddle_route_cli" --graph="$REVT/none" --from=$LN_FROM --to=$LN_TO
-run rev_bad_strict "建反向索引" env NAVIMAP_REV_STRICT=1 "$BUILD/skedaddle_route_cli" \
+run rev_bad_strict "建反向索引" env SKEDADDLE_REV_STRICT=1 "$BUILD/skedaddle_route_cli" \
         --graph="$REVT/bad" --from=$LN_FROM --to=$LN_TO
 
 # 有缓存 / 没缓存 必须给出**同一条**路线（里程逐位相同）
@@ -254,7 +254,7 @@ run skedaddle_tts_selftest "TTS-OK" "$BUILD/skedaddle_tts_selftest"
 run skedaddle_voice_selftest "VOICE-OK" "$BUILD/skedaddle_voice_selftest"
 
 # ---- 语音播报**端到端**（走生产接线 nav_voice_frame，验证"窗口真的播了"）----
-# 用 NAVIMAP_TTS_DRYRUN 截下 nm_tts_speak 交出去的话来断言；单函数自测抓不到接线 bug。
+# 用 SKEDADDLE_TTS_DRYRUN 截下 sk_tts_speak 交出去的话来断言；单函数自测抓不到接线 bug。
 run skedaddle_voice_e2e "VOICE-E2E-OK" "$BUILD/skedaddle_voice_e2e"
 
 # ---- 多方案对比（阶段 12）----
@@ -277,7 +277,7 @@ run skedaddle_datum_selftest "DATUM-OK" "$BUILD/skedaddle_datum_selftest"
 
 # ---- 去 SDL 化的三条门禁（方案2）----
 #
-# 背景：navimap_core 已做到"零 SDL"，Qt 前端（skedaddle）一行 SDL 都不链，
+# 背景：skedaddle_core 已做到"零 SDL"，Qt 前端（skedaddle）一行 SDL 都不链，
 # SDL 只存在于两个**去 SDL 化对照体**（skedaddle_blend_equiv / skedaddle_clip_equiv，它们必须链
 # SDL 才能跟 SDL 软渲染器逐像素对拍）。这条边界一旦被悄悄放宽，
 # 编译照样过、运行照样正常，只是 Qt 前端又背上了 SDL2.dll 依赖 —— 直到某天
@@ -300,7 +300,7 @@ run skedaddle_clip_equiv "CLIP-EQUIV-OK" "$BUILD/skedaddle_clip_equiv"
 if [ -x "$BUILD/skedaddle_core_no_sdl" ]; then
     exefile() { if [ -x "$1.exe" ]; then echo "$1.exe"; else echo "$1"; fi; }
     run skedaddle_core_no_sdl "CORE-NO-SDL-OK" "$BUILD/skedaddle_core_no_sdl" \
-        "$(exefile "$BUILD/skedaddle")" "$BUILD/libnavimap_core.a"
+        "$(exefile "$BUILD/skedaddle")" "$BUILD/libskedaddle_core.a"
     run core_no_sdl_sdl "CORE-NO-SDL-OK" "$BUILD/skedaddle_core_no_sdl" --expect-sdl \
         "$(exefile "$BUILD/skedaddle_blend_equiv")"
 fi
@@ -328,7 +328,7 @@ fi
 # ---- 字体链的中文覆盖（中文变方框的根因门禁）----
 #
 # 地图上的文字（C 侧 stb_truetype）和 Qt 控件上的文字（Qt 自己的字体系统）
-# **共用同一条候选链**（plat.c 的 nm_font_candidates）。链里没有能画中文的
+# **共用同一条候选链**（plat.c 的 sk_font_candidates）。链里没有能画中文的
 # 字体 ⇒ 两边都变方框（tofu）。
 #
 # 为什么单列一条：字体链的失效是**静默**的 —— 编译过、运行正常、地图照画，
@@ -378,8 +378,8 @@ if [ -x "$BUILD/skedaddle" ] || [ -x "$BUILD/skedaddle.exe" ]; then
     #   隔离后这条用例只受代码影响，不受本机状态影响。
     CFG_UIT="$SHOTS/ui_test_cfg"
     /bin/rm -rf "$CFG_UIT" 2>/dev/null
-    mkdir -p "$CFG_UIT/navimap"
-    printf 'day_night=0\nshow_panel=1\nshow_poi=1\nshow_labels=1\nvoice_on=1\nmode=0\nfont_size=14\nmax_class=4\nview_lat=39.94\nview_lon=116.405\nview_zoom=13\ndatum=0\ngrid_type=1\nalpha_search=75\nalpha_rcol=75\n' > "$CFG_UIT/navimap/settings.ini"
+    mkdir -p "$CFG_UIT/skedaddle"
+    printf 'day_night=0\nshow_panel=1\nshow_poi=1\nshow_labels=1\nvoice_on=1\nmode=0\nfont_size=14\nmax_class=4\nview_lat=39.94\nview_lon=116.405\nview_zoom=13\ndatum=0\ngrid_type=1\nalpha_search=75\nalpha_rcol=75\n' > "$CFG_UIT/skedaddle/settings.ini"
     run qt_ui_test "QT-UI-OK" qt_run \
         env APPDATA="$CFG_UIT/appdata" XDG_CONFIG_HOME="$CFG_UIT/xdg" \
         "$(exefile2 "$BUILD/skedaddle")" --ui-test --w=900 --h=600
@@ -404,7 +404,7 @@ run heap_bench "HEAP-BENCH" "$BUILD/skedaddle_heap_selftest" --bench=6019,200000
 
 # ---- 瓦片下标：查表版 vs 精确版 逐点等价（PLAN.md §36）----
 # ① 全图 5228 万个真实节点逐点比，外加定向构造的 49 万个"正好落在瓦片边界上"
-#    的点（按瓦片单位扰动）。nm_tile_of 取错瓦片 ⇒ 缝合成员查错 ⇒ 路线错，
+#    的点（按瓦片单位扰动）。sk_tile_of 取错瓦片 ⇒ 缝合成员查错 ⇒ 路线错，
 #    而误差只有万分之几个点会触发，**抽样测不出来**。
 run tile_eq "TILE-SELFTEST-OK" "$BUILD/skedaddle_tile_selftest" --graph="$GRAPH"
 
@@ -425,7 +425,7 @@ if [ -x "$BUILD/skedaddle" ] || [ -x "$BUILD/skedaddle.exe" ]; then
     run nomap_prompt "nomap_select" qt_run \
         "$(exefile2 "$BUILD/skedaddle")" --graph="$GRAPH" \
         --lat=30.0 --lon=110.0 --zoom=10 --w=1280 --h=800 \
-        --shot=/tmp/navimap_regress/nomap.png --shot-nomap
+        --shot=/tmp/skedaddle_regress/nomap.png --shot-nomap
 fi
 run search      "查询 中关村"  "$BUILD/skedaddle_search_cli"
 # 地名库自检：每条 place 都得能反查出 bigram，kind 不许超出 PLK_ROAD。
@@ -533,7 +533,7 @@ run route_far_dalian "ROUTE-OK" "$BUILD/skedaddle_route_cli" --graph="$GRAPH" \
 #     换默认的 hi 重跑 ⇒ 根本不是 w=1.0（§49"兜底只能有一个入口"的延伸）。
 LM_ADMISSIBLE_SLACK=1
 _lm_exact() {  # $1 = 1 开表 / 0 无表；stdout = 预计分钟
-    NAVIMAP_LM="$1" "$BUILD/skedaddle_route_cli" --graph="$GRAPH" \
+    SKEDADDLE_LM="$1" "$BUILD/skedaddle_route_cli" --graph="$GRAPH" \
         --from=37.87,112.55 --to=38.04,114.51 --repeat=1 \
         --exact --heur-w=1.0 --heur-w-hi=1.0 2>/dev/null |
     sed -n 's/^预计 *\([0-9]*\) 分.*/\1/p' | head -1
@@ -591,7 +591,7 @@ fi
 GPX_FILE="$SHOTS/gpx_case.gpx"
 cat > "$GPX_FILE" <<'GEOF'
 <?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="navimap-regress">
+<gpx version="1.1" creator="skedaddle-regress">
   <wpt lat="39.9520" lon="116.3960"><name>故宫东门</name></wpt>
   <wpt lat="39.9480" lon="116.4040"><name>王府井</name></wpt>
   <trk><name>回归测试线</name><trkseg>
@@ -666,7 +666,7 @@ ovl_shot() {   # $1=key $2=pct $3=输出
 }
 # 标题栏矩形 0,0,800,30（CHROME_TITLE_H=30）；右栏四按钮 750,88,42,184
 # ★ 离屏通道设 a.qt_ui=0，chrome 由 C 核心画进缓冲；标题栏**只有底板没有文字**
-#   （离屏通道不加载字体，"NavMap" 那行字不画）⇒ 这条只验底板比值 + 逐浮层独立，
+#   （离屏通道不加载字体，"Skedaddle" 那行字不画）⇒ 这条只验底板比值 + 逐浮层独立，
 #   前景判据 --fg=0 跳过。前景（文字/图标）保持清晰由下面两条验：
 #   C 右栏（图标，本段）与 Qt 搜索按钮（**文字**，--shot 视觉验收段）。
 ovl_shot alpha_title 100 "$SHOTS/ovl_title_100.bmp"
@@ -701,8 +701,8 @@ if [ -x "$BUILD/skedaddle.exe" ] || [ -x "$BUILD/skedaddle" ]; then
     QEXE=$(if [ -x "$BUILD/skedaddle.exe" ]; then echo "$BUILD/skedaddle.exe"; else echo "$BUILD/skedaddle"; fi)
     CFGQ="$SHOTS/ovl_qt_cfg"
     /bin/rm -rf "$CFGQ" 2>/dev/null
-    mkdir -p "$CFGQ/navimap"
-    printf 'day_night=0\nshow_panel=1\nshow_poi=1\nshow_labels=1\nvoice_on=1\nmode=0\nfont_size=14\nmax_class=4\nview_lat=39.94\nview_lon=116.405\nview_zoom=13\ndatum=0\ngrid_type=1\n' > "$CFGQ/navimap/settings.ini"
+    mkdir -p "$CFGQ/skedaddle"
+    printf 'day_night=0\nshow_panel=1\nshow_poi=1\nshow_labels=1\nvoice_on=1\nmode=0\nfont_size=14\nmax_class=4\nview_lat=39.94\nview_lon=116.405\nview_zoom=13\ndatum=0\ngrid_type=1\n' > "$CFGQ/skedaddle/settings.ini"
     for pv in 100 75 0; do
         qt_run env APPDATA="$CFGQ" XDG_CONFIG_HOME="$CFGQ/xdg" \
             "$QEXE" --graph="$GRAPH" --w=800 --h=600 \
@@ -762,7 +762,7 @@ fi
 # 打印"1 条轨迹"（内存侧成功了），但一条也不落库、**没有任何提示**，
 # 重启后收藏全丢。全新账户 / 刚清过 %APPDATA% 必中。
 # 判据：把配置目录指到一个**尚不存在**的路径，跑一次导入，断言 tracks.db 真被建出来。
-# ★ 负向对照：把 gpx_db_default_path 里的 nm_mkdir_p 那行注掉 ⇒ 目录不建、
+# ★ 负向对照：把 gpx_db_default_path 里的 sk_mkdir_p 那行注掉 ⇒ 目录不建、
 #   sqlite 打不开 ⇒ 这条 FAIL（实测过一次）。
 # 跨平台：Windows 看 APPDATA，其余看 XDG_CONFIG_HOME；两个都设，哪个生效都能验。
 if [ -x "$BUILD/skedaddle.exe" ] || [ -x "$BUILD/skedaddle" ]; then
@@ -774,7 +774,7 @@ if [ -x "$BUILD/skedaddle.exe" ] || [ -x "$BUILD/skedaddle" ]; then
         --shot="$SHOTS/gpx_cfg.bmp" > "$SHOTS/gpx_persist.log" 2>&1
     # 两种平台口径都找一遍，任一处出现 tracks.db 即算建出来了
     found=0
-    for cand in "$CFG/appdata/navimap/tracks.db" "$CFG/xdg/navimap/tracks.db"; do
+    for cand in "$CFG/appdata/skedaddle/tracks.db" "$CFG/xdg/skedaddle/tracks.db"; do
         [ -s "$cand" ] && found=1
     done
     if [ "$found" = 1 ]; then

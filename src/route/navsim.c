@@ -16,7 +16,7 @@
 static void to_local(double lat, double lon, double lat0, double lon0,
                      double *x, double *y)
 {
-    const double R = NM_EARTH_R_M;
+    const double R = SK_EARTH_R_M;
     double p = lat0 * M_PI / 180.0;
     *x = (lon - lon0) * M_PI / 180.0 * R * cos(p);
     *y = (lat - lat0) * M_PI / 180.0 * R;
@@ -255,7 +255,7 @@ int navsim_next_maneuver(const NavSim *s, const ManeuverList *ml,
 void navsim_offset_point(double lat, double lon, double heading_deg,
                          double right_m, double *olat, double *olon)
 {
-    const double R = NM_EARTH_R_M;
+    const double R = SK_EARTH_R_M;
     double h = heading_deg * M_PI / 180.0;
     double dx =  cos(h) * right_m;        /* 东 */
     double dy = -sin(h) * right_m;        /* 北 */

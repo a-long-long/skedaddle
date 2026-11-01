@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_AUTOBUILD_H
-#define NAVIMAP_AUTOBUILD_H
+#ifndef SKEDADDLE_AUTOBUILD_H
+#define SKEDADDLE_AUTOBUILD_H
 
 #include "map/mapset.h"
 
@@ -22,9 +22,9 @@
  *
  * 安全性：只起项目自带的 skedaddle_graph_extract 子进程（同目录 → build/ → PATH 依次探测），
  * 参数固定、不经 shell，省名先过白名单（不允许 '/' 和 '.'/'..'），
- * 所以不存在命令注入或路径逃逸。进程派生/等待走平台层 nm_spawn_wait
+ * 所以不存在命令注入或路径逃逸。进程派生/等待走平台层 sk_spawn_wait
  * （POSIX fork+execv，Windows CreateProcess）。清理旧产物用平台层的
- * nm_unlink / nm_rmtree 递归删除，不依赖外部 rm 命令。
+ * sk_unlink / sk_rmtree 递归删除，不依赖外部 rm 命令。
  * ------------------------------------------------------------------------- */
 
 typedef struct {

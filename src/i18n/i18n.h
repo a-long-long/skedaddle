@@ -1,5 +1,5 @@
-#ifndef NAVMAP_I18N_H
-#define NAVMAP_I18N_H
+#ifndef SKEDADDLE_I18N_H
+#define SKEDADDLE_I18N_H
 
 #include <stddef.h>
 
@@ -33,4 +33,4 @@ const char *i18n_tr(const char *zh);
 }
 #endif
 
-#endif /* NAVMAP_I18N_H */
+#endif /* SKEDADDLE_I18N_H */

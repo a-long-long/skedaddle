@@ -20,7 +20,7 @@
 
 **自描述头**（`binfmt.h:18-68`）：`NMBIN_MAGIC = "NAVMBIN\x01"`、`NMBIN_VERSION = 3u`（注意：旧文档曾误写成 `\x2`/4u，以源码为准）。`NMBinHeader`（128 字节）与 `NMBinField`（24 字节）完整定义见第三节。
 
-**图集句柄**（`mapset.h:22-104`）：`MapSrc` 含 `nodes/edges/restrictions/lines/areas/polyrefs/tiles/edgelist/lanes/contours` 各一份 `NMBinFile`，及 `bbox[4]`、`dup_of`、`NamePool np`、`NmMutex *dmap_mtx / job_prov / job_done`（后台解码线程字段）等，完整定义见第三节。
+**图集句柄**（`mapset.h:22-104`）：`MapSrc` 含 `nodes/edges/restrictions/lines/areas/polyrefs/tiles/edgelist/lanes/contours` 各一份 `NMBinFile`，及 `bbox[4]`、`dup_of`、`NamePool np`、`SkMutex *dmap_mtx / job_prov / job_done`（后台解码线程字段）等，完整定义见第三节。
 
 ## 三、完整实现代码
 
@@ -31,7 +31,7 @@
 /* v2：restrictions.bin 记录 16→20 字节（新增 RF_PREV_EDGE，支持 via=way 两段限制）。
    旧数据必须重抽——记录变长后按旧长度读会整表错位，宁可让 sync_maps 全量重建。
    v3：edgelist.bin 条目 8 → 28 字节（自带坐标/等级/标志，渲染不再随机访存，
-   见下面 NM_XL2_* 的说明）。虽然读取端能按 rec_size 同时认两版、旧目录也能
+   见下面 SK_XL2_* 的说明）。虽然读取端能按 rec_size 同时认两版、旧目录也能
    正常画（走慢路径），但**混合图集要不得**：一半省 v1、一半省 v2 时文件体积
    和帧时间都不一样而画面完全一样，出了问题没人会想到是版本混装。所以这里
    照例顶版本号，逼 sync_maps / 启动自愈全量重抽。 */
@@ -108,33 +108,33 @@ int  nmbin_check(const NMBinFile *f, char *err, size_t err_cap);  /* 结构自�
 ### 2. 小端读写助手与 `bytes_to_hdr`（`binfmt.c:17-97`）
 
 ```c
-void nm_put_u16(uint8_t *p, uint16_t v)
+void sk_put_u16(uint8_t *p, uint16_t v)
 { p[0] = (uint8_t)(v & 0xff); p[1] = (uint8_t)(v >> 8); }
 
-void nm_put_u32(uint8_t *p, uint32_t v)
+void sk_put_u32(uint8_t *p, uint32_t v)
 {
     p[0] = (uint8_t)(v & 0xff); p[1] = (uint8_t)((v >> 8) & 0xff);
     p[2] = (uint8_t)((v >> 16) & 0xff); p[3] = (uint8_t)((v >> 24) & 0xff);
 }
 
-void nm_put_i32(uint8_t *p, int32_t v) { nm_put_u32(p, (uint32_t)v); }
+void sk_put_i32(uint8_t *p, int32_t v) { sk_put_u32(p, (uint32_t)v); }
 
-void nm_put_u64(uint8_t *p, uint64_t v)
+void sk_put_u64(uint8_t *p, uint64_t v)
 {
     for (int i = 0; i < 8; i++) p[i] = (uint8_t)((v >> (8 * i)) & 0xff);
 }
 
-uint16_t nm_get_u16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
+uint16_t sk_get_u16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
 
-uint32_t nm_get_u32(const uint8_t *p)
+uint32_t sk_get_u32(const uint8_t *p)
 {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
            ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
-int32_t nm_get_i32(const uint8_t *p) { return (int32_t)nm_get_u32(p); }
+int32_t sk_get_i32(const uint8_t *p) { return (int32_t)sk_get_u32(p); }
 
-uint64_t nm_get_u64(const uint8_t *p)
+uint64_t sk_get_u64(const uint8_t *p)
 {
     uint64_t v = 0;
     for (int i = 0; i < 8; i++) v |= (uint64_t)p[i] << (8 * i);
@@ -145,13 +145,13 @@ static void hdr_to_bytes(const NMBinHeader *h, uint8_t *b)
 {
     memset(b, 0, NMBIN_HDR_BYTES);
     memcpy(b, h->magic, 8);
-    nm_put_u32(b + 8,  h->version);
-    nm_put_u32(b + 12, h->kind);
-    nm_put_u32(b + 16, h->rec_size);
-    nm_put_u64(b + 20, h->rec_count);
-    nm_put_u32(b + 28, h->n_fields);
-    nm_put_u32(b + 32, h->flags);
-    nm_put_u64(b + 36, h->payload_bytes);
+    sk_put_u32(b + 8,  h->version);
+    sk_put_u32(b + 12, h->kind);
+    sk_put_u32(b + 16, h->rec_size);
+    sk_put_u64(b + 20, h->rec_count);
+    sk_put_u32(b + 28, h->n_fields);
+    sk_put_u32(b + 32, h->flags);
+    sk_put_u64(b + 36, h->payload_bytes);
     memcpy(b + 44, h->source, 32);
 }
 
@@ -159,13 +159,13 @@ static void bytes_to_hdr(const uint8_t *b, NMBinHeader *h)
 {
     memset(h, 0, sizeof(*h));
     memcpy(h->magic, b, 8);
-    h->version       = nm_get_u32(b + 8);
-    h->kind          = nm_get_u32(b + 12);
-    h->rec_size      = nm_get_u32(b + 16);
-    h->rec_count     = nm_get_u64(b + 20);
-    h->n_fields      = nm_get_u32(b + 28);
-    h->flags         = nm_get_u32(b + 32);
-    h->payload_bytes = nm_get_u64(b + 36);
+    h->version       = sk_get_u32(b + 8);
+    h->kind          = sk_get_u32(b + 12);
+    h->rec_size      = sk_get_u32(b + 16);
+    h->rec_count     = sk_get_u64(b + 20);
+    h->n_fields      = sk_get_u32(b + 28);
+    h->flags         = sk_get_u32(b + 32);
+    h->payload_bytes = sk_get_u64(b + 36);
     memcpy(h->source, b + 44, 32);
     h->source[31] = '\0';
 }
@@ -174,7 +174,7 @@ static void field_to_bytes(const NMBinField *f, uint8_t *b)
 {
     memset(b, 0, NMBIN_FIELD_BYTES);
     memcpy(b, f->name, 16);
-    nm_put_u16(b + 16, f->offset);
+    sk_put_u16(b + 16, f->offset);
     b[18] = f->type;
     b[19] = f->width;
 }
@@ -184,7 +184,7 @@ static void bytes_to_field(const uint8_t *b, NMBinField *f)
     memset(f, 0, sizeof(*f));
     memcpy(f->name, b, 16);
     f->name[15] = '\0';
-    f->offset = nm_get_u16(b + 16);
+    f->offset = sk_get_u16(b + 16);
     f->type   = b[18];
     f->width  = b[19];
 }
@@ -192,18 +192,18 @@ static void bytes_to_field(const uint8_t *b, NMBinField *f)
 
 ### 3. `nmbin_open` 与 `nmbin_check`（`binfmt.c:177-226`）
 
-`nmbin_open` 用 `nm_mmap_file` 直接映射整个文件，头部校验在 `nmbin_check`：
+`nmbin_open` 用 `sk_mmap_file` 直接映射整个文件，头部校验在 `nmbin_check`：
 
 ```c
 int nmbin_open(const char *path, NMBinFile *out)
 {
     memset(out, 0, sizeof(*out));
     size_t flen = 0;
-    void *p = nm_mmap_file(path, &flen);      /* 平台层：mmap / CreateFileMapping */
+    void *p = sk_mmap_file(path, &flen);      /* 平台层：mmap / CreateFileMapping */
     if (!p) return -1;
 
     bytes_to_hdr((const uint8_t *)p, &out->hdr);
-    if (memcmp(out->hdr.magic, NMBIN_MAGIC, 8) != 0) { nm_munmap(p, flen); return -1; }
+    if (memcmp(out->hdr.magic, NMBIN_MAGIC, 8) != 0) { sk_munmap(p, flen); return -1; }
     const uint8_t *fp = (const uint8_t *)p + NMBIN_HDR_BYTES;
     for (uint32_t i = 0; i < out->hdr.n_fields && i < NMBIN_MAX_FIELDS; i++)
         bytes_to_field(fp + i * NMBIN_FIELD_BYTES, &out->fields[i]);
@@ -217,7 +217,7 @@ int nmbin_open(const char *path, NMBinFile *out)
 
 void nmbin_close(NMBinFile *f)
 {
-    if (f && f->mapped && f->data) nm_munmap(f->data - (NMBIN_HDR_BYTES + NMBIN_FIELD_BYTES * NMBIN_MAX_FIELDS),
+    if (f && f->mapped && f->data) sk_munmap(f->data - (NMBIN_HDR_BYTES + NMBIN_FIELD_BYTES * NMBIN_MAX_FIELDS),
                                              f->mapped_len);
     if (f) { f->data = NULL; f->mapped = 0; }
 }
@@ -348,7 +348,7 @@ int name_pool_open(NamePool *np, const char *names_path)
     if (nmbin_open(names_path, &nf) != 0) return -1;
 
     const uint8_t *d = nf.data;
-    uint32_t cnt = nm_get_u32(d);
+    uint32_t cnt = sk_get_u32(d);
     size_t offs_bytes = (size_t)(cnt + 1) * 4;
     if (nf.data_len < 4 + offs_bytes) { nmbin_close(&nf); return -1; }
 
@@ -361,7 +361,7 @@ int name_pool_open(NamePool *np, const char *names_path)
         return -1;
     }
     for (uint32_t i = 0; i <= cnt; i++)
-        np->off[i] = nm_get_u32(d + 4 + (size_t)i * 4);
+        np->off[i] = sk_get_u32(d + 4 + (size_t)i * 4);
     memcpy(np->blob, d + 4 + offs_bytes, nf.data_len - 4 - offs_bytes);
     np->blob[nf.data_len - 4 - offs_bytes] = '\0';
 
@@ -437,7 +437,7 @@ typedef struct {
     uint64_t dmap_clock;   /* LRU 时钟（单调递增） */
 
     /* ---- 后台解码线程（避免同步解码阻塞渲染 0.6~4.4s）---- */
-    NmMutex  *dmap_mtx;         /* 保护下面的任务槽；NULL 则退回同步解码 */
+    SkMutex  *dmap_mtx;         /* 保护下面的任务槽；NULL 则退回同步解码 */
     int       dmap_quit;        /* 置 1 让 worker 退出 */
     int       dmap_stopped;     /* worker 已退出（free 时等待） */
     int       dmap_worker_started;
@@ -590,14 +590,14 @@ int mapset_load(MapSet *ms, const char *graph_dir)
     memset(ms, 0, sizeof(*ms));
 
     /* PBF 显示层后台解码：建锁 + 初始空闲任务槽（job_prov=-1 表示无在途）。 */
-    ms->dmap_mtx = nm_mutex_create();
+    ms->dmap_mtx = sk_mutex_create();
     ms->job_prov = -1;
 
     /* 单省目录：下面直接有 nodes.bin */
     char p[4096];
-    if (nm_path_join(p, sizeof(p), graph_dir, "nodes.bin") == 0 &&
-        nm_file_exists(p)) {
-        const char *nm = nm_base_name(graph_dir);
+    if (sk_path_join(p, sizeof(p), graph_dir, "nodes.bin") == 0 &&
+        sk_file_exists(p)) {
+        const char *nm = sk_base_name(graph_dir);
         if (mapset_add(ms, graph_dir, nm) != 0) {
             fprintf(stderr, "图集: %s 加载失败\n", graph_dir);
             return -1;
@@ -609,33 +609,33 @@ int mapset_load(MapSet *ms, const char *graph_dir)
        先收集名字再排序，保证加载顺序（以及日志）可复现。 */
     char **names = NULL;
     int nn = 0, cap = 0;
-    NmDir *d = nm_dir_open(graph_dir);
+    SkDir *d = sk_dir_open(graph_dir);
     if (!d) {
         fprintf(stderr, "图集: 既不是省目录也没有 nodes.bin：%s\n", graph_dir);
         return -1;
     }
     const char *de;
-    while ((de = nm_dir_next(d)) != NULL) {
+    while ((de = sk_dir_next(d)) != NULL) {
         if (de[0] == '.') continue;
         /* 跳过 sync_maps 的过渡目录：.tmp.* 是转换中的半成品，.old.* 是已换下、
            删除失败时留下的旧产物。两者都含 manifest.txt，不排除就会被当成
            一个"省"加载进来 —— 同一份数据装两遍（内存翻倍 + 渲染重复）。 */
         if (strstr(de, ".tmp.")) continue;
         if (strstr(de, ".old.")) continue;
-        if (nm_path_join(p, sizeof(p), graph_dir, de) != 0) continue;
-        if (!nm_is_dir(p)) continue;
+        if (sk_path_join(p, sizeof(p), graph_dir, de) != 0) continue;
+        if (!sk_is_dir(p)) continue;
         char mf[4096];
-        if (nm_path_join(mf, sizeof(mf), p, "manifest.txt") != 0) continue;
-        if (!nm_file_exists(mf)) continue;    /* 没有产物指纹的不算省 */
+        if (sk_path_join(mf, sizeof(mf), p, "manifest.txt") != 0) continue;
+        if (!sk_file_exists(mf)) continue;    /* 没有产物指纹的不算省 */
         if (nn == cap) {
             cap = cap ? cap * 2 : 16;
             char **t = realloc(names, (size_t)cap * sizeof(char *));
             if (!t) break;
             names = t;
         }
-        names[nn++] = nm_strdup(de);
+        names[nn++] = sk_strdup(de);
     }
-    nm_dir_close(d);
+    sk_dir_close(d);
 
     if (nn == 0) {
         fprintf(stderr, "图集: %s 下没有含 manifest.txt 的省目录\n", graph_dir);
@@ -645,7 +645,7 @@ int mapset_load(MapSet *ms, const char *graph_dir)
 
     int ok = 0;
     for (int i = 0; i < nn; i++) {
-        if (nm_path_join(p, sizeof(p), graph_dir, names[i]) == 0 &&
+        if (sk_path_join(p, sizeof(p), graph_dir, names[i]) == 0 &&
             mapset_add(ms, p, names[i]) == 0) ok++;
         free(names[i]);
     }
@@ -829,8 +829,8 @@ static void detect_duplicates(MapSet *ms)
                 if (ck == ~0ULL) continue;
                 int32_t la = coord_key_lat(ck), lo = coord_key_lon(ck);
                 double wx, wy;
-                nm_mercator((double)la / 1e7, (double)lo / 1e7, &wx, &wy);
-                double Z = (double)(1u << NM_TILE_Z);
+                sk_mercator((double)la / 1e7, (double)lo / 1e7, &wx, &wy);
+                double Z = (double)(1u << SK_TILE_Z);
                 int tx = (int)(wx * Z), ty = (int)(wy * Z);
                 tested++;
                 if (tile_has_coord(b, tx, ty, ck)) hit++;
@@ -885,8 +885,8 @@ int mapset_coverage(const MapSet *ms, double lat, double lon, double radius_m,
     if (!have_index) return COV_UNKNOWN;
 
     double wx, wy;
-    nm_mercator(lat, lon, &wx, &wy);
-    double Z = (double)(1u << NM_TILE_Z);
+    sk_mercator(lat, lon, &wx, &wy);
+    double Z = (double)(1u << SK_TILE_Z);
     int cx = (int)(wx * Z), cy = (int)(wy * Z);
 
     double tile_m = 40075000.0 / Z * cos(lat * 3.14159265358979 / 180.0);
@@ -1128,7 +1128,7 @@ int autobuild_repair(const char *graph_dir, const AutoBuildOpt *opt,
     char parent[4096];
     if (single) {
         snprintf(parent, sizeof(parent), "%s", graph_dir);
-        char *slash = (char *)nm_last_sep(parent);
+        char *slash = (char *)sk_last_sep(parent);
         if (slash && slash != parent) *slash = '\0';
         else snprintf(parent, sizeof(parent), ".");
     } else {
@@ -1158,7 +1158,7 @@ int autobuild_repair(const char *graph_dir, const AutoBuildOpt *opt,
             if (gl >= sizeof(prov_dir)) continue;
             memcpy(prov_dir, graph_dir, gl + 1);
         }
-        else if (nm_path_join(prov_dir, sizeof(prov_dir), graph_dir, name) != 0)
+        else if (sk_path_join(prov_dir, sizeof(prov_dir), graph_dir, name) != 0)
             continue;                        /* 路径过长，跳过这个省 */
 
         if (find_pbf(src_dir, name, pbf, sizeof(pbf)) != 0) {
@@ -1223,25 +1223,25 @@ done:
 static int find_tool(char *out, size_t cap)
 {
     char exe[4096];
-    if (nm_exe_path(exe, sizeof(exe)) == 0) {
+    if (sk_exe_path(exe, sizeof(exe)) == 0) {
         char dir[4096];
         size_t n = strlen(exe);
         if (n < sizeof(dir)) {
             memcpy(dir, exe, n + 1);
-            char *slash = (char *)nm_last_sep(dir);
+            char *slash = (char *)sk_last_sep(dir);
             if (slash) {
                 *slash = '\0';
-                if (nm_which(dir, "skedaddle_graph_extract", out, cap) == 0) return 0;
+                if (sk_which(dir, "skedaddle_graph_extract", out, cap) == 0) return 0;
                 char sub[4096];
-                if (nm_path_join(sub, sizeof(sub), dir, "build") == 0 &&
-                    nm_which(sub, "skedaddle_graph_extract", out, cap) == 0) return 0;
+                if (sk_path_join(sub, sizeof(sub), dir, "build") == 0 &&
+                    sk_which(sub, "skedaddle_graph_extract", out, cap) == 0) return 0;
                 char up[4096];
-                if (nm_path_join(up, sizeof(up), dir, "..") == 0 &&
-                    nm_which(up, "skedaddle_graph_extract", out, cap) == 0) return 0;
+                if (sk_path_join(up, sizeof(up), dir, "..") == 0 &&
+                    sk_which(up, "skedaddle_graph_extract", out, cap) == 0) return 0;
             }
         }
     }
-    return nm_find_in_path("skedaddle_graph_extract", out, cap);
+    return sk_find_in_path("skedaddle_graph_extract", out, cap);
 }
 
 /* sources/ 在哪：从 graph_dir 逐级往上找，最多 6 级 */
@@ -1253,13 +1253,13 @@ static int find_src_dir(char *out, size_t cap, const char *graph_dir)
     while (n > 1 && (cur[n - 1] == '/' || cur[n - 1] == '\\')) cur[--n] = '\0';
 
     for (int i = 0; i < 6; i++) {
-        if (nm_path_join(out, cap, cur, "sources") == 0 && nm_is_dir(out)) return 0;
-        char *slash = (char *)nm_last_sep(cur);
+        if (sk_path_join(out, cap, cur, "sources") == 0 && sk_is_dir(out)) return 0;
+        char *slash = (char *)sk_last_sep(cur);
         if (!slash || slash == cur) break;
         *slash = '\0';
     }
     snprintf(out, cap, "sources");
-    return nm_is_dir(out) ? 0 : -1;
+    return sk_is_dir(out) ? 0 : -1;
 }
 
 /* 该省对应的源 pbf（两种后缀都认）。找到返回 0 并填 pbf 路径。 */
@@ -1268,11 +1268,11 @@ static int find_pbf(const char *src_dir, const char *name, char *out, size_t cap
     char base[512];
     int n = snprintf(base, sizeof(base), "%s.osm.pbf", name);
     if (n >= 0 && (size_t)n < sizeof(base) &&
-        nm_path_join(out, cap, src_dir, base) == 0 && nm_file_exists(out)) return 0;
+        sk_path_join(out, cap, src_dir, base) == 0 && sk_file_exists(out)) return 0;
 
     n = snprintf(base, sizeof(base), "%s.pbf", name);
     if (n >= 0 && (size_t)n < sizeof(base) &&
-        nm_path_join(out, cap, src_dir, base) == 0 && nm_file_exists(out)) return 0;
+        sk_path_join(out, cap, src_dir, base) == 0 && sk_file_exists(out)) return 0;
     return -1;
 }
 ```
@@ -1284,23 +1284,23 @@ static int prov_check(const char *dir, const char *pbf, char *why, size_t cap)
     char p[4096];
 
     /* 1) 产物目录在不在 */
-    if (!nm_is_dir(dir)) {
+    if (!sk_is_dir(dir)) {
         snprintf(why, cap, "%s", PV_MISSING_TXT);
         return PV_MISSING;
     }
     /* 2) 必需文件齐不齐（与 sync_maps 同一份清单） */
-    if (nm_path_join(p, sizeof(p), dir, "manifest.txt") != 0 ||
-        !nm_file_exists(p)) {
+    if (sk_path_join(p, sizeof(p), dir, "manifest.txt") != 0 ||
+        !sk_file_exists(p)) {
         snprintf(why, cap, "%s（缺 manifest.txt，上次转换没走完）", PV_INCOMPLETE_TXT);
         return PV_INCOMPLETE;
     }
     static const char *need[] = { "nodes.bin", "edges.bin", "osmid.bin" };
     for (size_t i = 0; i < sizeof(need) / sizeof(need[0]); i++) {
-        if (nm_path_join(p, sizeof(p), dir, need[i]) != 0) {
+        if (sk_path_join(p, sizeof(p), dir, need[i]) != 0) {
             snprintf(why, cap, "%s（路径过长）", PV_INCOMPLETE_TXT);
             return PV_INCOMPLETE;
         }
-        if (!nm_file_exists(p)) {
+        if (!sk_file_exists(p)) {
             snprintf(why, cap, "%s（缺 %s）", PV_INCOMPLETE_TXT, need[i]);
             return PV_INCOMPLETE;
         }
@@ -1321,7 +1321,7 @@ static int prov_check(const char *dir, const char *pbf, char *why, size_t cap)
     /* 5) 源指纹：源 pbf 换了就该重转 */
     uint64_t sb = 0;
     int64_t  sm = 0;
-    if (nm_stat_file(pbf, &sb, &sm) != 0) { sb = 0; sm = 0; }
+    if (sk_stat_file(pbf, &sb, &sm) != 0) { sb = 0; sm = 0; }
     if (mani_get(dir, "src_bytes", v, sizeof(v)) == 0) {
         uint64_t mb = strtoull(v, NULL, 10);
         if (sb && mb && mb != sb) {
@@ -1349,7 +1349,7 @@ static void lock_path(char *out, size_t cap, const char *parent, const char *nam
 {
     char nm[512];
     int n = snprintf(nm, sizeof(nm), "%s.building", name);
-    if (n < 0 || (size_t)n >= sizeof(nm) || nm_path_join(out, cap, parent, nm) != 0)
+    if (n < 0 || (size_t)n >= sizeof(nm) || sk_path_join(out, cap, parent, nm) != 0)
         out[0] = '\0';
 }
 
@@ -1360,7 +1360,7 @@ static int lock_pid_alive(const char *lp)
     int pid = 0;
     if (fscanf(f, "%d", &pid) != 1) pid = 0;
     fclose(f);
-    return nm_pid_alive(pid);
+    return sk_pid_alive(pid);
 }
 
 /* 0 = 拿到锁；-1 = 拿不到（超时）。锁里写自己的 pid，便于识别过期锁。 */
@@ -1368,19 +1368,19 @@ static int lock_acquire(const char *parent, const char *name)
 {
     char lp[4096];
     lock_path(lp, sizeof(lp), parent, name);
-    nm_mkdir_p(parent);
+    sk_mkdir_p(parent);
 
     for (int try = 0; try < 360; try++) {          /* 最多等约 3 分钟 */
         char b[32];
-        snprintf(b, sizeof(b), "%d\n", nm_get_pid());
-        if (nm_create_exclusive(lp, b) == 0) return 0;
+        snprintf(b, sizeof(b), "%d\n", sk_get_pid());
+        if (sk_create_exclusive(lp, b) == 0) return 0;
         if (!lock_pid_alive(lp)) {                 /* 上一个人崩了，锁是孤儿 */
-            nm_unlink(lp);
+            sk_unlink(lp);
             continue;
         }
         if (try == 0)
             fprintf(stderr, "[自动重建] %s 有另一个进程正在转换，等待中…\n", name);
-        nm_sleep_ms(500);
+        sk_sleep_ms(500);
     }
     return -1;
 }
@@ -1389,7 +1389,7 @@ static void lock_release(const char *parent, const char *name)
 {
     char lp[4096];
     lock_path(lp, sizeof(lp), parent, name);
-    nm_unlink(lp);
+    sk_unlink(lp);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1405,7 +1405,7 @@ static int run_extract(const char *tool, const char *pbf, const char *dir)
         return -1;
     char *const av[] = { (char *)tool, outarg, (char *)pbf, NULL };
     int code = 0;
-    if (nm_spawn_wait(tool, av, &code) != 0) return -1;
+    if (sk_spawn_wait(tool, av, &code) != 0) return -1;
     return code == 0 ? 0 : -1;
 }
 
@@ -1413,7 +1413,7 @@ static int run_extract(const char *tool, const char *pbf, const char *dir)
    mapset_load 会跳过 .old.* / .tmp.*，不会被当成一个省加载进来。 */
 static int aside_path(char *out, size_t cap, const char *prov_dir)
 {
-    int n = snprintf(out, cap, "%s.old.%d", prov_dir, nm_get_pid());
+    int n = snprintf(out, cap, "%s.old.%d", prov_dir, sk_get_pid());
     return (n < 0 || (size_t)n >= cap) ? -1 : 0;
 }
 
@@ -1430,14 +1430,14 @@ static int rebuild_one(const char *graph_parent, const char *prov_dir,
        配上新的 nodes.bin），出来的图是自相矛盾的。删不掉就改名让位 ——
        名字带 .old. 是因为 mapset_load 会跳过 .old.* / .tmp.*，不会被当成
        一个省加载进来（同一份数据装两遍）。 */
-    if (nm_is_dir(prov_dir)) {
+    if (sk_is_dir(prov_dir)) {
         char aside[4224];
         if (aside_path(aside, sizeof(aside), prov_dir) != 0) {
             fprintf(stderr, "[自动重建] %s 路径过长，放弃重建\n", name);
             lock_release(graph_parent, name);
             return -1;
         }
-        if (nm_rmtree(prov_dir) != 0 && nm_rename(prov_dir, aside) != 0) {
+        if (sk_rmtree(prov_dir) != 0 && sk_rename(prov_dir, aside) != 0) {
             fprintf(stderr, "[自动重建] %s 旧产物清不掉（%s），放弃重建\n",
                     name, strerror(errno));
             lock_release(graph_parent, name);
@@ -1476,8 +1476,8 @@ static int rebuild_one(const char *graph_parent, const char *prov_dir,
 
     /* 让位的旧目录这时可以清了 */
     char aside[4224];
-    if (aside_path(aside, sizeof(aside), prov_dir) == 0 && nm_is_dir(aside))
-        nm_rmtree(aside);
+    if (aside_path(aside, sizeof(aside), prov_dir) == 0 && sk_is_dir(aside))
+        sk_rmtree(aside);
 
     lock_release(graph_parent, name);
     return 0;
@@ -1586,7 +1586,7 @@ void road_tags_parse(const uint32_t *keys, size_t n_keys,
         out->speed_kmh  = e->speed;
         if (e->cls == RC_PATH) out->show = 1;   /* 步行道：显示但不路由 */
     } else {
-        if (getenv("NAVMAP_DEBUG")) fprintf(stderr, "DBG unknown highway=%s\n", hw);
+        if (getenv("SKEDADDLE_DEBUG")) fprintf(stderr, "DBG unknown highway=%s\n", hw);
         out->unknown_value = 1;
         out->drivable      = 1;
         out->road_class    = RC_OTHER;
@@ -1637,7 +1637,7 @@ void road_tags_parse(const uint32_t *keys, size_t n_keys,
 - **下游 · 第 8 课（渲染）**：`paint_frame` 经 `mapset` 迭代 `srcs` 取数据画多省；`line_bbox`/`area_bbox` 懒填缓存把每帧白投影从 75% 降到可忽略。
 - **下游 · 第 10 课（路由）**：`sew.c` 经 `mapset_query_tile`（遍历每省 `tiles.bin` 网格，命中 `(tx,ty)` 即回调）取跨省边；`dup_of` 在缝合时被跳过，避免同一路口被展开两次。
 - **下游 · 第 9 课（搜索/地点）**：`coverage_locate` 把"用户现在在哪"反查到省，供地点查询与"该下哪块"提示。
-- **与 L2（平台抽象）关系**：`nmbin_open` 的 `nm_mmap_file`、后台线程 `nm_thread_spawn`、锁 `nm_mutex_create`、进程派生 `nm_spawn_wait` 全部来自 L2，说明自描述格式只是数据布局，IO/并发/进程仍由平台层统一。
+- **与 L2（平台抽象）关系**：`nmbin_open` 的 `sk_mmap_file`、后台线程 `sk_thread_spawn`、锁 `sk_mutex_create`、进程派生 `sk_spawn_wait` 全部来自 L2，说明自描述格式只是数据布局，IO/并发/进程仍由平台层统一。
 - **与 L1（坐标系）关系**：所有 `bbox`/`bbox[4]` 均为 e7 整数坐标；`mapset_detail_prov` 用 `coord_key_e7` 做坐标键比较。
 
 ## 五、演示、练习与验收

@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_ROUTE_PRIV_H
-#define NAVIMAP_ROUTE_PRIV_H
+#ifndef SKEDADDLE_ROUTE_PRIV_H
+#define SKEDADDLE_ROUTE_PRIV_H
 
 /* route 模块内部私有定义：完整 Router / RestrIdx / Sew* 结构体，
  * 以及 route.c 与 restr.c 共用的小宏。
@@ -12,10 +12,10 @@
 #include "route/pqueue.h"    /* PQueue */
 #include "route/revidx.h"    /* RevIdx */
 #include "route/lmtable.h"   /* LmTable */
-#include "map/binfmt.h"      /* NM_NODE_BYTES / RF_* / NM_RESTR_BYTES / EF_* */
+#include "map/binfmt.h"      /* SK_NODE_BYTES / RF_* / SK_RESTR_BYTES / EF_* */
 #include "map/road_tags.h"   /* RC_* 道路等级 */
 #include "map/coordkey.h"    /* coord_key_e7 */
-#include "utils/geo.h"       /* nm_haversine_m */
+#include "utils/geo.h"       /* sk_haversine_m */
 
 /* 双向搜索方向下标（正向=朝终点，反向=朝起点）；route.c 与 restr.c 共用。 */
 #define DIR_FWD 0

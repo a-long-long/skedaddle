@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_PBFMAP_H
-#define NAVIMAP_PBFMAP_H
+#ifndef SKEDADDLE_PBFMAP_H
+#define SKEDADDLE_PBFMAP_H
 
 #include "map/binfmt.h"
 

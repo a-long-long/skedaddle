@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_TOOL_COMMON_H
-#define NAVIMAP_TOOL_COMMON_H
+#ifndef SKEDADDLE_TOOL_COMMON_H
+#define SKEDADDLE_TOOL_COMMON_H
 
 /* tools/ 下各 CLI 的公共小板凳（2026-10-24 从 7~8 个工具里收敛而来）。
  *
@@ -31,4 +31,4 @@ void tc_ab_init(AutoBuildOpt *ab);
  * 调用方该打的错误信息照旧自己打（各工具措辞不同，regress 各自盯着）。 */
 int tc_load_graph(MapSet *ms, const char *graph_dir, const AutoBuildOpt *ab);
 
-#endif /* NAVIMAP_TOOL_COMMON_H */
+#endif /* SKEDADDLE_TOOL_COMMON_H */

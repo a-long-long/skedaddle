@@ -1,11 +1,11 @@
 /* skedaddle_tile_selftest —— 瓦片下标"查表版 vs 精确版"的逐点等价性验收
  *
  * 用法:
- *   skedaddle_tile_selftest --graph=<dir>                默认：nm_tile_of 必须与精确版逐点相同
- *   skedaddle_tile_selftest --graph=<dir> --expect-diff   对照组：nm_tile_of_raw（不带边界
+ *   skedaddle_tile_selftest --graph=<dir>                默认：sk_tile_of 必须与精确版逐点相同
+ *   skedaddle_tile_selftest --graph=<dir> --expect-diff   对照组：sk_tile_of_raw（不带边界
  *                                               回退）必须**有**差异
  *
- * ★ 为什么不抽样：nm_tile_of 用的是 nm_mercator_y_fast() 插值表，误差 3.8e-6
+ * ★ 为什么不抽样：sk_tile_of 用的是 sk_mercator_y_fast() 插值表，误差 3.8e-6
  *   瓦片，平时被取整吃掉，只有点落在瓦片边界 3.8e-6 以内才暴露 —— 52M 个节点里
  *   这种点只有万分之几，抽样几乎一定测不到（§31 的教训：抽样没差异不算判据）。
  *   所以这里做两件事：
@@ -29,7 +29,7 @@
 
 static uint64_t now_ms(void)
 {
-    return nm_now_ms();                /* 平台层：clock_gettime / QPC */
+    return sk_now_ms();                /* 平台层：clock_gettime / QPC */
 }
 
 static uint64_t g_tested, g_diff;
@@ -38,9 +38,9 @@ static int     g_expect_diff;
 static void cmp_one(double lat, double lon, const char *tag, int *first)
 {
     int fx, fy, ex, ey;
-    if (g_expect_diff) nm_tile_of_raw(lat, lon, &fx, &fy);
-    else               nm_tile_of(lat, lon, &fx, &fy);
-    nm_tile_of_exact(lat, lon, &ex, &ey);
+    if (g_expect_diff) sk_tile_of_raw(lat, lon, &fx, &fy);
+    else               sk_tile_of(lat, lon, &fx, &fy);
+    sk_tile_of_exact(lat, lon, &ex, &ey);
     g_tested++;
     if (fx != ex || fy != ey) {
         g_diff++;
@@ -81,9 +81,9 @@ int main(int argc, char **argv)
         uint64_t n = s->nodes.hdr.rec_count;
         const uint8_t *nd = s->nodes.data;
         for (uint64_t k = 0; k < n; k++) {
-            const uint8_t *nr = nd + (uint64_t)k * NM_NODE_BYTES;
-            double lat = (double)nm_get_i32(nr + NF_LAT) / 1e7;
-            double lon = (double)nm_get_i32(nr + NF_LON) / 1e7;
+            const uint8_t *nr = nd + (uint64_t)k * SK_NODE_BYTES;
+            double lat = (double)sk_get_i32(nr + NF_LAT) / 1e7;
+            double lon = (double)sk_get_i32(nr + NF_LON) / 1e7;
             cmp_one(lat, lon, s->name, NULL);
         }
         nodes += n;
@@ -94,21 +94,21 @@ int main(int argc, char **argv)
        墨卡托在极区 1 度能跨 500 多个瓦片，按度扰动测不到误差带）。
        覆盖从"远在带内"(0) 到"远在带外"(0.1 瓦片)，既验证带内会回退到精确
        公式，也验证带外查表本身足够准。另一轴固定在瓦片正中，避免双轴互相掩盖。 */
-    double Z = (double)(1u << NM_TILE_Z);
+    double Z = (double)(1u << SK_TILE_Z);
     double lat_mid, lon_mid;
-    nm_mercator_inv((8192 + 0.5) / Z, (8192 + 0.5) / Z, &lat_mid, &lon_mid);
+    sk_mercator_inv((8192 + 0.5) / Z, (8192 + 0.5) / Z, &lat_mid, &lon_mid);
     static const double dt[] = { 0.0, 1e-6, -1e-6, 1e-5, -1e-5, 1e-4, -1e-4,
                                  5e-4, -5e-4, 2e-3, -2e-3, 1e-2, -1e-2, 1e-1, -1e-1 };
 
     for (int k = 0; k <= (int)Z; k++) {
         double lat_b, lon_b, dummy;
         /* y 边界：wy = k/Z 反解纬度 */
-        nm_mercator_inv((8192 + 0.5) / Z, (double)k / Z, &lat_b, &dummy);
+        sk_mercator_inv((8192 + 0.5) / Z, (double)k / Z, &lat_b, &dummy);
         double deg_per_tile_y = 360.0 * cos(lat_b * M_PI / 180.0) / Z;
         for (size_t d = 0; d < sizeof(dt)/sizeof(dt[0]); d++)
             cmp_one(lat_b + dt[d] * deg_per_tile_y, lon_mid, "y边界", NULL);
         /* x 边界：wx = k/Z 反解经度（经度方向每瓦片度数恒定） */
-        nm_mercator_inv((double)k / Z, (8192 + 0.5) / Z, &dummy, &lon_b);
+        sk_mercator_inv((double)k / Z, (8192 + 0.5) / Z, &dummy, &lon_b);
         for (size_t d = 0; d < sizeof(dt)/sizeof(dt[0]); d++)
             cmp_one(lat_mid, lon_b + dt[d] * 360.0 / Z, "x边界", NULL);
     }

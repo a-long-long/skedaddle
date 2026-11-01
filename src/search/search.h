@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_SEARCH_H
-#define NAVIMAP_SEARCH_H
+#ifndef SKEDADDLE_SEARCH_H
+#define SKEDADDLE_SEARCH_H
 
 #include <stdint.h>
 

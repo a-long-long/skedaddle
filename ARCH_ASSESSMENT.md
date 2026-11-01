@@ -1,6 +1,6 @@
-# navimap 代码可复用性 / 模块化 / 组织化评估
+# skedaddle 代码可复用性 / 模块化 / 组织化评估
 
-> 评估对象：本机 `E:/navimap` 工作区（提交 `d447d00` 前后，含 Windows/Qt6 双版本兼容改动前沉淀）
+> 评估对象：本机 `E:/skedaddle` 工作区（提交 `d447d00` 前后，含 Windows/Qt6 双版本兼容改动前沉淀）
 > 评估方法：基于真实编译产物的量化（文件行数、头文件依赖图、全局状态扫描、函数前缀 fan-out），非主观印象。
 > 规模快照：84 个源文件（`.c/.h/.cpp`），约 2.16 万行（含 `src/` + `tools/` + `src/ui_qt/`）。
 
@@ -11,7 +11,7 @@
 | 层次 | 含义 | 可行性 | 实测成本 | 价值 | 建议 |
 |---|---|---|---|---|---|
 | **L1 拆文件/目录** | 按职责把类/文件挪进子目录 | ✅ 已完成 | 极低（几乎为 0） | 中（可读性） | **无需再做** |
-| **L2 拆独立库** | 每模块编成独立静态库，只暴露 API | ✅ **已完成（阶段1+2）** | 中（CMake 改造） | 中高（边界被链接器强制、可独立复用） | 已落地（12 个 libnavmap_*.a） |
+| **L2 拆独立库** | 每模块编成独立静态库，只暴露 API | ✅ **已完成（阶段1+2）** | 中（CMake 改造） | 中高（边界被链接器强制、可独立复用） | 已落地（12 个 libskedaddle_*.a） |
 | **L3 拆上帝文件** | 把 route.c / paint.c 等大文件按职责分解 | 🟢 **部分进行中（阶段3）** | 实测**中低**（有回归门禁时每步约 15 min） | 中（`route.c` 1856→928，搜索核心已可独立测试/复用） | **已按「低耦合优先 + 逐行为等价」推进；`paint.c` 未动**（见 §4 阶段 3、下面的 L3 小节） |
 
 **一句话结论**：代码组织已经"天然模块化"——目录即模块、依赖除 `render↔ui` 环外是干净的 DAG（见 §1.3 修正注）、零跨文件可变全局、符号带模块前缀。当前最大的可回收价值不是"重构代码"，而是**把已有的模块边界用构建系统固化成独立库（L2，已完成阶段1+2）**，从而解锁局部复用与更快的增量构建；L3 不要现在动。
@@ -21,8 +21,8 @@
 ## 1. 现状实测
 
 ### 1.1 构建系统（关键事实）
-- 整个 `src/` 编译成**一个** `navimap_core` 静态库（`add_library(navimap_core STATIC ${CORE_SRCS})`，`CORE_SRCS` 显式罗列、非 glob）。
-- 24 个可执行文件（主程序 + `tools/` 各类 CLI + 可选 `skedaddle`）全部 `target_link_libraries(... navimap_core)`。
+- 整个 `src/` 编译成**一个** `skedaddle_core` 静态库（`add_library(skedaddle_core STATIC ${CORE_SRCS})`，`CORE_SRCS` 显式罗列、非 glob）。
+- 24 个可执行文件（主程序 + `tools/` 各类 CLI + 可选 `skedaddle`）全部 `target_link_libraries(... skedaddle_core)`。
 - 没有多包/多模块构建（vcpkg/conan 之类）。这是 L2 的"起点状态"，不是缺陷。
 
 ### 1.2 目录即模块（L1 已到位）
@@ -37,7 +37,7 @@ src/
   ui/       window
   ui_qt/    main_window map_canvas qt_main (C++ 前端，独立构建守卫)
   main.c
-tools/      24 个 CLI 工具（各自链接 navimap_core）
+tools/      24 个 CLI 工具（各自链接 skedaddle_core）
 ```
 每个 `.c` 配套一个 `.h`，头文件只声明本模块公开符号——**头/源一一对应、含入关系清晰**。
 
@@ -83,7 +83,7 @@ Layer 0  src/utils     ──▶ (leaf, 被其余模块依赖)
 - **文件作用域 static 可变全局**（按模块）：
   - `render/paint.c`：**6 个**（`g_rl` 道路标签数组、`g_rl_n`、`g_last_px/tag`、`g_sp_x/y/have`，外加 `rla/rlo/bx/by` 环形缓冲、`seen[]`）。这些是**渲染流水线状态**，意味着 `paint` 不可重入、单测需手动 reset——**当前唯一的真实障碍**。
   - `render/labels.c`：`g_grid` 标签排布网格 + `g_grid_w/h`（模块状态，可封装成 struct 传参）。
-  - `utils/plat.c`：`g_nm_maps` / `g_nm_nmaps`（平台文件映射表，属抽象层应持有的合法状态）。
+  - `utils/plat.c`：`g_sk_maps` / `g_sk_nmaps`（平台文件映射表，属抽象层应持有的合法状态）。
 - 结论：可变全局**仅局限于 render + platform 两层**，未扩散到全代码库；按技能判据（"同进程跑两遍探针是否互不影响"），render 目前不满足，但影响范围可控。
 
 ### 1.6 "上帝文件"判定（L3 是否必要）
@@ -112,15 +112,15 @@ Layer 0  src/utils     ──▶ (leaf, 被其余模块依赖)
 
 因依赖除 `render↔ui` 环外是 DAG，把每个目录提升为独立 `STATIC` 库时**不需要打破任何环**（环在语义上合理：UI 调度渲染、渲染回调 UI 动作），只需把 5 个模块库整体包进 `-Wl,--start-group … -Wl,--end-group` 链接：
 ```
-navmap_geo / navmap_strpool / navmap_plat / navmap_mem  (叶子，mem→plat)
-   → navmap_pbf → navmap_map → {navmap_route, navmap_search} → navmap_render ⇄ navmap_ui
-# 注：navmap_map 还依赖 navmap_render（mapset.c 调 name_pool）；navmap_render ⇄ navmap_ui 互为依赖。
+skedaddle_geo / skedaddle_strpool / skedaddle_plat / skedaddle_mem  (叶子，mem→plat)
+   → skedaddle_pbf → skedaddle_map → {skedaddle_route, skedaddle_search} → skedaddle_render ⇄ skedaddle_ui
+# 注：skedaddle_map 还依赖 skedaddle_render（mapset.c 调 name_pool）；skedaddle_render ⇄ skedaddle_ui 互为依赖。
 #     故 5 个模块库链接时须整体包进 start-group，顺序不敏感。
 # ★ 2026-10-28：上两行注记已失效 —— map 不再依赖 render（NamePool 下沉），
 #   render 不再依赖 ui（chrome/audit 移出），现在是纯拓扑序，无需 start-group。
 ```
 收益：
-1. **局部复用**：`pbf`（解析器）、`geo`（投影/距离数学）、`strpool`、`plat`（平台抽象）这 4 个是**纯叶子、零内部依赖**，拆出后即可被其它项目独立取用——目前要复用它们得整车拖走 `navimap_core`。
+1. **局部复用**：`pbf`（解析器）、`geo`（投影/距离数学）、`strpool`、`plat`（平台抽象）这 4 个是**纯叶子、零内部依赖**，拆出后即可被其它项目独立取用——目前要复用它们得整车拖走 `skedaddle_core`。
 2. **链接器强制边界**：比"约定"更硬的模块墙，避免日后偷偷反向依赖。
 3. **增量构建更快**：改 `render` 不再重链整库。
 代价：CMake 把 1 个 lib 改成 N 个 lib + 调整 24 个 exe 的 `target_link_libraries`（工作量大但机械、低风险，因 `CORE_SRCS` 本就显式罗列）。
@@ -136,7 +136,7 @@ navmap_geo / navmap_strpool / navmap_plat / navmap_mem  (叶子，mem→plat)
 3. **私有头 `route_priv.h` 承接完整结构体**，公共头 `route.h` 不泄漏，避免把整套依赖强加给 render/ui；
 4. 编译**零警告**是硬门禁，整轮 `regress.sh` 恒为 52/54（2 项本机环境 glitch）。
 
-结果：`route.c` 1856 → 928 行，抽出的 6 个子模块仍编在 `libnavmap_route.a` 内（暂不单独成库）。
+结果：`route.c` 1856 → 928 行，抽出的 6 个子模块仍编在 `libskedaddle_route.a` 内（暂不单独成库）。
 
 `paint.c` **仍未动**：它是 §1.5 记的「渲染流水线全局状态」问题，性质属于重入 / 多渲染上下文需求，与 `route.c` 不同，维持原判断——没有该需求前不做。
 
@@ -146,7 +146,7 @@ navmap_geo / navmap_strpool / navmap_plat / navmap_mem  (叶子，mem→plat)
 
 1. **干净的叶子层**：`utils` / `pbf` 不依赖任何内部模块，是理想的独立库候选。
 2. **无幽灵依赖**：依赖图是真实 `#include` 推导（已剥注释/字符串），无注释里"以前写在 X 里"之类的伪依赖。
-3. **符号带模块前缀**：`route_*` `paint_*` `nm_*` `geo_*` —— fan-out 可直接按前缀读，模块边界"可命名、可 grep"。
+3. **符号带模块前缀**：`route_*` `paint_*` `sk_*` `geo_*` —— fan-out 可直接按前缀读，模块边界"可命名、可 grep"。
 4. **平台隔离已收口**：全部 `#ifdef _WIN32` 在 `plat.{h,c}`，业务代码零分叉（前序工作已验证 MSYS2/Qt6 实机编译）。
 5. **验证手段齐备**：`tools/` 有 `regress.sh`（54 项）、`skedaddle_plat_selftest`、`map_shot` 像素级截图、各 `skedaddle_route_cli`/`skedaddle_search_cli` 探针——任何拆分都可立即回归，风险可控。
 6. **零跨文件 extern 全局**：状态封装良好，拆库不会触发"全局被谁改了"的隐性数据流问题。
@@ -156,12 +156,12 @@ navmap_geo / navmap_strpool / navmap_plat / navmap_mem  (叶子，mem→plat)
 ## 4. 分阶段路线（每阶段可独立验证、独立回滚）
 
 - **阶段 0（已完成）**：把本报告 §1.3 的 DAG 作为模块契约文档沉淀（注意：原 DAG 缺 `map→render` 边且误判为无环，见 §1.3 修正注）。
-- **阶段 1（已完成，commit 4986ace）**：把 `navmap_utils`（src/utils/*）拆成 4 个独立叶子库 `navmap_geo / navmap_strpool / navmap_plat / navmap_mem`（mem→plat），加 `navmap_pbf`，共 5 个叶子库；`navimap_core` 改为依赖它们。零破环风险。验收：regress.sh 52/54（2 项为环境相关 glitch）、零警告。
-- **阶段 2（已完成，commit a244de9 + 9316777）**：把 `map / route / search / render / ui` 提升为 5 个独立模块库，`navimap_core` 退化为聚合层（仅含 `core_anchor.c`，用 `-Wl,--start-group` 包裹所有模块库 + 叶子库 + 3rd 方库）；24 个 CLI 工具裁剪为只链所需模块子集（via `nm_link_tool()`）；`skedaddle` 仍链聚合层。纯 CMake 改动。验收：regress.sh 52/54 零回归、核心 `skedaddle_core_no_sdl` 门禁仍报 CORE-NO-SDL-OK。
+- **阶段 1（已完成，commit 4986ace）**：把 `skedaddle_utils`（src/utils/*）拆成 4 个独立叶子库 `skedaddle_geo / skedaddle_strpool / skedaddle_plat / skedaddle_mem`（mem→plat），加 `skedaddle_pbf`，共 5 个叶子库；`skedaddle_core` 改为依赖它们。零破环风险。验收：regress.sh 52/54（2 项为环境相关 glitch）、零警告。
+- **阶段 2（已完成，commit a244de9 + 9316777）**：把 `map / route / search / render / ui` 提升为 5 个独立模块库，`skedaddle_core` 退化为聚合层（仅含 `core_anchor.c`，用 `-Wl,--start-group` 包裹所有模块库 + 叶子库 + 3rd 方库）；24 个 CLI 工具裁剪为只链所需模块子集（via `sk_link_tool()`）；`skedaddle` 仍链聚合层。纯 CMake 改动。验收：regress.sh 52/54 零回归、核心 `skedaddle_core_no_sdl` 门禁仍报 CORE-NO-SDL-OK。
 - **阶段 3（进行中，触发点：让路由核心可测试/可分解）**：分解 `route.c` 内部。
   用户拍板的原则：**从低耦合小块开始、搜索核心 `plan_search` 放最后，每步必须有行为等价证据**。
 
-  `route.c` 1856 → 928 行，已抽出 6 个子模块（仍在 `libnavmap_route.a` 内，不单独成库），
+  `route.c` 1856 → 928 行，已抽出 6 个子模块（仍在 `libskedaddle_route.a` 内，不单独成库），
   每个 commit 都带**逐字节等价证据**：
 
   | 抽出物 | 内容 | commit |

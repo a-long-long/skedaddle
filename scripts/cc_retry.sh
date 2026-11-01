@@ -25,12 +25,12 @@
 #   成功时原样透传 stdout/stderr 与退出码 —— 编译器的告警不能丢。
 set -uo pipefail
 
-if [ "${NM_CC_RETRY:-1}" = "0" ]; then
+if [ "${SK_CC_RETRY:-1}" = "0" ]; then
     exec "$@"
 fi
 
 MAX_TRY=8
-ERR_FILE=$(mktemp 2>/dev/null || echo "/tmp/nm_cc_err.$$")
+ERR_FILE=$(mktemp 2>/dev/null || echo "/tmp/sk_cc_err.$$")
 trap 'rm -f "$ERR_FILE"' EXIT
 
 # ★ PATH 必须是 **MSYS 形式**（/d/msys64/ucrt64/bin 这种，用 ':' 分隔）。

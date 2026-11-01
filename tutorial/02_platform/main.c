@@ -15,15 +15,15 @@ static uint32_t buf[W * H];
 int main(void) {
     tut_cls(buf, W, H, 0xFFF4F1EA);
 
-    /* 业务代码只用 nm_now_ms / nm_sleep_ms，不知道底下是 Sleep 还是 usleep */
-    long long t0 = nm_now_ms();
+    /* 业务代码只用 sk_now_ms / sk_sleep_ms，不知道底下是 Sleep 还是 usleep */
+    long long t0 = sk_now_ms();
     for (int i = 0; i < W; i += 4)
         tut_line(buf, W, H, i, 0, i, H - 1, 0xFFD8D2C8);
-    long long t1 = nm_now_ms();
+    long long t1 = sk_now_ms();
     printf("画 %d 条竖线耗时 %lld ms\n", W / 4, t1 - t0);
 
     /* 跨平台休眠：业务侧零 #ifdef */
-    nm_sleep_ms(50);
+    sk_sleep_ms(50);
 
     tut_line(buf, W, H, 0, H / 2, W - 1, H / 2, 0xFF2A2A2A);
     tut_line(buf, W, H, W / 2, 0, W / 2, H - 1, 0xFF2A2A2A);

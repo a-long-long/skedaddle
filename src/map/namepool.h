@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_NAMEPOOL_H
-#define NAVIMAP_NAMEPOOL_H
+#ifndef SKEDADDLE_NAMEPOOL_H
+#define SKEDADDLE_NAMEPOOL_H
 
 #include <stdint.h>
 
@@ -8,10 +8,10 @@
  *
  * ★ 为什么住 map 层（2026-10-28 从 render/paint.h + render/labels.c 搬来）：
  *   它是**纯地图数据概念**——每省 names.bin 的解析结果，随 MapSrc 生命周期走，
- *   解析过程只用 map/binfmt.h 的 nmbin_open / nm_get_u32 / nmbin_close，零 render 依赖。
+ *   解析过程只用 map/binfmt.h 的 nmbin_open / sk_get_u32 / nmbin_close，零 render 依赖。
  *   之前它定义在 render/paint.h、实现落在 render/labels.c，导致 map/mapset.h 为了
  *   拿这个类型被迫反向 include render 的头 —— 形成 map→render 的**模块级倒置**，
- *   让 navmap_map 库名义上不依赖 render、实际却要 render 的符号才能链接。
+ *   让 skedaddle_map 库名义上不依赖 render、实际却要 render 的符号才能链接。
  *   下沉到 map 后：map→render 边消失，render→map 仍是既有正确方向。
  *   （施工记录见 PLAN.md §53）
  *

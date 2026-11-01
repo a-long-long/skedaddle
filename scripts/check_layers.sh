@@ -62,15 +62,15 @@ say_result() { printf '%s\n' "$*"; }
 #     route → render / ui / ui_qt
 #     search→ map / render / route / ui / ui_qt
 # ---------------------------------------------------------------------------
-export NM_ALLOWED_map="map pbf utils"
-export NM_ALLOWED_pbf="pbf"
-export NM_ALLOWED_route="route map utils"
-export NM_ALLOWED_search="search utils"
-export NM_ALLOWED_settings="settings utils"
-export NM_ALLOWED_render="render map route search settings utils"
-export NM_ALLOWED_ui="ui map render route search settings utils"
-export NM_ALLOWED_ui_qt="ui_qt map render settings ui utils"
-export NM_ALLOWED_utils="utils"
+export SK_ALLOWED_map="map pbf utils"
+export SK_ALLOWED_pbf="pbf"
+export SK_ALLOWED_route="route map utils"
+export SK_ALLOWED_search="search utils"
+export SK_ALLOWED_settings="settings utils"
+export SK_ALLOWED_render="render map route search settings utils"
+export SK_ALLOWED_ui="ui map render route search settings utils"
+export SK_ALLOWED_ui_qt="ui_qt map render settings ui utils"
+export SK_ALLOWED_utils="utils"
 
 PY=$(command -v python3 || command -v python)
 if [ -z "$PY" ]; then
@@ -122,7 +122,7 @@ for mod in MODS:
 # 允许方向表
 allowed = {}
 for mod in MODS:
-    env_key = "NM_ALLOWED_" + mod
+    env_key = "SK_ALLOWED_" + mod
     allowed[mod] = set(os.environ.get(env_key, "").split())
 
 # 汇总模块级依赖（去重）

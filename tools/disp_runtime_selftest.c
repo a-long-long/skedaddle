@@ -28,7 +28,7 @@ static uint64_t sh_node_seq(const uint8_t *poly, uint64_t off, uint32_t cnt)
 {
     uint64_t h = 1469598103934665603ULL;
     for (uint32_t k = 0; k < cnt; k++) {
-        uint32_t v = nm_get_u32(poly + (off + k) * 4);
+        uint32_t v = sk_get_u32(poly + (off + k) * 4);
         h ^= v; h *= 1099511628211ULL;
     }
     return h;
@@ -49,10 +49,10 @@ static int feat_bbox(const NMBinFile *nodes, const uint8_t *poly,
     int got = 0;
     uint64_t nn = nodes->hdr.rec_count;
     for (uint32_t k = 0; k < cnt; k++) {
-        uint32_t idx = nm_get_u32(poly + (off + k) * 4);
+        uint32_t idx = sk_get_u32(poly + (off + k) * 4);
         if ((uint64_t)idx >= nn) continue;
-        const uint8_t *nr = nodes->data + (uint64_t)idx * NM_NODE_BYTES;
-        int32_t la = nm_get_i32(nr + NF_LAT), lo = nm_get_i32(nr + NF_LON);
+        const uint8_t *nr = nodes->data + (uint64_t)idx * SK_NODE_BYTES;
+        int32_t la = sk_get_i32(nr + NF_LAT), lo = sk_get_i32(nr + NF_LON);
         if (la < a0) a0 = la;
         if (la > a1) a1 = la;
         if (lo < o0) o0 = lo;
@@ -98,9 +98,9 @@ static int check_layer(const MapSrc *s, const char *name,
     if (!arr) return -1;
     for (uint64_t i = 0; i < nc; i++) {
         const uint8_t *r = cat->data + i * cat->hdr.rec_size;
-        uint64_t o = nm_get_u64(r + 0);
-        uint32_t off = nm_get_u32(r + off_field);
-        uint32_t cnt = nm_get_u32(r + cnt_field);
+        uint64_t o = sk_get_u64(r + 0);
+        uint32_t off = sk_get_u32(r + off_field);
+        uint32_t cnt = sk_get_u32(r + cnt_field);
         if ((uint64_t)off + cnt > cpoly->hdr.rec_count)
             fprintf(stderr, "[DBG] OOB in concat %s i=%llu osm=%llu off=%u cnt=%u np=%llu\n",
                     name, (unsigned long long)i, (unsigned long long)o, off, cnt,
@@ -123,9 +123,9 @@ static int check_layer(const MapSrc *s, const char *name,
         nw = W.hdr.rec_count;
         for (uint64_t i = 0; i < nw; i++) {
             const uint8_t *r = W.data + i * W.hdr.rec_size;
-            uint64_t o = nm_get_u64(r + 0);
-            uint32_t off = nm_get_u32(r + off_field);
-            uint32_t cnt = nm_get_u32(r + cnt_field);
+            uint64_t o = sk_get_u64(r + 0);
+            uint32_t off = sk_get_u32(r + off_field);
+            uint32_t cnt = sk_get_u32(r + cnt_field);
             int32_t bb[4];
             if (feat_bbox(&s->nodes, Wp.data, off, cnt, bb) != 0) continue;
             if (!overlap(bb, eb)) continue;

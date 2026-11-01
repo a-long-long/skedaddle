@@ -161,7 +161,7 @@ int main(int argc, char **argv)
         /* 原轨迹折线总长（相邻点大圆求和），用于算绕行系数与合理性判据 */
         double straight = 0;
         for (uint32_t i = 1; i < tk->n; i++)
-            straight += nm_haversine_m(tk->lat_e7[i-1]/1e7, tk->lon_e7[i-1]/1e7,
+            straight += sk_haversine_m(tk->lat_e7[i-1]/1e7, tk->lon_e7[i-1]/1e7,
                                        tk->lat_e7[i]/1e7, tk->lon_e7[i]/1e7);
         printf("贴合路线      %u 段，总长 %.2f km（轨迹折线 %.2f km，绕行系数 %.2f）\n",
                rr.n - 1, rr.total_m/1000.0, straight/1000.0,
@@ -226,7 +226,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    double straight = nm_haversine_m(flat, flon, tlat, tlon);
+    double straight = sk_haversine_m(flat, flon, tlat, tlon);
 
     if (repeat > 1 && n_via == 0) {
         printf("[repeat 1] 展开 %llu 节点，耗时 %llu ms\n",
@@ -257,7 +257,7 @@ int main(int argc, char **argv)
     printf("搜索          展开 %llu 节点，耗时 %llu ms\n",
            (unsigned long long)rr.expanded, (unsigned long long)rr.elapsed_ms);
     {
-        printf("峰值内存      %.0f MB\n", nm_peak_rss_mb());
+        printf("峰值内存      %.0f MB\n", sk_peak_rss_mb());
     }
 
     /* 经过的省（压缩连续重复） */

@@ -7,7 +7,7 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-double nm_haversine_m(double lat1, double lon1, double lat2, double lon2)
+double sk_haversine_m(double lat1, double lon1, double lat2, double lon2)
 {
     double p1 = lat1 * M_PI / 180.0;
     double p2 = lat2 * M_PI / 180.0;
@@ -16,21 +16,21 @@ double nm_haversine_m(double lat1, double lon1, double lat2, double lon2)
     double a = sin(dp / 2) * sin(dp / 2) +
                cos(p1) * cos(p2) * sin(dl / 2) * sin(dl / 2);
     double c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a));
-    return NM_EARTH_R_M * c;
+    return SK_EARTH_R_M * c;
 }
 
-double nm_fast_dist_m(int32_t lat1_e7, int32_t lon1_e7, int32_t lat2_e7, int32_t lon2_e7)
+double sk_fast_dist_m(int32_t lat1_e7, int32_t lon1_e7, int32_t lat2_e7, int32_t lon2_e7)
 {
     double dlat = (double)(lat2_e7 - lat1_e7) / 1e7;
     double dlon = (double)(lon2_e7 - lon1_e7) / 1e7;
     double latm = (double)((lat1_e7 + lat2_e7) / 2) / 1e7;
     double kx = cos(latm * M_PI / 180.0);
-    double dy = dlat * (M_PI / 180.0) * NM_EARTH_R_M;
-    double dx = dlon * (M_PI / 180.0) * NM_EARTH_R_M * kx;
+    double dy = dlat * (M_PI / 180.0) * SK_EARTH_R_M;
+    double dx = dlon * (M_PI / 180.0) * SK_EARTH_R_M * kx;
     return sqrt(dx * dx + dy * dy);
 }
 
-void nm_mercator(double lat, double lon, double *wx, double *wy)
+void sk_mercator(double lat, double lon, double *wx, double *wy)
 {
     double x = (lon + 180.0) / 360.0;
     double s = sin(lat * M_PI / 180.0);
@@ -39,7 +39,7 @@ void nm_mercator(double lat, double lon, double *wx, double *wy)
     *wy = y;
 }
 
-void nm_mercator_inv(double wx, double wy, double *lat, double *lon)
+void sk_mercator_inv(double wx, double wy, double *lat, double *lon)
 {
     *lon = wx * 360.0 - 180.0;
     double n = M_PI * (1.0 - 2.0 * wy);
@@ -67,7 +67,7 @@ void nm_mercator_inv(double wx, double wy, double *lat, double *lon)
  *   但**拿它算离散下标**（Z14 瓦片）时，极区误差会大到跨格（85° 处 3.6e-4
  *   瓦片），所以 map/tileidx.c 在瓦片边界带里必须回退到精确公式。
  *
- * ★ 只给 mv_project 用。nm_mercator 保留精确版给航路MEA/逆算等对
+ * ★ 只给 mv_project 用。sk_mercator 保留精确版给航路MEA/逆算等对
  *   精度敏感又不热的路径，两边不会被悄悄对齐。
  * ------------------------------------------------------------------ */
 
@@ -90,7 +90,7 @@ static void my_table_build(void)
     g_my = t;
 }
 
-double nm_mercator_y_fast(double lat)
+double sk_mercator_y_fast(double lat)
 {
     double *t = g_my;
     if (!t) { my_table_build(); t = g_my; }
@@ -118,7 +118,7 @@ double nm_mercator_y_fast(double lat)
 /* 公式自然成立，不会除零或越界。                                     */
 /* ------------------------------------------------------------------ */
 
-int nm_sun_is_night(double lat, double lon, time_t utc)
+int sk_sun_is_night(double lat, double lon, time_t utc)
 {
     struct tm t;
 #if defined(_WIN32)

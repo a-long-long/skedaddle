@@ -1,10 +1,10 @@
-#ifndef NAVIMAP_MAPSET_H
-#define NAVIMAP_MAPSET_H
+#ifndef SKEDADDLE_MAPSET_H
+#define SKEDADDLE_MAPSET_H
 
 #include "map/binfmt.h"
 #include "map/pbfmap.h"
 #include "map/namepool.h"   /* NamePool / name_pool_open·close：省名池与车道名池（PLAN.md §53 R1 下沉至此） */
-#include "utils/plat.h"     /* NmMutex：后台解码线程的锁 */
+#include "utils/plat.h"     /* SkMutex：后台解码线程的锁 */
 
 /* 多省图集：一次加载 products/graph 下的所有省，渲染时按 bbox 裁剪。
  *
@@ -92,7 +92,7 @@ typedef struct {
     /* ---- 后台解码线程（避免同步解码阻塞渲染 0.6~4.4s）----
      * 单一 worker 串行解码；主线程每帧 publish 已完成的结果、并 dispatch 新任务。
      * 所有字段都受 dmap_mtx 保护（job_prov / job_done / job_*）。 */
-    NmMutex  *dmap_mtx;         /* 保护下面的任务槽；NULL 则退回同步解码 */
+    SkMutex  *dmap_mtx;         /* 保护下面的任务槽；NULL 则退回同步解码 */
     int       dmap_quit;        /* 置 1 让 worker 退出 */
     int       dmap_stopped;     /* worker 已退出（free 时等待） */
     int       dmap_worker_started;

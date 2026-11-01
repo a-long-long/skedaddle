@@ -14,7 +14,7 @@
 #include <string.h>
 
 #include "map/mapset.h"
-#include "utils/plat.h"   /* nm_now_ms / nm_sleep_ms */
+#include "utils/plat.h"   /* sk_now_ms / sk_sleep_ms */
 
 int main(int argc, char **argv)
 {
@@ -51,20 +51,20 @@ int main(int argc, char **argv)
     double   max_dt      = 0;
     int      saw_prog    = 0;
     int      reached_100 = 0;
-    uint64_t t0 = nm_now_ms();
+    uint64_t t0 = sk_now_ms();
     int      done = 0;
 
-    while (nm_now_ms() - t0 < 20000) {
-        uint64_t ta = nm_now_ms();
+    while (sk_now_ms() - t0 < 20000) {
+        uint64_t ta = sk_now_ms();
         mapset_set_view(&ms, eb);                /* 主线程只派发/发布，不解码 */
-        double dt = (double)(nm_now_ms() - ta);
+        double dt = (double)(sk_now_ms() - ta);
         if (dt > max_dt) max_dt = dt;
 
         int p = mapset_dmap_progress(&ms, prov);
         if (p > 0 && p < 100) saw_prog = 1;
         if (p >= 100) reached_100 = 1;
         if (s->has_features) { done = 1; break; }
-        nm_sleep_ms(2);     /* 让后台线程跑 */
+        sk_sleep_ms(2);     /* 让后台线程跑 */
     }
     if (s->has_features) done = 1;
 

@@ -5,8 +5,8 @@
  *   再数非零像素。字体渲染是 stb_truetype + 自写合成（见 render/font.c），
  *   与窗口系统无关——这正是"核心零 SDL"的前提：连字体自检都不该拉 SDL 进来。
  *
- * 构建：链 navimap_core（已零 SDL 依赖）。
- * 运行：./skedaddle_font_selftest（字体目录按 NAVMAP_FONT_DIR 或 exe 相对 fonts/ 解析）。 */
+ * 构建：链 skedaddle_core（已零 SDL 依赖）。
+ * 运行：./skedaddle_font_selftest（字体目录按 SKEDADDLE_FONT_DIR 或 exe 相对 fonts/ 解析）。 */
 #include "render/font.h"
 #include "render/raster.h"
 #include "utils/plat.h"
@@ -22,7 +22,7 @@ int main(void)
 {
     /* 1) 候选链：确认内置 Noto 排在系统字体之前 */
     size_t n = 0;
-    const char *const *c = nm_font_candidates(&n);
+    const char *const *c = sk_font_candidates(&n);
     printf("[skedaddle_font_selftest] 候选字体 %zu 个（前若干个应为内置 Noto）：\n", n);
     for (size_t i = 0; i < n && i < 12; i++)
         printf("    [%zu] %s\n", i, c[i]);

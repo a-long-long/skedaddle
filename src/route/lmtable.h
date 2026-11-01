@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_LMTABLE_H
-#define NAVIMAP_LMTABLE_H
+#ifndef SKEDADDLE_LMTABLE_H
+#define SKEDADDLE_LMTABLE_H
 /* 地标下界表（PLAN.md §48 / §49 / ★§52.8）
  *
  * ★★★ 它不是**严格**的下界，是"加速启发式"（2026-09-28 实测确认，用户拍板接受）：

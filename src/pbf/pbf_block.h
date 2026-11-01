@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_PBF_BLOCK_H
-#define NAVIMAP_PBF_BLOCK_H
+#ifndef SKEDADDLE_PBF_BLOCK_H
+#define SKEDADDLE_PBF_BLOCK_H
 
 #include <stdint.h>
 #include <stddef.h>

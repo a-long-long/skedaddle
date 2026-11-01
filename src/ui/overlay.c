@@ -5,7 +5,7 @@
 #include "settings/settings.h"
 
 /* 一张表管死：加浮层只需在这里加一行（key 即 settings.ini 的键名）。
- * 顺序必须与 NmOverlay 枚举一致 —— 用静态断言式的自检（ovl_selftest 会查
+ * 顺序必须与 SkOverlay 枚举一致 —— 用静态断言式的自检（ovl_selftest 会查
  * key 非空 + 反查能回到原 id），不靠人眼对齐。 */
 typedef struct {
     const char *key;
@@ -32,19 +32,19 @@ static const OvlMeta OVL_TAB[OVL_COUNT] = {
     { "alpha_track",     "轨迹/收藏面板", OVL_FE_C | OVL_FE_QT },
 };
 
-const char *ovl_key(NmOverlay id)
+const char *ovl_key(SkOverlay id)
 {
     if (id < 0 || id >= OVL_COUNT) return NULL;
     return OVL_TAB[id].key;
 }
 
-const char *ovl_label(NmOverlay id)
+const char *ovl_label(SkOverlay id)
 {
     if (id < 0 || id >= OVL_COUNT) return "?";
     return OVL_TAB[id].label;
 }
 
-unsigned ovl_frontends(NmOverlay id)
+unsigned ovl_frontends(SkOverlay id)
 {
     if (id < 0 || id >= OVL_COUNT) return 0;
     return OVL_TAB[id].fe;

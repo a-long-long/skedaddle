@@ -7,13 +7,13 @@
 /* restr_debug 定义在此（route.c 核心搜索也调用它，声明见 restr.h）。
  * 原 route.c 的 static 版整段迁来，行为未改。 */
 
-/* NAVIMAP_RESTR_DEBUG 以前是在**每条边**上现调 getenv()：本机 environ 有 178 项，
+/* SKEDADDLE_RESTR_DEBUG 以前是在**每条边**上现调 getenv()：本机 environ 有 178 项，
    一次 getenv 实测 135 ns，京→郑一帧要调 318 万次 ⇒ 约 430 ms（占 18%）。
    只在首次调用时查一次并缓存。 */
 int restr_debug(void)
 {
     static int v = -1;
-    if (v < 0) v = getenv("NAVIMAP_RESTR_DEBUG") != NULL;
+    if (v < 0) v = getenv("SKEDADDLE_RESTR_DEBUG") != NULL;
     return v;
 }
 
@@ -57,23 +57,23 @@ void restr_build(const MapSrc *s, RestrIdx *ri)
     const uint8_t *d = s->restrictions.data;
     size_t w = 0, w2 = 0, w1 = 0;
     for (size_t i = 0; i < n; i++) {
-        const uint8_t *rec = d + i * NM_RESTR_BYTES;
-        uint64_t key = ((uint64_t)nm_get_u32(rec + RF_VIA_NODE) << 32) |
-                        nm_get_u32(rec + RF_FROM_EDGE);
+        const uint8_t *rec = d + i * SK_RESTR_BYTES;
+        uint64_t key = ((uint64_t)sk_get_u32(rec + RF_VIA_NODE) << 32) |
+                        sk_get_u32(rec + RF_FROM_EDGE);
         if (rec[RF_KIND] == 2) {
             ri->kv2[w2]   = key;
-            ri->to2[w2]   = nm_get_u32(rec + RF_TO_EDGE);
-            ri->prev2[w2] = nm_get_u32(rec + RF_PREV_EDGE);
+            ri->to2[w2]   = sk_get_u32(rec + RF_TO_EDGE);
+            ri->prev2[w2] = sk_get_u32(rec + RF_PREV_EDGE);
             w2++;
         } else if (rec[RF_KIND] == 0) {
             ri->kv[w] = key;
-            ri->to[w] = nm_get_u32(rec + RF_TO_EDGE);
+            ri->to[w] = sk_get_u32(rec + RF_TO_EDGE);
             w++;
         } else if (rec[RF_KIND] == 1) {
             /* kind=1 的 to_edge 是"允许"的那一支；一个 only_* 关系有多个 to
                成员就有多条记录，它们共享同一个 key，合起来才是允许集。 */
             ri->kv1[w1] = key;
-            ri->to1[w1] = nm_get_u32(rec + RF_TO_EDGE);
+            ri->to1[w1] = sk_get_u32(rec + RF_TO_EDGE);
             w1++;
         }
     }

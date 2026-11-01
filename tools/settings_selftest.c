@@ -1,7 +1,7 @@
 /* skedaddle_settings_selftest —— 设置持久化模块的断言式自测（regress 用）。
  *
  * 判据：全过打印 SETTINGS-OK 且退出码 0；任一断言失败打印 ASSERT-FAIL 且退出码 1。
- * 覆盖：默认值 / 存读往返 / reset_all / NAVIMAP_SETTINGS 路径覆盖 / 损坏文件不崩。
+ * 覆盖：默认值 / 存读往返 / reset_all / SKEDADDLE_SETTINGS 路径覆盖 / 损坏文件不崩。
  * 负向对照：持久化一旦坏掉（存了读不出），往返断言立刻 ASSERT-FAIL。
  */
 #include <stdio.h>
@@ -67,20 +67,20 @@ static void test_reset(Settings *s)
 
 static void test_env_override(void)
 {
-    /* NAVIMAP_SETTINGS 指向独立路径，load(NULL) 应落到该路径 */
+    /* SKEDADDLE_SETTINGS 指向独立路径，load(NULL) 应落到该路径 */
     char envpath[2048];
-    snprintf(envpath, sizeof(envpath), "%s/settings_env_override.ini", nm_temp_dir());
+    snprintf(envpath, sizeof(envpath), "%s/settings_env_override.ini", sk_temp_dir());
     FILE *f = fopen(envpath, "wb");
     if (f) { fputs("mode=1\n", f); fclose(f); }
 
-    nm_setenv("NAVMAP_SETTINGS", envpath);
+    sk_setenv("SKEDADDLE_SETTINGS", envpath);
     Settings *s = settings_create();
     CHECK(s != NULL, "env-override create 不应为 NULL");
     CHECK(settings_load(s, NULL) == 0, "env-override load(NULL) 应成功");
-    CHECK(strcmp(settings_path(s), envpath) == 0, "path 应等于 NAVIMAP_SETTINGS");
+    CHECK(strcmp(settings_path(s), envpath) == 0, "path 应等于 SKEDADDLE_SETTINGS");
     CHECK(settings_get_int(s, "mode", 0) == 1, "env 文件里的 mode 应为 1");
     settings_destroy(s);
-    nm_setenv("NAVMAP_SETTINGS", "");   /* 复位，避免影响其它用例 */
+    sk_setenv("SKEDADDLE_SETTINGS", "");   /* 复位，避免影响其它用例 */
 }
 
 static void test_corrupt(void)
@@ -103,7 +103,7 @@ static void test_corrupt(void)
 
 int main(void)
 {
-    snprintf(g_tmp, sizeof(g_tmp), "%s/skedaddle_settings_selftest.ini", nm_temp_dir());
+    snprintf(g_tmp, sizeof(g_tmp), "%s/skedaddle_settings_selftest.ini", sk_temp_dir());
 
     Settings *s = settings_create();
     if (!s) { printf("ASSERT-FAIL 无法创建 Settings\n"); return 1; }

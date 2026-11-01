@@ -1,4 +1,4 @@
-/* skedaddle —— navimap 的 Qt 前端入口（★ 唯一的交互前端）。
+/* skedaddle —— skedaddle 的 Qt 前端入口（★ 唯一的交互前端）。
  *
  * 用法：
  *   ./skedaddle [--graph=products/graph/beijing] [--w=1280] [--h=800]
@@ -29,7 +29,7 @@ extern "C" {
 #include "ui/window.h"
 #include "map/mapset.h"     /* mapset_enable_pbf_display / mapset_totals */
 #include "utils/datum.h"     /* DatumId / DATUM_*：--datum 解析 */
-#include "ui/overlay.h"     /* NmOverlay / ovl_by_key：--ovl-alpha 解析 */
+#include "ui/overlay.h"     /* SkOverlay / ovl_by_key：--ovl-alpha 解析 */
 #include "ui/offscreen_shot.h"  /* offscreen_shot_main：离屏像素审计通道 */
 }
 
@@ -91,7 +91,7 @@ int main(int argc, char **argv)
     const char *gpx_out = NULL;       /* --export-gpx=<file>：退出时导出全部轨迹+收藏 */
     /* --ovl-alpha=<key>=<pct>：逐浮层透明度，给无人值守截图做像素判据用。
      * key 见 ui/overlay.h（alpha_search 等）。 */
-    struct { NmOverlay id; int pct; } ovl_set[OVL_COUNT] = {{OVL_TITLE,0}};
+    struct { SkOverlay id; int pct; } ovl_set[OVL_COUNT] = {{OVL_TITLE,0}};
     int n_ovl = 0;
 
     /* 以下 flag 供 --shot-offscreen（offscreen_shot_main）使用 */
@@ -140,7 +140,7 @@ int main(int argc, char **argv)
                 *eq = '\0';
                 int id = ovl_by_key(spec);
                 if (id < 0) { fprintf(stderr, "未知浮层 %s\n", spec); return 2; }
-                ovl_set[n_ovl].id = (NmOverlay)id;
+                ovl_set[n_ovl].id = (SkOverlay)id;
                 ovl_set[n_ovl].pct = atoi(eq + 1);
                 n_ovl++;
             }
@@ -233,7 +233,7 @@ int main(int argc, char **argv)
     /* ★ 双击 exe 时工作目录 = exe 所在目录，默认相对路径 products/graph/beijing
      * 解析不到 ⇒ app_init 直接 return 1、窗口根本没建出来，用户只看到"点了没反应"。
      * 这里按候选回退解析出真实地图目录：显式 --graph → 相对 cwd → 从 exe 目录
-     * 向上各层找 products/graph/beijing → 扫描图集 → NAVMAP_GRAPH 环境变量 →
+     * 向上各层找 products/graph/beijing → 扫描图集 → SKEDADDLE_GRAPH 环境变量 →
      * 最后弹窗让用户选。都不中才报错退出（且弹框而非静默退出）。 */
     static char g_graph_buf[4096];
     const char *resolved = graph;
@@ -256,7 +256,7 @@ int main(int argc, char **argv)
                             cands << gd.filePath(pv);
                 }
             }
-            if (const char *env = getenv("NAVMAP_GRAPH"))
+            if (const char *env = getenv("SKEDADDLE_GRAPH"))
                 cands << QString::fromLocal8Bit(env);
             for (const QString &c : cands)
                 if (is_graph_dir(c.toUtf8().constData())) { chosen = c; break; }

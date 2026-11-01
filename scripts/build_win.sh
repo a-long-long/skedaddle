@@ -103,5 +103,5 @@ env PATH="$CLEAN_PATH" \
 
 echo
 echo "=== 构建完成 ==="
-# 前端只有 skedaddle（#88 已删 navmap / navmap_sdl / map_shot 三个可执行）。
+# 前端只有 skedaddle（#88 已删 skedaddle / skedaddle_sdl / map_shot 三个可执行）。
 ls -la "$BUILD"/skedaddle.exe 2>/dev/null || true

@@ -299,7 +299,7 @@ int search_query(SearchDb *d, const char *q,
 
             double dist = -1;
             if (have_center) {
-                dist = nm_haversine_m(clat, clon, h.lat, h.lon);
+                dist = sk_haversine_m(clat, clon, h.lat, h.lon);
                 if (max_dist_m > 0 && dist > max_dist_m) continue;
                 h.dist_m = dist;
             }

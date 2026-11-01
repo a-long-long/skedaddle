@@ -137,7 +137,7 @@ static void layout(App *a, CLay *L)
  * ★ 不给每个元素开离屏缓冲再合成：1280×800 下每帧十几次 malloc + 合成，
  *   成本远高于"画的时候顺手乘一下"。 */
 static double g_ovl_k = 1.0;          /* 当前元素的 alpha 系数 0..1 */
-static void ovl_begin(const App *a, NmOverlay id)
+static void ovl_begin(const App *a, SkOverlay id)
 {
     g_ovl_k = app_ovl_a(a, id) / 255.0;
 }
@@ -206,7 +206,7 @@ static void draw_titlebar(Raster *rs, App *a, const CLay *L)
 {
     ovl_begin(a, OVL_TITLE);
     rfill(rs, L->title.x, L->title.y, L->title.w, L->title.h, 28, 36, 56, 255);
-    if (a->font) rtext(a->font, rs, 10, L->title.y + 6, "NavMap", 235, 240, 250, 0);
+    if (a->font) rtext(a->font, rs, 10, L->title.y + 6, "Skedaddle", 235, 240, 250, 0);
     /* 三个窗口按钮：红/黄/绿 小圆点（mac 风，跨平台通用） */
     const RectI *bs[3] = { &L->wclose, &L->wmax, &L->wmin };
     uint8_t col[3][3] = { {233,84,72}, {240,192,72}, {76,200,96} };
@@ -747,10 +747,10 @@ void chrome_act(App *a, int id, int x, int y)
         case 4: app_nav_sim_follow(a); break;
         case 5: a->settings_open = 1; break;
         case 6: {   /* 导入 GPX：扫描 <config>/gpx/ 下的 *.gpx（C 端无文件对话框） */
-            const char *cfg = nm_config_dir();
+            const char *cfg = sk_config_dir();
             char d[2048];
-            if (cfg && nm_path_join(d, sizeof(d), cfg, "gpx") == 0) {
-                nm_mkdir_p(d);
+            if (cfg && sk_path_join(d, sizeof(d), cfg, "gpx") == 0) {
+                sk_mkdir_p(d);
                 app_gpx_import_dir(a, d);
             }
             break;
@@ -996,8 +996,8 @@ static void draw_ovl_panel(Raster *rs, App *a)
     if (vis > ovl_count()) vis = ovl_count();
     for (int i = 0; i < vis; i++) {
         RectI row; ovl_row_rect(&panel, i, &row);
-        int on = (ovl_frontends((NmOverlay)i) & OVL_FE_C) != 0;
-        rtext(a->font, rs, row.x + 4, row.y + 5, ovl_label((NmOverlay)i),
+        int on = (ovl_frontends((SkOverlay)i) & OVL_FE_C) != 0;
+        rtext(a->font, rs, row.x + 4, row.y + 5, ovl_label((SkOverlay)i),
               on ? 40 : 150, on ? 46 : 152, on ? 60 : 164, 0);
         if (!on) {
             rtext(a->font, rs, row.x + 110, row.y + 5, "（Qt 前端）",
@@ -1033,7 +1033,7 @@ static int ovl_hit(App *a, int x, int y)
     for (int i = 0; i < vis; i++) {
         RectI row; ovl_row_rect(&panel, i, &row);
         if (!IN(row, x, y)) continue;
-        if (!(ovl_frontends((NmOverlay)i) & OVL_FE_C)) {
+        if (!(ovl_frontends((SkOverlay)i) & OVL_FE_C)) {
             a->ovl_row = -1; a->ovl_btn = 2; return CH_SETTINGS;   /* 点了也没用 */
         }
         RectI l, r; ovl_control_rects(&row, &l, &r);
@@ -1051,7 +1051,7 @@ void chrome_act_ovl(App *a)
 {
     if (a->ovl_row >= 0 && a->ovl_row < ovl_count()) {
         int dir = (a->ovl_btn == 0) ? -1 : (a->ovl_btn == 1) ? 1 : 0;
-        if (dir) app_ovl_alpha_set(a, (NmOverlay)a->ovl_row,
+        if (dir) app_ovl_alpha_set(a, (SkOverlay)a->ovl_row,
                                    ovl_step_pct(a->ovl_alpha[a->ovl_row], dir));
         /* 行体点击（btn==2）不改值：面板上只有 −/+ 两个明确入口，
            免得"想看一眼结果却改了设置"。 */

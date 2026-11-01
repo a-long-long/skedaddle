@@ -3,7 +3,7 @@
  * 累加内容：打通"地理坐标 ↔ 屏幕像素"。
  *   - MapView：中心经纬度 + zoom + 画布尺寸；投影用【缓存 + 惰性失效】——只有参数真变了才重算。
  *   - mv_project / mv_unproj：经纬度 ↔ 像素（互为逆）。
- *   - nm_tile_of：标准 slippy 瓦片键 (z,x,y)，用于"按需加载哪几块瓦片"。
+ *   - sk_tile_of：标准 slippy 瓦片键 (z,x,y)，用于"按需加载哪几块瓦片"。
  *
  * 编译： gcc -std=c11 -O2 -o tut main.c && ./tut
  */
@@ -36,7 +36,7 @@ static double mv_lon(MapView *mv, int x)  { return mv->lon + (x - mv->w / 2) / m
 static double mv_lat(MapView *mv, int y)  { return mv->lat - (y - mv->h / 2) / mv->scale; }
 
 /* 标准 slippy 瓦片键 (z,x,y) */
-static void nm_tile_of(double lat, double lon, int z, int *tx, int *ty) {
+static void sk_tile_of(double lat, double lon, int z, int *tx, int *ty) {
     int n = 1 << z;
     *tx = (int)((lon + 180) / 360.0 * n);
     double r = lat * M_PI / 180;
@@ -58,8 +58,8 @@ int main(void) {
 
     /* 瓦片网格：算出可见瓦片范围，逐块画边界 */
     int tx0, ty0, tx1, ty1;
-    nm_tile_of(mv_lat(&mv, 0), mv_lon(&mv, 0), mv.zoom, &tx0, &ty0);
-    nm_tile_of(mv_lat(&mv, H), mv_lon(&mv, W), mv.zoom, &tx1, &ty1);
+    sk_tile_of(mv_lat(&mv, 0), mv_lon(&mv, 0), mv.zoom, &tx0, &ty0);
+    sk_tile_of(mv_lat(&mv, H), mv_lon(&mv, W), mv.zoom, &tx1, &ty1);
     for (int ty = ty0; ty <= ty1; ty++)
         for (int tx = tx0; tx <= tx1; tx++) {
             /* 瓦片 (tx,ty) 四个角：经纬度边界 → 像素 */
@@ -74,7 +74,7 @@ int main(void) {
         }
 
     int cx, cy;
-    nm_tile_of(mv.lat, mv.lon, mv.zoom, &cx, &cy);
+    sk_tile_of(mv.lat, mv.lon, mv.zoom, &cx, &cy);
     printf("中心瓦片 (z=%d): x=%d y=%d\n", mv.zoom, cx, cy);
     printf("投影往返: 屏幕(0,0)→经纬度(%.4f,%.4f)→屏幕(%d,%d)\n",
            mv_lat(&mv, 0), mv_lon(&mv, 0), mv_x(&mv, mv_lon(&mv, 0)), mv_y(&mv, mv_lat(&mv, 0)));

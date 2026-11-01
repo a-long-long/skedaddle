@@ -47,7 +47,7 @@
 
 static uint64_t now_ms(void)
 {
-    return nm_now_ms();                /* 平台层：clock_gettime / QPC */
+    return sk_now_ms();                /* 平台层：clock_gettime / QPC */
 }
 
 /* --------------------- 反向入边索引 --------------------- */
@@ -155,9 +155,9 @@ int router_nearest_k(Router *r, double lat, double lon, RNode *out, int k,
 {
     if (k > SNAP_TRY) k = SNAP_TRY;
     if (k <= 0) return 0;
-    int32_t la = nm_lat_to_i32(lat), lo = nm_lon_to_i32(lon);
+    int32_t la = sk_lat_to_i32(lat), lo = sk_lon_to_i32(lon);
     int tx, ty;
-    nm_tile_of(lat, lon, &tx, &ty);
+    sk_tile_of(lat, lon, &tx, &ty);
 
     int    nf = 0;
     double bd[SNAP_TRY];
@@ -181,12 +181,12 @@ int router_nearest_k(Router *r, double lat, double lon, RNode *out, int k,
                            拿它当起点就没有出边可走（实测北京→天津直接"不连通"）。 */
                         if (src->dup_of >= 0) continue;
                         const uint8_t *nr = src->nodes.data +
-                                            (uint64_t)s->v[i].node * NM_NODE_BYTES;
-                        if (want_edge && nm_get_u16(nr + NF_EDGE_COUNT) == 0)
+                                            (uint64_t)s->v[i].node * SK_NODE_BYTES;
+                        if (want_edge && sk_get_u16(nr + NF_EDGE_COUNT) == 0)
                             continue;
-                        double d = nm_fast_dist_m(la, lo,
-                                                  nm_get_i32(nr + NF_LAT),
-                                                  nm_get_i32(nr + NF_LON));
+                        double d = sk_fast_dist_m(la, lo,
+                                                  sk_get_i32(nr + NF_LAT),
+                                                  sk_get_i32(nr + NF_LON));
                         /* 插进有序的前 k 个（k 很小，直接冒泡） */
                         if (nf == k && d >= bd[nf - 1]) continue;
                         int at = (nf < k) ? nf : k - 1;
@@ -514,7 +514,7 @@ size_t members_of(Router *r, uint64_t ck, uint32_t in_prov, uint32_t in_node,
     size_t nmem = 0;
     int32_t la = coord_key_lat(ck), lo = coord_key_lon(ck);
     int tx, ty;
-    nm_tile_of((double)la / 1e7, (double)lo / 1e7, &tx, &ty);
+    sk_tile_of((double)la / 1e7, (double)lo / 1e7, &tx, &ty);
     SewSlot *sl = sew_get(r, tx, ty);
     if (sl->nprov < 0) sl->nprov = tile_prov_count(r->ms, tx, ty);
 
@@ -610,14 +610,14 @@ static void expand_dir(Router *r, int dir, uint64_t ck, StEnt *e0,
         int check_restr = (p == in_prov && nd == in_node && in_edge != REDGE_SEAM);
 
         if (dir == DIR_FWD) {
-            const uint8_t *nr = s->nodes.data + (uint64_t)nd * NM_NODE_BYTES;
-            uint32_t eb = nm_get_u32(nr + NF_EDGE_BEGIN);
-            uint32_t ec = nm_get_u16(nr + NF_EDGE_COUNT);
+            const uint8_t *nr = s->nodes.data + (uint64_t)nd * SK_NODE_BYTES;
+            uint32_t eb = sk_get_u32(nr + NF_EDGE_BEGIN);
+            uint32_t ec = sk_get_u16(nr + NF_EDGE_COUNT);
             for (uint32_t k = 0; k < ec; k++) {
                 uint64_t ei = (uint64_t)eb + k;
                 if (ei >= ne) break;
-                const uint8_t *er = s->edges.data + ei * NM_EDGE_BYTES;
-                uint16_t fl = nm_get_u16(er + EF_FLAGS);
+                const uint8_t *er = s->edges.data + ei * SK_EDGE_BYTES;
+                uint16_t fl = sk_get_u16(er + EF_FLAGS);
                 if (fl & EF_NO_ACCESS) continue;
                 if (r->opt.avoid_toll && (fl & EF_TOLL)) continue;
                 if (r->opt.avoid_unpaved && (fl & EF_UNPAVED)) continue;
@@ -638,7 +638,7 @@ static void expand_dir(Router *r, int dir, uint64_t ck, StEnt *e0,
                 double w = edge_cost(r, er, &meters);
                 if (w <= 0) continue;
 
-                uint32_t to = nm_get_u32(er + EF_TO);
+                uint32_t to = sk_get_u32(er + EF_TO);
                 if ((uint64_t)to >= s->nodes.hdr.rec_count) continue;
                 uint64_t ck2 = node_coord(s, to);
                 if (ck2 == ck) continue;                  /* 自环 */
@@ -681,17 +681,17 @@ static void expand_dir(Router *r, int dir, uint64_t ck, StEnt *e0,
                 if (u == nd) continue;
                 /* 反向索引只存 from 节点，边下标要扫 u 的出边找 EF_TO==nd。
                    出度是个位数，比再存 4 字节/边划算。平行边取代价最小的。 */
-                const uint8_t *ur = s->nodes.data + (uint64_t)u * NM_NODE_BYTES;
-                uint32_t eb = nm_get_u32(ur + NF_EDGE_BEGIN);
-                uint32_t ec = nm_get_u16(ur + NF_EDGE_COUNT);
+                const uint8_t *ur = s->nodes.data + (uint64_t)u * SK_NODE_BYTES;
+                uint32_t eb = sk_get_u32(ur + NF_EDGE_BEGIN);
+                uint32_t ec = sk_get_u16(ur + NF_EDGE_COUNT);
                 uint64_t bei = REDGE_SEAM;
                 double bw = INF_G;
                 for (uint32_t q = 0; q < ec; q++) {
                     uint64_t ei = (uint64_t)eb + q;
                     if (ei >= ne) break;
-                    const uint8_t *er = s->edges.data + ei * NM_EDGE_BYTES;
-                    if (nm_get_u32(er + EF_TO) != nd) continue;
-                    uint16_t fl = nm_get_u16(er + EF_FLAGS);
+                    const uint8_t *er = s->edges.data + ei * SK_EDGE_BYTES;
+                    if (sk_get_u32(er + EF_TO) != nd) continue;
+                    uint16_t fl = sk_get_u16(er + EF_FLAGS);
                     if (fl & EF_NO_ACCESS) continue;
                     if (r->opt.avoid_toll && (fl & EF_TOLL)) continue;
                     if (r->opt.avoid_unpaved && (fl & EF_UNPAVED)) continue;
@@ -842,7 +842,7 @@ static int plan_search(Router *r, RNode from, RNode to, RouteResult *out,
         /* ★★ 下面"max(ff,fb) 保证最优"的证明，前提是 **h 可采纳**。
            加载了 lm.bin 之后这个前提**不成立**（§52.8：地标下界不是严格下界，
            实测 50 条里 2 条开表给出次优解）⇒ **开表时 --exact 只是更慢的搜索，
-           不再保证最优**。要真值请 `NAVIMAP_LM=0`（那时 h 是直线，可采纳）。
+           不再保证最优**。要真值请 `SKEDADDLE_LM=0`（那时 h 是直线，可采纳）。
            `regress.sh` 的 `lm_admissible` 项盯住它不要进一步恶化。 */
         /* 双向终止条件（★ 这里是"最优性 ↔ 速度"的开关）：
            - 默认 lb = ff + fb：两侧堆顶 f 之和。快，但**不保证最优**——
@@ -917,7 +917,7 @@ static int plan_search(Router *r, RNode from, RNode to, RouteResult *out,
     out->elapsed_ms = now_ms() - t0;
     out->expanded = r->expanded;
     if (!found) {
-        if (getenv("NAVIMAP_ROUTE_DEBUG")) {
+        if (getenv("SKEDADDLE_ROUTE_DEBUG")) {
             fprintf(stderr,
                     "[dbg] 未连通: 展开 %llu  堆[正]=%zu 堆[反]=%zu  "
                     "状态[正]=%llu 状态[反]=%llu  best=%g\n",
@@ -1039,9 +1039,9 @@ static int plan_search(Router *r, RNode from, RNode to, RouteResult *out,
                 return -2;
             }
             const uint8_t *er = r->ms->srcs[pr].edges.data +
-                                (uint64_t)ae[i] * NM_EDGE_BYTES;
+                                (uint64_t)ae[i] * SK_EDGE_BYTES;
             out->pts[i].prov = pr;
-            out->pts[i].node = nm_get_u32(er + EF_TO);
+            out->pts[i].node = sk_get_u32(er + EF_TO);
         }
         if (i + 1 < n) {
             /* 段 i（pts[i]→pts[i+1]）的边归 pts[i+1] 所有——到达边的语义
@@ -1055,9 +1055,9 @@ static int plan_search(Router *r, RNode from, RNode to, RouteResult *out,
             out->edge_idx[i]  = ae[i + 1];
             out->from_node[i] = af[i + 1];
             const uint8_t *er = r->ms->srcs[pr].edges.data +
-                                (uint64_t)ae[i + 1] * NM_EDGE_BYTES;
+                                (uint64_t)ae[i + 1] * SK_EDGE_BYTES;
             out->edge_cls[i] = er[EF_CLASS];
-            out->edge_flags[i] = (uint8_t)(nm_get_u16(er + EF_FLAGS) & 0xFF);
+            out->edge_flags[i] = (uint8_t)(sk_get_u16(er + EF_FLAGS) & 0xFF);
             double meters = 0;
             edge_cost(r, er, &meters);
             out->seg_m[i] = (uint32_t)(meters + 0.5);

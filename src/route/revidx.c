@@ -27,11 +27,11 @@ typedef struct {
 
 static uint64_t rev_now_ms(void)
 {
-    return nm_now_ms();               /* 平台层：clock_gettime / QPC */
+    return sk_now_ms();               /* 平台层：clock_gettime / QPC */
 }
 
 /* FNV-1a 64：正文（start + list）的校验和。
-   ★ **默认不跑**，只在 NAVIMAP_REV_STRICT=1 时跑。实测（hebei 97 MB）：
+   ★ **默认不跑**，只在 SKEDADDLE_REV_STRICT=1 时跑。实测（hebei 97 MB）：
      加了它一次算路从 17 ms 涨到 571 ms——比现场重建（365 ms）还慢，
      把这一刀的收益全吃掉。所以默认只做 O(1) 的结构校验（magic / 规模 /
      start[n] 尾哨兵 / 文件大小），正文完整性交给 skedaddle_revbuild_cli --verify
@@ -56,13 +56,13 @@ static uint64_t rev_fnv1a(const uint8_t *p, size_t n)
     return rev_fnv1a_of(p, n, FNV_SEED);
 }
 
-/* 严格模式开关：NAVIMAP_REV_STRICT=1 时加载 rev.bin 要验正文校验和。
+/* 严格模式开关：SKEDADDLE_REV_STRICT=1 时加载 rev.bin 要验正文校验和。
    只在 rev_load 开头查一次（不是热路径），不要写成每条边调一次——
    getenv 在这台机器上实测 135 ns（PLAN.md §34.2）。 */
 static int rev_strict(void)
 {
     static int v = -1;
-    if (v < 0) v = getenv("NAVIMAP_REV_STRICT") != NULL;
+    if (v < 0) v = getenv("SKEDADDLE_REV_STRICT") != NULL;
     return v;
 }
 
@@ -91,13 +91,13 @@ int rev_build_mem(const NMBinFile *nodes, const NMBinFile *edges,
 
     /* 计数：按 from 节点遍历（CSR 天然按 from 分组） */
     for (uint64_t i = 0; i < n; i++) {
-        const uint8_t *nr = nds + i * NM_NODE_BYTES;
-        uint32_t eb = nm_get_u32(nr + NF_EDGE_BEGIN);
-        uint32_t ec = nm_get_u16(nr + NF_EDGE_COUNT);
+        const uint8_t *nr = nds + i * SK_NODE_BYTES;
+        uint32_t eb = sk_get_u32(nr + NF_EDGE_BEGIN);
+        uint32_t ec = sk_get_u16(nr + NF_EDGE_COUNT);
         for (uint32_t k = 0; k < ec; k++) {
             uint64_t ei = (uint64_t)eb + k;
             if (ei >= ne) break;
-            uint32_t to = nm_get_u32(eds + ei * NM_EDGE_BYTES + EF_TO);
+            uint32_t to = sk_get_u32(eds + ei * SK_EDGE_BYTES + EF_TO);
             if ((uint64_t)to >= n) continue;      /* 脏数据，忽略 */
             start[to + 1]++;
         }
@@ -114,13 +114,13 @@ int rev_build_mem(const NMBinFile *nodes, const NMBinFile *edges,
     start[n] = (uint32_t)acc;
     memcpy(cur, start, ((size_t)n + 1) * sizeof(uint32_t));
     for (uint64_t i = 0; i < n; i++) {
-        const uint8_t *nr = nds + i * NM_NODE_BYTES;
-        uint32_t eb = nm_get_u32(nr + NF_EDGE_BEGIN);
-        uint32_t ec = nm_get_u16(nr + NF_EDGE_COUNT);
+        const uint8_t *nr = nds + i * SK_NODE_BYTES;
+        uint32_t eb = sk_get_u32(nr + NF_EDGE_BEGIN);
+        uint32_t ec = sk_get_u16(nr + NF_EDGE_COUNT);
         for (uint32_t k = 0; k < ec; k++) {
             uint64_t ei = (uint64_t)eb + k;
             if (ei >= ne) break;
-            uint32_t to = nm_get_u32(eds + ei * NM_EDGE_BYTES + EF_TO);
+            uint32_t to = sk_get_u32(eds + ei * SK_EDGE_BYTES + EF_TO);
             if ((uint64_t)to >= n) continue;
             list[cur[to]++] = (uint32_t)i;
         }
@@ -187,22 +187,22 @@ int rev_write(const char *dir, const NMBinFile *nodes, const NMBinFile *edges)
        关闭失败同样算写坏——数据可能还留在 stdio 缓冲里没落盘。 */
     if (fclose(f) != 0) ok = 0;
 
-    if (!ok) { nm_unlink(tmp); rev_free(&rv); return -1; }
+    if (!ok) { sk_unlink(tmp); rev_free(&rv); return -1; }
     /* 原子替换：中途失败不会留下半截 rev.bin（半截会被 rev_load 的规模校验挡住，
        但能不留垃圾就别留） */
-    if (nm_rename(tmp, path) != 0) { nm_unlink(tmp); rev_free(&rv); return -1; }
+    if (sk_rename(tmp, path) != 0) { sk_unlink(tmp); rev_free(&rv); return -1; }
     rev_free(&rv);
     return 0;
 }
 
 /* -------------------------------- 读盘 -------------------------------- */
 
-/* NAVIMAP_REV_MEM=1：不用 rev.bin，强制走内存构建。用来重现"没有 rev.bin"
+/* SKEDADDLE_REV_MEM=1：不用 rev.bin，强制走内存构建。用来重现"没有 rev.bin"
    时的降级路径（也用于回归里的对照组）。 */
 static int rev_force_mem(void)
 {
     static int v = -1;
-    if (v < 0) v = getenv("NAVIMAP_REV_MEM") != NULL;
+    if (v < 0) v = getenv("SKEDADDLE_REV_MEM") != NULL;
     return v;
 }
 
@@ -215,13 +215,13 @@ int rev_load(const char *dir, const NMBinFile *nodes, const NMBinFile *edges,
     if (rev_path(dir, path, sizeof(path)) != 0) return -1;
 
     size_t flen = 0;
-    uint8_t *base = nm_mmap_file(path, &flen);   /* 平台层：mmap / 文件映射 */
+    uint8_t *base = sk_mmap_file(path, &flen);   /* 平台层：mmap / 文件映射 */
     if (!base) return -1;
 
     uint64_t n  = nodes->hdr.rec_count;
     uint64_t ne = edges->hdr.rec_count;
     size_t need_min = REV_HDR + ((size_t)n + 1) * 4u;
-    if (flen < need_min) { nm_munmap(base, flen); return -1; }
+    if (flen < need_min) { sk_munmap(base, flen); return -1; }
 
     RevHdr h;
     memcpy(&h, base, sizeof(h));
@@ -230,23 +230,23 @@ int rev_load(const char *dir, const NMBinFile *nodes, const NMBinFile *edges,
         h.hdr_bytes != REV_HDR ||
         h.node_count != n || h.edge_count != ne ||
         h.file_size != (uint64_t)flen) {
-        nm_munmap(base, flen);
+        sk_munmap(base, flen);
         return -1;
     }
     size_t body = ((size_t)n + 1) * 4u + (size_t)h.list_count * 4u;
     if (REV_HDR + body != flen) {
-        nm_munmap(base, flen);
+        sk_munmap(base, flen);
         return -1;
     }
     uint32_t *start = (uint32_t *)(void *)(base + REV_HDR);
     /* 自洽：尾哨兵必须等于 list_count，否则这份文件是坏的 */
     if ((uint64_t)start[n] != h.list_count) {
-        nm_munmap(base, flen);
+        sk_munmap(base, flen);
         return -1;
     }
     /* 正文校验和：默认不跑（太贵，见 rev_fnv1a 的注释），只在严格模式下跑 */
     if (rev_strict() && rev_fnv1a(base + REV_HDR, body) != h.body_sum) {
-        nm_munmap(base, flen);
+        sk_munmap(base, flen);
         return -1;
     }
 
@@ -264,7 +264,7 @@ void rev_free(RevIdx *rv)
 {
     if (!rv) return;
     if (rv->mapped) {
-        if (rv->map_base) nm_munmap(rv->map_base, rv->map_len);
+        if (rv->map_base) sk_munmap(rv->map_base, rv->map_len);
     } else {
         free(rv->start);
         free(rv->list);

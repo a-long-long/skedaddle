@@ -49,7 +49,7 @@ void nav_voice_frame(NavVoiceCtx *c, uint64_t now_ms)
     int suppress = c->paused && !c->sim->arrived;
     if (!suppress) {
         for (int i = 0; i < n; i++)
-            nm_tts_speak(vf.text[i]);
+            sk_tts_speak(vf.text[i]);
     }
 
     /* 5) 终点收尾语（官方 NavigationDialogs.stopNavigation 的 arrived 分支）。
@@ -57,6 +57,6 @@ void nav_voice_frame(NavVoiceCtx *c, uint64_t now_ms)
      *      用 ann_finished 保证只播一次（与 vr.arrived_said 是两件事）。 */
     if (c->sim->arrived && !*c->ann_finished) {
         *c->ann_finished = 1;
-        nm_tts_speak("您已到达目的地附近，导航结束");
+        sk_tts_speak("您已到达目的地附近，导航结束");
     }
 }

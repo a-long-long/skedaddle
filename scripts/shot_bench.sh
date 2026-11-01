@@ -15,7 +15,7 @@ OUT="${1:?用法: shot_bench.sh <输出目录>}"
 mkdir -p "$OUT"
 cd "$ROOT"
 
-NAVMAP_ENV_QUIET=1 . "$ROOT/env.sh" 2>/dev/null || true
+SKEDADDLE_ENV_QUIET=1 . "$ROOT/env.sh" 2>/dev/null || true
 
 # #88 已删 map_shot：离屏出图统一走 skedaddle --shot-offscreen。它是纯 C 离屏通道
 # （Qt 初始化前就返回，不建窗口、不依赖显示环境），flag 与旧 map_shot 完全一致，

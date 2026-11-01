@@ -57,7 +57,7 @@ int main(void)
     static const char *kTests[] = {
         "未加载地图数据", "搜索地点、道路", "导航中", "重新规划中",
         "距离", "公里", "米", "分钟", "路口", "转向",
-        "NavMap", "0123456789", "?", ":", " ",
+        "Skedaddle", "0123456789", "?", ":", " ",
     };
 
     Font *f = font_open_default(14);

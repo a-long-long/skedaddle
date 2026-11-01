@@ -52,12 +52,12 @@ static void collect(const MapSrc *s, uint32_t from, uint32_t edge, void *ud)
 {
     Ctx *c = ud;
     uint32_t prov = (uint32_t)(s - c->ms->srcs);
-    const uint8_t *nr = s->nodes.data + (uint64_t)from * NM_NODE_BYTES;
+    const uint8_t *nr = s->nodes.data + (uint64_t)from * SK_NODE_BYTES;
     Ent e;
-    e.key    = coord_key_e7(nm_get_i32(nr + NF_LAT), nm_get_i32(nr + NF_LON));
+    e.key    = coord_key_e7(sk_get_i32(nr + NF_LAT), sk_get_i32(nr + NF_LON));
     e.prov   = prov;
     e.node   = from;
-    e.osm_id = nm_get_u64(nr + NF_OSM_ID);
+    e.osm_id = sk_get_u64(nr + NF_OSM_ID);
     ev_push(c->ev, e);
     (void)edge;
 }
@@ -91,8 +91,8 @@ int main(int argc, char **argv)
     printf("已加载 %d 个省\n", ms.n);
 
     double wx, wy;
-    nm_mercator(lat, lon, &wx, &wy);
-    double Z = (double)(1u << NM_TILE_Z);
+    sk_mercator(lat, lon, &wx, &wy);
+    double Z = (double)(1u << SK_TILE_Z);
     int tx = (int)(wx * Z), ty = (int)(wy * Z);
     printf("Z14 tile: x=%d y=%d（中心 %.5f,%.5f）\n\n", tx, ty, lat, lon);
 

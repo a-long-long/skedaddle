@@ -1,5 +1,5 @@
-#ifndef NAVMAP_DATUM_H
-#define NAVMAP_DATUM_H
+#ifndef SKEDADDLE_DATUM_H
+#define SKEDADDLE_DATUM_H
 
 #include <stddef.h>
 

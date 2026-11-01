@@ -11,8 +11,8 @@
  *   策略层（该播第几级 / 话术 / 冷却）在 route/voice.c，纯逻辑、零平台依赖；
  *   接线层（这一帧取哪些状态、按什么顺序交给 TTS）在本模块。
  */
-#ifndef NAVIMAP_UI_VOICE_WIRE_H
-#define NAVIMAP_UI_VOICE_WIRE_H
+#ifndef SKEDADDLE_UI_VOICE_WIRE_H
+#define SKEDADDLE_UI_VOICE_WIRE_H
 
 #include <stdint.h>
 
@@ -45,9 +45,9 @@ typedef struct {
 
 /* 播报一帧（生产接线函数）。
  *
- * ★ 时间由调用方注入（生产传 nm_now_ms()，自测传合成时钟）
+ * ★ 时间由调用方注入（生产传 sk_now_ms()，自测传合成时钟）
  *   ⇒ 冷却 / 去抖的判据确定可复现。
- * ★ 发声走 nm_tts_speak() ⇒ 无头自测用 NAVIMAP_TTS_DRYRUN
+ * ★ 发声走 sk_tts_speak() ⇒ 无头自测用 SKEDADDLE_TTS_DRYRUN
  *   捕获"窗口真正交出去的话"，而不是自己复刻一份收集逻辑。 */
 void nav_voice_frame(NavVoiceCtx *c, uint64_t now_ms);
 

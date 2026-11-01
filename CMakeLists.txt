@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(navimap C CXX)
+project(skedaddle C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -18,24 +18,24 @@ endif()
 # ★ -O3 和 -march=native 都实测没有额外收益（z9 仍是 125），只留 LTO。
 # ---------------------------------------------------------------------------
 include(CheckIPOSupported)
-check_ipo_supported(RESULT NM_IPO_OK OUTPUT NM_IPO_ERR)
-if(NM_IPO_OK)
+check_ipo_supported(RESULT SK_IPO_OK OUTPUT SK_IPO_ERR)
+if(SK_IPO_OK)
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
     message(STATUS "LTO 已开启（-flto）")
 else()
-    message(STATUS "LTO 不可用，按普通 -O2 构建：${NM_IPO_ERR}")
+    message(STATUS "LTO 不可用，按普通 -O2 构建：${SK_IPO_ERR}")
 endif()
 
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 
 # ---------------------------------------------------------------------------
-# 依赖（方案2 架构约束：navimap_core 不链 SDL）。
+# 依赖（方案2 架构约束：skedaddle_core 不链 SDL）。
 # SDL 现仅出现在去 SDL 化门禁对照体 skedaddle_blend_equiv / skedaddle_clip_equiv（合法链 SDL2）。
-# navimap_qt 只链 navimap_core + Qt Widgets；离屏出图走 src/ui/offscreen_shot.c（零 SDL）。
+# skedaddle_qt 只链 skedaddle_core + Qt Widgets；离屏出图走 src/ui/offscreen_shot.c（零 SDL）。
 # （单头文件、零外部库），于是"核心零 SDL"完全可行。SDL2_ttf 已彻底移除。
 # ---------------------------------------------------------------------------
-macro(nm_require_pc var mod)
+macro(sk_require_pc var mod)
     pkg_check_modules(${var} REQUIRED ${mod})
     if(NOT ${var}_FOUND)
         message(FATAL_ERROR
@@ -43,10 +43,10 @@ macro(nm_require_pc var mod)
     endif()
 endmacro()
 
-nm_require_pc(SDL2       sdl2)
-nm_require_pc(ZLIB       zlib)
-nm_require_pc(SQLITE3    sqlite3)
-nm_require_pc(PROTOC     libprotobuf-c)
+sk_require_pc(SDL2       sdl2)
+sk_require_pc(ZLIB       zlib)
+sk_require_pc(SQLITE3    sqlite3)
+sk_require_pc(PROTOC     libprotobuf-c)
 
 # libprotobuf-c.pc 里写的是 prefix=/usr，但头文件只装到了 ~/.local/usr/include，
 # 所以 pkg-config 给的 Cflags 是错的。这里自己找一次真实头文件位置：HINTS 优先、
@@ -127,10 +127,10 @@ endif()
 # ---------------------------------------------------------------------------
 # 核心库 + 阶段 1 叶子库（ARCH_ASSESSMENT.md §4，字面补全拆分）
 #   src/utils 内的 4 个模块拆成独立 STATIC 库：
-#     navmap_plat / navmap_geo / navmap_strpool（纯叶子，零内部依赖）
-#     navmap_mem（仅依赖 navmap_plat：mem → plat）
-#   加 navmap_pbf（src/pbf/*）共 5 个叶子库，全部链进 navimap_core 的 PUBLIC
-#   接口；24 个 exe 继续只链 navimap_core（本阶段不改它们的
+#     skedaddle_plat / skedaddle_geo / skedaddle_strpool（纯叶子，零内部依赖）
+#     skedaddle_mem（仅依赖 skedaddle_plat：mem → plat）
+#   加 skedaddle_pbf（src/pbf/*）共 5 个叶子库，全部链进 skedaddle_core 的 PUBLIC
+#   接口；24 个 exe 继续只链 skedaddle_core（本阶段不改它们的
 #   target_link_libraries）。依赖：mem → plat；其余零内部依赖，拆库零破环风险。
 # ---------------------------------------------------------------------------
 set(PBF_SRCS
@@ -199,145 +199,145 @@ set(UI_SRCS
 # 每个叶子库都 PUBLIC 暴露 ${CMAKE_SOURCE_DIR}/src 作为包含根，使消费者可用
 # "utils/xxx.h"；并各自携带平台系统库（m / psapi），保证可独立复用。
 
-# 平台相关链接（每个叶子库各自挂，不再聚合到单个 navmap_utils）：
+# 平台相关链接（每个叶子库各自挂，不再聚合到单个 skedaddle_utils）：
 #   Unix 需要 -lm（geo 等数学函数）；Windows 的 GetProcessMemoryInfo 在 psapi.dll。
 if(UNIX)
-    set(NM_LEAF_SYS_LIBS m)
+    set(SK_LEAF_SYS_LIBS m)
 elseif(WIN32)
-    set(NM_LEAF_SYS_LIBS psapi)
+    set(SK_LEAF_SYS_LIBS psapi)
 else()
-    set(NM_LEAF_SYS_LIBS "")
+    set(SK_LEAF_SYS_LIBS "")
 endif()
 
-# 叶子库 1：navmap_plat（src/utils/plat.c，纯叶子）
-# ★ plat.c 内的线程/互斥（nm_thread_create / NmMutex）用 pthread 实现，故 -pthread
-#   由本库统一承载（"平台差异只在 plat.c"），所有经 nm_link_tool 链 plat 的目标自动带上。
+# 叶子库 1：skedaddle_plat（src/utils/plat.c，纯叶子）
+# ★ plat.c 内的线程/互斥（sk_thread_create / SkMutex）用 pthread 实现，故 -pthread
+#   由本库统一承载（"平台差异只在 plat.c"），所有经 sk_link_tool 链 plat 的目标自动带上。
 #   原先漏挂，导致本机 Linux 链接 skedaddle_tts_selftest 等目标时报 pthread_create 未定义
 #   （Windows/MinGW 不需要显式 -pthread，副机自测未踩到）。
-add_library(navmap_plat STATIC src/utils/plat.c)
-target_include_directories(navmap_plat PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(navmap_plat PUBLIC ${NM_LEAF_SYS_LIBS} Threads::Threads)
+add_library(skedaddle_plat STATIC src/utils/plat.c)
+target_include_directories(skedaddle_plat PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(skedaddle_plat PUBLIC ${SK_LEAF_SYS_LIBS} Threads::Threads)
 if(WIN32)
-    target_compile_options(navmap_plat PUBLIC -Wno-format)
+    target_compile_options(skedaddle_plat PUBLIC -Wno-format)
 endif()
 
-# 叶子库 2：navmap_geo（src/utils/geo.c + datum.c，纯叶子）
-add_library(navmap_geo STATIC src/utils/geo.c src/utils/datum.c)
-target_include_directories(navmap_geo PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(navmap_geo PUBLIC ${NM_LEAF_SYS_LIBS} navmap_i18n)
+# 叶子库 2：skedaddle_geo（src/utils/geo.c + datum.c，纯叶子）
+add_library(skedaddle_geo STATIC src/utils/geo.c src/utils/datum.c)
+target_include_directories(skedaddle_geo PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(skedaddle_geo PUBLIC ${SK_LEAF_SYS_LIBS} skedaddle_i18n)
 
-# 叶子库：navmap_i18n（极简多语言：以中文为原文，查表出英文，缺译回退中文）
-add_library(navmap_i18n STATIC src/i18n/i18n.c)
-target_include_directories(navmap_i18n PUBLIC ${CMAKE_SOURCE_DIR}/src)
+# 叶子库：skedaddle_i18n（极简多语言：以中文为原文，查表出英文，缺译回退中文）
+add_library(skedaddle_i18n STATIC src/i18n/i18n.c)
+target_include_directories(skedaddle_i18n PUBLIC ${CMAKE_SOURCE_DIR}/src)
 if(WIN32)
-    target_compile_options(navmap_geo PUBLIC -Wno-format)
+    target_compile_options(skedaddle_geo PUBLIC -Wno-format)
 endif()
 
-# 叶子库 3：navmap_strpool（src/utils/strpool.c，纯叶子）
-add_library(navmap_strpool STATIC src/utils/strpool.c)
-target_include_directories(navmap_strpool PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(navmap_strpool PUBLIC ${NM_LEAF_SYS_LIBS})
+# 叶子库 3：skedaddle_strpool（src/utils/strpool.c，纯叶子）
+add_library(skedaddle_strpool STATIC src/utils/strpool.c)
+target_include_directories(skedaddle_strpool PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(skedaddle_strpool PUBLIC ${SK_LEAF_SYS_LIBS})
 if(WIN32)
-    target_compile_options(navmap_strpool PUBLIC -Wno-format)
+    target_compile_options(skedaddle_strpool PUBLIC -Wno-format)
 endif()
 
-# 叶子库 4：navmap_mem（src/utils/mem.c，依赖 plat）
-add_library(navmap_mem STATIC src/utils/mem.c)
-target_include_directories(navmap_mem PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(navmap_mem PUBLIC navmap_plat ${NM_LEAF_SYS_LIBS})
+# 叶子库 4：skedaddle_mem（src/utils/mem.c，依赖 plat）
+add_library(skedaddle_mem STATIC src/utils/mem.c)
+target_include_directories(skedaddle_mem PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(skedaddle_mem PUBLIC skedaddle_plat ${SK_LEAF_SYS_LIBS})
 if(WIN32)
-    target_compile_options(navmap_mem PUBLIC -Wno-format)
+    target_compile_options(skedaddle_mem PUBLIC -Wno-format)
 endif()
 
-# 叶子库 5：navmap_pbf（src/pbf/*，零内部依赖）
+# 叶子库 5：skedaddle_pbf（src/pbf/*，零内部依赖）
 #   PBF 解码依赖 zlib（解压）与 protobuf-c（schema），生成头在 GEN_DIR。
-add_library(navmap_pbf STATIC ${PBF_SRCS})
-target_include_directories(navmap_pbf PUBLIC
+add_library(skedaddle_pbf STATIC ${PBF_SRCS})
+target_include_directories(skedaddle_pbf PUBLIC
     ${CMAKE_SOURCE_DIR}/src
     ${GEN_DIR}
     ${ZLIB_INCLUDE_DIRS}
     ${PROTOC_INCLUDE_DIRS}
     ${PROTOC_REAL_INCLUDE_DIR})
-target_link_libraries(navmap_pbf PUBLIC ${ZLIB_LIBRARIES} ${PROTOC_LIB})
+target_link_libraries(skedaddle_pbf PUBLIC ${ZLIB_LIBRARIES} ${PROTOC_LIB})
 if(WIN32)
-    target_compile_options(navmap_pbf PUBLIC -Wno-format)
+    target_compile_options(skedaddle_pbf PUBLIC -Wno-format)
 endif()
 
-# 阶段 2 模块库（DAG 顺序，见上方 MODULE_SRCS 注释；聚合层 navimap_core 见下方）。
+# 阶段 2 模块库（DAG 顺序，见上方 MODULE_SRCS 注释；聚合层 skedaddle_core 见下方）。
 # 每个模块库 PUBLIC 暴露 ${CMAKE_SOURCE_DIR}/src 含入根（消费者可用 "map/xxx.h"），
-# 并链入自身的模块依赖。第三方库（z/sqlite3/protoc/m）统一由下方 navimap_core 聚合层
+# 并链入自身的模块依赖。第三方库（z/sqlite3/protoc/m）统一由下方 skedaddle_core 聚合层
 # 承载，模块库本身只表达"模块↔模块"依赖，便于独立复用。
 
-# navmap_map：pbf + 全部叶子库
-# gpx.c 真正调用 sqlite3_*（tracks.db 用户数据）⇒ 与 navmap_search 同样把
-# sqlite3 收进本模块库，保证 gpx 系列工具只链 navmap_map 也能解析数据库符号。
-add_library(navmap_map STATIC ${MAP_SRCS})
-target_include_directories(navmap_map PUBLIC
+# skedaddle_map：pbf + 全部叶子库
+# gpx.c 真正调用 sqlite3_*（tracks.db 用户数据）⇒ 与 skedaddle_search 同样把
+# sqlite3 收进本模块库，保证 gpx 系列工具只链 skedaddle_map 也能解析数据库符号。
+add_library(skedaddle_map STATIC ${MAP_SRCS})
+target_include_directories(skedaddle_map PUBLIC
     ${CMAKE_SOURCE_DIR}/src ${GEN_DIR}
     ${ZLIB_INCLUDE_DIRS} ${SQLITE3_INCLUDE_DIRS}
     ${PROTOC_INCLUDE_DIRS} ${PROTOC_REAL_INCLUDE_DIR})
-target_link_libraries(navmap_map PUBLIC
-    navmap_pbf navmap_geo navmap_strpool navmap_plat navmap_mem
+target_link_libraries(skedaddle_map PUBLIC
+    skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem
     ${SQLITE3_LIBRARIES})
 
-# navmap_search：仅叶子库（search→utils）。search.c 真正调用 sqlite3_*，
+# skedaddle_search：仅叶子库（search→utils）。search.c 真正调用 sqlite3_*，
 # 故把 sqlite3 收进本模块库，保证 search 系列工具（skedaddle_search_cli/skedaddle_places_build）
-# 只链 navmap_search 也能解析数据库符号（模块可独立复用，不必拖整库）。
-add_library(navmap_search STATIC ${SEARCH_SRCS})
-target_include_directories(navmap_search PUBLIC
+# 只链 skedaddle_search 也能解析数据库符号（模块可独立复用，不必拖整库）。
+add_library(skedaddle_search STATIC ${SEARCH_SRCS})
+target_include_directories(skedaddle_search PUBLIC
     ${CMAKE_SOURCE_DIR}/src ${GEN_DIR}
     ${ZLIB_INCLUDE_DIRS} ${SQLITE3_INCLUDE_DIRS}
     ${PROTOC_INCLUDE_DIRS} ${PROTOC_REAL_INCLUDE_DIR})
-target_link_libraries(navmap_search PUBLIC
-    navmap_geo navmap_strpool navmap_plat navmap_mem
+target_link_libraries(skedaddle_search PUBLIC
+    skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem
     ${SQLITE3_LIBRARIES})
 
-# navmap_route：map + 叶子库
-add_library(navmap_route STATIC ${ROUTE_SRCS})
-target_include_directories(navmap_route PUBLIC
+# skedaddle_route：map + 叶子库
+add_library(skedaddle_route STATIC ${ROUTE_SRCS})
+target_include_directories(skedaddle_route PUBLIC
     ${CMAKE_SOURCE_DIR}/src ${GEN_DIR}
     ${ZLIB_INCLUDE_DIRS} ${SQLITE3_INCLUDE_DIRS}
     ${PROTOC_INCLUDE_DIRS} ${PROTOC_REAL_INCLUDE_DIR})
-target_link_libraries(navmap_route PUBLIC
-    navmap_map navmap_geo navmap_strpool navmap_plat navmap_mem)
+target_link_libraries(skedaddle_route PUBLIC
+    skedaddle_map skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem)
 
-# navmap_render：map + route + search + settings + 叶子库
+# skedaddle_render：map + route + search + settings + 叶子库
 #   ★ 2026-10-28 R2 起 render 零 ui 依赖（chrome/audit 已移到 ui），
 #     符号级环消除 ⇒ 无需再靠 start-group 消解，也不再隐式依赖 ui。
-add_library(navmap_render STATIC ${RENDER_SRCS})
-target_include_directories(navmap_render PUBLIC
+add_library(skedaddle_render STATIC ${RENDER_SRCS})
+target_include_directories(skedaddle_render PUBLIC
     ${CMAKE_SOURCE_DIR}/src ${GEN_DIR}
     ${ZLIB_INCLUDE_DIRS} ${SQLITE3_INCLUDE_DIRS}
     ${PROTOC_INCLUDE_DIRS} ${PROTOC_REAL_INCLUDE_DIR})
-target_link_libraries(navmap_render PUBLIC
-    navmap_map navmap_route navmap_search navmap_settings
-    navmap_geo navmap_strpool navmap_plat navmap_mem)
+target_link_libraries(skedaddle_render PUBLIC
+    skedaddle_map skedaddle_route skedaddle_search skedaddle_settings
+    skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem)
 
-# navmap_ui：render + route + search + map + 叶子库
-add_library(navmap_ui STATIC ${UI_SRCS})
-target_include_directories(navmap_ui PUBLIC
+# skedaddle_ui：render + route + search + map + 叶子库
+add_library(skedaddle_ui STATIC ${UI_SRCS})
+target_include_directories(skedaddle_ui PUBLIC
     ${CMAKE_SOURCE_DIR}/src ${GEN_DIR}
     ${ZLIB_INCLUDE_DIRS} ${SQLITE3_INCLUDE_DIRS}
     ${PROTOC_INCLUDE_DIRS} ${PROTOC_REAL_INCLUDE_DIR})
-target_link_libraries(navmap_ui PUBLIC
-    navmap_render navmap_route navmap_search navmap_map navmap_settings
-    navmap_geo navmap_strpool navmap_plat navmap_mem navmap_i18n)
+target_link_libraries(skedaddle_ui PUBLIC
+    skedaddle_render skedaddle_route skedaddle_search skedaddle_map skedaddle_settings
+    skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem skedaddle_i18n)
 
-# navmap_settings：完整设置系统（极简 INI 存读 + 设置清单），依赖仅 plat。
-add_library(navmap_settings STATIC src/settings/settings.c)
-target_include_directories(navmap_settings PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(navmap_settings PUBLIC navmap_plat)
+# skedaddle_settings：完整设置系统（极简 INI 存读 + 设置清单），依赖仅 plat。
+add_library(skedaddle_settings STATIC src/settings/settings.c)
+target_include_directories(skedaddle_settings PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(skedaddle_settings PUBLIC skedaddle_plat)
 
-# navimap_core：聚合层（方案2 架构边界的对外门面）。
+# skedaddle_core：聚合层（方案2 架构边界的对外门面）。
 #   ★ 仅含一个无副作用的锚点符号（src/core_anchor.c），不含业务 .c；
 #     把 5 个模块库 + 5 个叶子库 + 第三方库聚合成一个链接面，
-#     使 24 个 exe / skedaddle 等无需改动即可继续链接 navimap_core。
+#     使 24 个 exe / skedaddle 等无需改动即可继续链接 skedaddle_core。
 #   ★ 核心零 SDL：聚合层连 SDL 的 include 都不给；SDL 仅 skedaddle_blend_equiv / skedaddle_clip_equiv 合法链。
-add_library(navimap_core STATIC src/core_anchor.c)
+add_library(skedaddle_core STATIC src/core_anchor.c)
 
 # ★ 核心不含 SDL：连 include 路径都不给。理由见上面"依赖"一节的架构约束。
 #   谁需要 SDL（去 SDL 化门禁对照体）自己去直接链 SDL2。
-target_include_directories(navimap_core PUBLIC
+target_include_directories(skedaddle_core PUBLIC
     ${CMAKE_SOURCE_DIR}/src
     ${GEN_DIR}
     ${ZLIB_INCLUDE_DIRS}
@@ -351,21 +351,21 @@ target_include_directories(navimap_core PUBLIC
 # 第二次 target_link_libraries（且包在 if() 内）"会误报 target not built by this project，
 # 故用配置期变量在这里一次性决定平台库，再在下方单次调用里展开。
 if(UNIX)
-    set(NAVIMAP_CORE_SYS_LIBS m)
+    set(SKEDADDLE_CORE_SYS_LIBS m)
 elseif(WIN32)
-    set(NAVIMAP_CORE_SYS_LIBS psapi)
+    set(SKEDADDLE_CORE_SYS_LIBS psapi)
 else()
-    set(NAVIMAP_CORE_SYS_LIBS "")
+    set(SKEDADDLE_CORE_SYS_LIBS "")
 endif()
 
 # ★ 2026-10-28 R2：模块依赖已是纯 DAG（render 零 ui 依赖，符号级环消除），
 #   链接器单趟即可按拓扑序解析全部符号 ⇒ 不再需要 -Wl,--start-group。
 #   ★ 刻意保留"单趟链接"这项约束：start-group 会让链接器多轮扫描，把将来
 #     新引入的符号级环**悄悄补上** ⇒ 边界形同虚设。R3 的分层门禁负责防回流。
-target_link_libraries(navimap_core PUBLIC
-    navmap_map navmap_route navmap_search navmap_render navmap_ui navmap_settings
-    navmap_pbf navmap_geo navmap_strpool navmap_plat navmap_mem
-    ${ZLIB_LIBRARIES} ${SQLITE3_LIBRARIES} ${PROTOC_LIB} ${NAVIMAP_CORE_SYS_LIBS})
+target_link_libraries(skedaddle_core PUBLIC
+    skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui skedaddle_settings
+    skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem
+    ${ZLIB_LIBRARIES} ${SQLITE3_LIBRARIES} ${PROTOC_LIB} ${SKEDADDLE_CORE_SYS_LIBS})
 
 
 
@@ -374,27 +374,27 @@ target_link_libraries(navimap_core PUBLIC
 # SDL_MAIN_HANDLED：SDL.h 默认会把 main 改写成 SDL_main，要求链 SDL2main；本程序
 # 入口就是自己的 main()，不需要那层包装。
 if(MSVC)
-    target_compile_definitions(navimap_core PUBLIC
+    target_compile_definitions(skedaddle_core PUBLIC
         _CRT_SECURE_NO_WARNINGS _USE_MATH_DEFINES)
 endif()
 if(WIN32)
-    target_compile_definitions(navimap_core PUBLIC SDL_MAIN_HANDLED)
+    target_compile_definitions(skedaddle_core PUBLIC SDL_MAIN_HANDLED)
     # MinGW-w64 的 printf 格式检查把 %z / %ll 当成非法（ms_printf 原型），但这些
     # 是合法 C99，在 glibc/Linux 下零警告。此处仅抑制该工具链误报，不改变语义。
-    target_compile_options(navimap_core PUBLIC -Wno-format)
+    target_compile_options(skedaddle_core PUBLIC -Wno-format)
 
-# 阶段 2：同样的 Windows 编译选项/宏也要套到五个模块库上（navimap_core 已不含业务 .c，
-# 真正的编译单元在模块库里）。叶子库（navmap_pbf/geo/...）已在各自定义处挂过 -Wno-format。
-set(NM_ALL_MOD_LIBS
-    navmap_map navmap_route navmap_search navmap_render navmap_ui navmap_settings navimap_core)
+# 阶段 2：同样的 Windows 编译选项/宏也要套到五个模块库上（skedaddle_core 已不含业务 .c，
+# 真正的编译单元在模块库里）。叶子库（skedaddle_pbf/geo/...）已在各自定义处挂过 -Wno-format。
+set(SK_ALL_MOD_LIBS
+    skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui skedaddle_settings skedaddle_core)
 if(MSVC)
-    foreach(t ${NM_ALL_MOD_LIBS})
+    foreach(t ${SK_ALL_MOD_LIBS})
         target_compile_definitions(${t} PUBLIC
             _CRT_SECURE_NO_WARNINGS _USE_MATH_DEFINES)
     endforeach()
 endif()
 if(WIN32)
-    foreach(t ${NM_ALL_MOD_LIBS})
+    foreach(t ${SK_ALL_MOD_LIBS})
         target_compile_definitions(${t} PUBLIC SDL_MAIN_HANDLED)
         target_compile_options(${t} PUBLIC -Wno-format)
     endforeach()
@@ -413,16 +413,16 @@ endif()
     #   后者是初始化变量，只在首次 configure 时生效 ⇒ 已有 build/ 的机器改了也不会
     #   生效（实测：设了但 ninja 生成的命令里根本没有它）。target 属性在生成阶段
     #   生效，对已有 cache 同样管用。
-    set(NM_COMPILER_LAUNCHER "${CMAKE_SOURCE_DIR}/scripts/build_launcher.bat")
+    set(SK_COMPILER_LAUNCHER "${CMAKE_SOURCE_DIR}/scripts/build_launcher.bat")
     # 若编译器本身已是包装脚本（cc_wrap/cxx_wrap），再套 build_launcher 会把 .bat
     # 嵌进 sh 里执行而失败（双包装）。此时启动器冗余，直接关掉。
     if(CMAKE_C_COMPILER MATCHES "cc_wrap" OR CMAKE_CXX_COMPILER MATCHES "cxx_wrap")
-        set(NM_COMPILER_LAUNCHER "")
+        set(SK_COMPILER_LAUNCHER "")
     endif()
-    if(EXISTS "${NM_COMPILER_LAUNCHER}")
-        message(STATUS "编译启动器  ${NM_COMPILER_LAUNCHER}（绕开 cmd.exe 下的 gcc 静默失败）")
+    if(EXISTS "${SK_COMPILER_LAUNCHER}")
+        message(STATUS "编译启动器  ${SK_COMPILER_LAUNCHER}（绕开 cmd.exe 下的 gcc 静默失败）")
     else()
-        message(WARNING "找不到编译启动器 ${NM_COMPILER_LAUNCHER}；"
+        message(WARNING "找不到编译启动器 ${SK_COMPILER_LAUNCHER}；"
                         "在 Windows 上 gcc 可能静默失败（退出码 1、无输出）")
     endif()
 endif()
@@ -431,57 +431,57 @@ endif()
 # 阶段 2（续）：24 个 exe 改为只链所需模块库。
 #   每个工具只链它真正用到的模块库（map/route/search/render/ui 的子集），
 #   叶子库（pbf/geo/strpool/plat/mem）与第三方库（z/sqlite3/protoc/m）统一在
-#   nm_link_tool 内补齐。
+#   sk_link_tool 内补齐。
 #   ★ 2026-10-28 R2：原先因 render↔ui 符号级环，所有项目库必须包在
 #     -Wl,--start-group … -Wl,--end-group 里让链接器多轮扫描消解。环消除后
 #     这个包裹已无必要（且会掩盖新引入的环），故 MSVC / GNU 两分支合并为一份。
 #   这样每个 exe 的链接面被裁剪到最小，且依赖方向被链接器强制（偷偷反向依赖会
 #   立刻 undefined-reference），符合 ARCH_ASSESSMENT.md §4 阶段2 的验收目标。
 # ---------------------------------------------------------------------------
-function(nm_link_tool tgt)
+function(sk_link_tool tgt)
     target_link_libraries(${tgt} PRIVATE
         ${ARGN}
-        navmap_pbf navmap_geo navmap_strpool navmap_plat navmap_mem
-        ${ZLIB_LIBRARIES} ${SQLITE3_LIBRARIES} ${PROTOC_LIB} ${NM_LEAF_SYS_LIBS})
+        skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem
+        ${ZLIB_LIBRARIES} ${SQLITE3_LIBRARIES} ${PROTOC_LIB} ${SK_LEAF_SYS_LIBS})
 endfunction()
 
 # ---------------------------------------------------------------------------
 # 命令行工具（GUI 无法无头验证，逻辑一律做成可断言的 CLI）
 # ---------------------------------------------------------------------------
 add_executable(skedaddle_pbf_info tools/pbf_info.c)
-nm_link_tool(skedaddle_pbf_info)
+sk_link_tool(skedaddle_pbf_info)
 
 # 等高线生成工具：从 SRTM .hgt 瓦片生成 contours/contour_polyrefs/contour_pts 三件套。
 # 零外部依赖（无 GDAL），直接读原始大端 int16 .hgt。
 add_executable(skedaddle_gen_contours tools/gen_contours.c)
-nm_link_tool(skedaddle_gen_contours navmap_map)
+sk_link_tool(skedaddle_gen_contours skedaddle_map)
 
 
 # PBF 按需解码显示层的等价性校验（"只留 PBF"方案的门禁）
 add_executable(skedaddle_pbfmap_check tools/pbfmap_check.c)
-nm_link_tool(skedaddle_pbfmap_check navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_pbfmap_check skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 # via=way 转向限制形态探针（调研用）
 add_executable(skedaddle_restr_probe tools/restr_probe.c)
-nm_link_tool(skedaddle_restr_probe)
+sk_link_tool(skedaddle_restr_probe)
 
 add_executable(skedaddle_graph_extract tools/graph_extract.c)
-nm_link_tool(skedaddle_graph_extract navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_graph_extract skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 add_executable(skedaddle_graph_check tools/graph_check.c)
-nm_link_tool(skedaddle_graph_check navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_graph_check skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 add_executable(skedaddle_tag_stats tools/tag_stats.c)
-nm_link_tool(skedaddle_tag_stats)
+sk_link_tool(skedaddle_tag_stats)
 
 # ---------------------------------------------------------------------------
-# SDL 适配层（navmap_sdl / window_sdl.c / navimap 可执行）已于 #88 彻底移除：
+# SDL 适配层（skedaddle_sdl / window_sdl.c / skedaddle 可执行）已于 #88 彻底移除：
 # 彻底 Qt 化后，交互前端是 skedaddle，离屏像素审计走 C 核心缓冲（chrome.c，
 # a.qt_ui=0 把 chrome 画进缓冲、零 SDL）。本机不再构建任何 SDL GUI 二进制。
 # 仅 skedaddle_blend_equiv / skedaddle_clip_equiv 仍合法链 SDL2（去 SDL 化门禁用的对照体）。
 # ---------------------------------------------------------------------------
 
-# 主程序（GUI）：原 navimap (SDL) 已移除，交互前端统一为 skedaddle（见下方 Qt 段）。
+# 主程序（GUI）：原 skedaddle (SDL) 已移除，交互前端统一为 skedaddle（见下方 Qt 段）。
 
 # Qt 前端（可选）：找到 Qt6 或 Qt5 的 Widgets 就多编一个 skedaddle。
 #   同一份源码同时兼容 Qt5/Qt6：无 Q_OBJECT/信号槽，故无需 moc；事件坐标统一用
@@ -512,24 +512,24 @@ if(QT)
     # 应用图标：作为 Qt 资源嵌入二进制（资源路径 :/app_icon.png），由
     # qt_main.cpp 的 QApplication::setWindowIcon 挂到所有窗口/任务栏。
     # Qt5/Qt6 各自提供对应的资源编译宏，这里按 QT 实测选择。
-    set(NAVIMAP_QT_QRC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_qt/resources.qrc)
+    set(SKEDADDLE_QT_QRC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_qt/resources.qrc)
     if(QT STREQUAL "Qt6")
-        qt_add_resources(NAVIMAP_QT_RC_GEN ${NAVIMAP_QT_QRC})
+        qt_add_resources(SKEDADDLE_QT_RC_GEN ${SKEDADDLE_QT_QRC})
     else()
-        qt5_add_resources(NAVIMAP_QT_RC_GEN ${NAVIMAP_QT_QRC})
+        qt5_add_resources(SKEDADDLE_QT_RC_GEN ${SKEDADDLE_QT_QRC})
     endif()
-    target_sources(skedaddle PRIVATE ${NAVIMAP_QT_RC_GEN})
-    # 直接链各子模块库（与 nm_link_tool 同款）：CMake 展开成相对路径
-    # libnavmap_*.a（链接器 cwd=build 可找到），绕开 navmap_core 空壳
-    # （navmap_core 仅含 core_anchor.c，未聚合子模块，且 CMake 会把它
-    #  展开成 -lnavmap_core 而缺 -L build，导致链接失败）。
+    target_sources(skedaddle PRIVATE ${SKEDADDLE_QT_RC_GEN})
+    # 直接链各子模块库（与 sk_link_tool 同款）：CMake 展开成相对路径
+    # libskedaddle_*.a（链接器 cwd=build 可找到），绕开 skedaddle_core 空壳
+    # （skedaddle_core 仅含 core_anchor.c，未聚合子模块，且 CMake 会把它
+    #  展开成 -lskedaddle_core 而缺 -L build，导致链接失败）。
     target_link_libraries(skedaddle PRIVATE
-        navmap_pbf navmap_geo navmap_strpool navmap_plat navmap_mem
-        navmap_map navmap_search navmap_route navmap_render navmap_ui navmap_settings navmap_i18n
-        ${ZLIB_LIBRARIES} ${SQLITE3_LIBRARIES} ${PROTOC_LIB} ${NM_LEAF_SYS_LIBS}
+        skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem
+        skedaddle_map skedaddle_search skedaddle_route skedaddle_render skedaddle_ui skedaddle_settings skedaddle_i18n
+        ${ZLIB_LIBRARIES} ${SQLITE3_LIBRARIES} ${PROTOC_LIB} ${SK_LEAF_SYS_LIBS}
         ${QT}::Widgets ${QT}::Network Threads::Threads)
     # skedaddle 直接引用 src/ 下的头（ui/window.h、i18n/i18n.h、utils/* 等），
-    # 需要源码根在 include 路径。历史上该路径靠 navmap_core 的传递 + 旧 .obj
+    # 需要源码根在 include 路径。历史上该路径靠 skedaddle_core 的传递 + 旧 .obj
     # 缓存"恰好能编"，reconfigure 后全量重编才暴露缺失——这里显式补上。
     target_include_directories(skedaddle PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -552,137 +552,137 @@ endif()
 add_executable(skedaddle_blend_equiv tools/blend_equiv.c)
 target_include_directories(skedaddle_blend_equiv PRIVATE ${SDL2_INCLUDE_DIRS})
 target_link_directories(skedaddle_blend_equiv PRIVATE ${SDL2_LIBRARY_DIRS})
-nm_link_tool(skedaddle_blend_equiv navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_blend_equiv skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 target_link_libraries(skedaddle_blend_equiv PRIVATE ${SDL2_LIBRARIES} Threads::Threads)
 
 # 线段裁剪与 SDL_IntersectRectAndLine 的等价性（去 SDL 化的门禁）。
 add_executable(skedaddle_clip_equiv tools/clip_equiv.c)
 target_include_directories(skedaddle_clip_equiv PRIVATE ${SDL2_INCLUDE_DIRS})
 target_link_directories(skedaddle_clip_equiv PRIVATE ${SDL2_LIBRARY_DIRS})
-nm_link_tool(skedaddle_clip_equiv navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_clip_equiv skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 target_link_libraries(skedaddle_clip_equiv PRIVATE ${SDL2_LIBRARIES} Threads::Threads)
 
 # 架构门禁：核心与 Qt 前端零 SDL 符号（正反双向）。
 add_executable(skedaddle_core_no_sdl tools/core_no_sdl.c)
-nm_link_tool(skedaddle_core_no_sdl)
+sk_link_tool(skedaddle_core_no_sdl)
 
 # 跨省接边验证（阶段 8 坐标键路由的前提）
 add_executable(skedaddle_tile_xcheck tools/tile_xcheck.c)
-nm_link_tool(skedaddle_tile_xcheck navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_tile_xcheck skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 # 瓦片下标 查表版 vs 精确版 的逐点等价性验收
 add_executable(skedaddle_tile_selftest tools/tile_selftest.c)
-nm_link_tool(skedaddle_tile_selftest navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_tile_selftest skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 # 优先队列自验收（--expect-fail 是负向对照）
 add_executable(skedaddle_heap_selftest tools/heap_selftest.c)
-nm_link_tool(skedaddle_heap_selftest navmap_route)
+sk_link_tool(skedaddle_heap_selftest skedaddle_route)
 
 # 路线计算（跨省 A*，坐标键接边）
 add_executable(skedaddle_route_cli tools/route_cli.c tools/tool_common.c)
-nm_link_tool(skedaddle_route_cli navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_route_cli skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 # 地标距离：一对多 Dijkstra（PLAN.md §48）
 add_executable(skedaddle_lmdist_cli tools/lmdist_cli.c tools/tool_common.c)
-nm_link_tool(skedaddle_lmdist_cli navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_lmdist_cli skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 # 地标下界表 lm.bin 的构建（网格聚合，PLAN.md §49.6）
 add_executable(skedaddle_lmbuild_cli tools/lmbuild_cli.c tools/tool_common.c)
-nm_link_tool(skedaddle_lmbuild_cli navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_lmbuild_cli skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 # 反向入边索引 rev.bin 的生成与逐元素自验收（--verify）
 add_executable(skedaddle_revbuild_cli tools/revbuild_cli.c)
-nm_link_tool(skedaddle_revbuild_cli navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_revbuild_cli skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 # 模拟定位 / 偏航 / 剩余 ETA 的无头验收（阶段 9 导航层）
 add_executable(skedaddle_navsim_cli tools/navsim_cli.c tools/tool_common.c)
-nm_link_tool(skedaddle_navsim_cli navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_navsim_cli skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 # via=way 两段转向限制的 A/B 对照验收（阶段 8 补）
 add_executable(skedaddle_restr_ab tools/restr_ab.c tools/tool_common.c)
-nm_link_tool(skedaddle_restr_ab navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_restr_ab skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 # 地名 / POI 搜索的无头验收（阶段 7）
 add_executable(skedaddle_search_cli tools/search_cli.c tools/tool_common.c)
-nm_link_tool(skedaddle_search_cli navmap_search)
+sk_link_tool(skedaddle_search_cli skedaddle_search)
 
 # 地名 / POI 库生成器（2026-09-23 补）
 add_executable(skedaddle_places_build tools/places_build.c)
-nm_link_tool(skedaddle_places_build navmap_search)
+sk_link_tool(skedaddle_places_build skedaddle_search)
 
 # 无地图区域检测（GUI 提示条的无头验收）
 add_executable(skedaddle_coverage_cli tools/coverage_cli.c tools/tool_common.c)
-nm_link_tool(skedaddle_coverage_cli navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_coverage_cli skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 # 平台抽象层（utils/plat.h）的全接口自验收（正反双向）。
 add_executable(skedaddle_plat_selftest tools/plat_selftest.c)
-nm_link_tool(skedaddle_plat_selftest)
+sk_link_tool(skedaddle_plat_selftest)
 add_executable(skedaddle_tts_selftest tools/tts_selftest.c)
-nm_link_tool(skedaddle_tts_selftest)
+sk_link_tool(skedaddle_tts_selftest)
 # 语音播报策略（抄自 OsmAnd）：分级提前量 / 话术模板 / 播报节奏。
 add_executable(skedaddle_voice_selftest tools/voice_selftest.c)
-nm_link_tool(skedaddle_voice_selftest navmap_route navmap_map navmap_geo navmap_strpool navmap_plat navmap_mem)
+sk_link_tool(skedaddle_voice_selftest skedaddle_route skedaddle_map skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem)
 # 语音播报**端到端**自测：走生产路径（navsim → navsim_next_maneuver →
-# **ui/voice_wire.c 的 nav_voice_frame** → nm_tts_speak），
+# **ui/voice_wire.c 的 nav_voice_frame** → sk_tts_speak），
 # 验证"接线"本身（距离口径、告警基准、播报顺序、冷却、收尾语）——单函数自测抓不到这些。
-# ★ 必须链 navmap_ui：接线的**唯一实现**在 src/ui/voice_wire.c 里，
+# ★ 必须链 skedaddle_ui：接线的**唯一实现**在 src/ui/voice_wire.c 里，
 #   链接它才能证明"自测跑的就是生产代码"（原先这里只链 route，自测只好复刻一遍接线
 #   ⇒ 接线坏掉时判据假绿，负向对照第 8 项就是这么被抓住的）。
 add_executable(skedaddle_voice_e2e tools/voice_e2e.c)
-nm_link_tool(skedaddle_voice_e2e navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_voice_e2e skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 add_executable(skedaddle_alts_selftest tools/alts_selftest.c tools/tool_common.c)
-nm_link_tool(skedaddle_alts_selftest navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_alts_selftest skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 # 车道转向指示（turn:lanes）数据链路验收：mapset 加载 lanes.bin 并能按 (省,边)
 # 取出合法车道串。
 add_executable(skedaddle_lane_selftest tools/lane_selftest.c)
-nm_link_tool(skedaddle_lane_selftest navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_lane_selftest skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 # PBF 显示层后台异步解码验收：set_view 不阻塞主线程 + 进度回调生效 + 解码完成。
 add_executable(skedaddle_dmap_selftest tools/dmap_selftest.c)
-nm_link_tool(skedaddle_dmap_selftest navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_dmap_selftest skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 add_executable(skedaddle_disp_tile_selftest tools/disp_tile_selftest.c)
-nm_link_tool(skedaddle_disp_tile_selftest navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_disp_tile_selftest skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 add_executable(skedaddle_disp_runtime_selftest tools/disp_runtime_selftest.c)
-nm_link_tool(skedaddle_disp_runtime_selftest navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_disp_runtime_selftest skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 add_executable(skedaddle_gpx_selftest tools/gpx_selftest.c)
-nm_link_tool(skedaddle_gpx_selftest navmap_map navmap_geo navmap_plat)
+sk_link_tool(skedaddle_gpx_selftest skedaddle_map skedaddle_geo skedaddle_plat)
 
 # 坐标系（大地基准）自测：WGS84/CGCS2000/北京54/西安80 的枚举/往返/位移合理性 + 负向对照。
 add_executable(skedaddle_datum_selftest tools/datum_selftest.c)
-nm_link_tool(skedaddle_datum_selftest navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_datum_selftest skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 # 字体契约验收：内置 Noto 字体集是否真能加载并出字形。
 add_executable(skedaddle_font_selftest tools/font_selftest.c)
-nm_link_tool(skedaddle_font_selftest navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_font_selftest skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 # 设置持久化模块自测：默认值/存读往返/reset/env覆盖/损坏文件健壮性。
 add_executable(skedaddle_settings_selftest tools/settings_selftest.c)
-nm_link_tool(skedaddle_settings_selftest navmap_settings)
+sk_link_tool(skedaddle_settings_selftest skedaddle_settings)
 
 # 字体诊断探针：中文变方框（tofu）时定位是"没有字形"还是"有字形但画不出"。
 add_executable(skedaddle_font_probe tools/font_probe.c)
-nm_link_tool(skedaddle_font_probe navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_font_probe skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 # 字体链的中文覆盖断言：地图文字（stb_truetype）与 Qt 控件文字共用这条候选链。
 add_executable(skedaddle_font_cjk_check tools/font_cjk_check.c)
-nm_link_tool(skedaddle_font_cjk_check navmap_map navmap_route navmap_search navmap_render navmap_ui)
+sk_link_tool(skedaddle_font_cjk_check skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 # ---------------------------------------------------------------------------
 # Windows(MSYS2)：给所有目标挂编译启动器。
 # 必须在所有 target 都定义完之后做（target 属性只能在 target 存在时设置）。
 # 用 get_property 拿全部 target 名，逐个设 C/CXX_COMPILER_LAUNCHER。
 # ---------------------------------------------------------------------------
-if(WIN32 AND NM_COMPILER_LAUNCHER AND EXISTS "${NM_COMPILER_LAUNCHER}")
-    get_property(NM_ALL_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-    foreach(t ${NM_ALL_TARGETS})
+if(WIN32 AND SK_COMPILER_LAUNCHER AND EXISTS "${SK_COMPILER_LAUNCHER}")
+    get_property(SK_ALL_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(t ${SK_ALL_TARGETS})
         set_target_properties(${t} PROPERTIES
-            C_COMPILER_LAUNCHER   "${NM_COMPILER_LAUNCHER}"
-            CXX_COMPILER_LAUNCHER "${NM_COMPILER_LAUNCHER}")
+            C_COMPILER_LAUNCHER   "${SK_COMPILER_LAUNCHER}"
+            CXX_COMPILER_LAUNCHER "${SK_COMPILER_LAUNCHER}")
     endforeach()
-    list(LENGTH NM_ALL_TARGETS NM_NT)
-    message(STATUS "编译启动器已挂到全部 ${NM_NT} 个目标")
+    list(LENGTH SK_ALL_TARGETS SK_NT)
+    message(STATUS "编译启动器已挂到全部 ${SK_NT} 个目标")
 endif()

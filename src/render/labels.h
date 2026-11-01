@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_LABELS_H
-#define NAVIMAP_LABELS_H
+#ifndef SKEDADDLE_LABELS_H
+#define SKEDADDLE_LABELS_H
 
 #include <sqlite3.h>
 #include "map/map_view.h"

@@ -42,7 +42,7 @@
 
 static uint64_t mono_ms(void)
 {
-    return nm_now_ms();                /* 平台层：clock_gettime / QPC */
+    return sk_now_ms();                /* 平台层：clock_gettime / QPC */
 }
 
 
@@ -192,12 +192,12 @@ static void aggregate(const MapSet *ms, const LmDist *d, LmTable *t, uint32_t k,
         const uint32_t *cost = d->cost + d->off[p];
         uint64_t reach = 0, deg0 = 0;
         for (uint64_t i = 0; i < ncnt; i++) {
-            const uint8_t *nr = base + i * NM_NODE_BYTES;
-            if (nm_get_u16(nr + NF_EDGE_COUNT) == 0) deg0++;
+            const uint8_t *nr = base + i * SK_NODE_BYTES;
+            if (sk_get_u16(nr + NF_EDGE_COUNT) == 0) deg0++;
             uint32_t c = cost[i];
             if (c == LM_UNREACHABLE) continue;
             reach++;
-            size_t ci = lm_cell_of(t, nm_get_i32(nr + NF_LAT), nm_get_i32(nr + NF_LON));
+            size_t ci = lm_cell_of(t, sk_get_i32(nr + NF_LAT), sk_get_i32(nr + NF_LON));
             if (ci == (size_t)-1) { out++; continue; }
             uint32_t m100 = c / 100000u;        /* (米×1000) → 米 → /100 */
             if (m100 > LM_MAXVAL) m100 = LM_MAXVAL;
@@ -408,7 +408,7 @@ int main(int argc, char **argv)
     }
 
     if (want_stats) {
-        printf("峰值内存      %.0f MB\n", nm_peak_rss_mb());
+        printf("峰值内存      %.0f MB\n", sk_peak_rss_mb());
     }
 
     lm_table_free(&t);

@@ -8,69 +8,69 @@
 学完本课，学生应能：
 
 1. 理解"平台差异 100% 收口到 `plat.c`"这条纪律为什么重要，并能在业务代码里坚持"零 `#ifdef _WIN32`"。
-2. 在 `plat.c` 内新增一个跨平台小工具函数（如 `nm_sleep_ms`），而不触碰任何业务 `.c`。
-3. 说清链接期 `-pthread` 为何由 `navmap_plat` 库统一承载（漏挂会在链接 `skedaddle_tts_selftest` 时报 `pthread_create` 未定义）。
-4. 看懂 `nm_pin_allocator` 钉死 glibc mmap 阈值的根因：避免大数组改走 brk 主堆导致 SIGSEGV。
+2. 在 `plat.c` 内新增一个跨平台小工具函数（如 `sk_sleep_ms`），而不触碰任何业务 `.c`。
+3. 说清链接期 `-pthread` 为何由 `skedaddle_plat` 库统一承载（漏挂会在链接 `skedaddle_tts_selftest` 时报 `pthread_create` 未定义）。
+4. 看懂 `sk_pin_allocator` 钉死 glibc mmap 阈值的根因：避免大数组改走 brk 主堆导致 SIGSEGV。
 5. 掌握 `StrPool` 字符串去重池的设计（id 0 = "无名"），理解它如何支撑 L3 路名去重与 `names.bin` 落盘。
 
 ## 二、功能构成
 
 | 文件 | 关键结构体 / 关键函数（声明） | 行号区间 |
 |---|---|---|
-| `plat.h` | 不透明 typedef：`NmMutex`/`NmCond`/`NmProc`/`NmDir` | `plat.h:72,81,90,132` |
-| `plat.h` | `nm_thread_spawn` / `nm_proc_spawn` / `nm_now_ms` / `nm_tts_speak` / `nm_font_candidates` 声明 | `plat.h:99,135,145,156,196` |
-| `plat.h` | `nm_map_file` / `nm_unmap_file` 声明 | `plat.h:66-67` |
-| `plat.c` | `struct NmMutex` / `struct NmCond` / `struct NmProc` / `struct NmDir`（真实结构在 `#ifdef` 内） | `plat.c:351-360,1407,1454,571,1539,1568,1579` |
-| `plat.c` | `nm_thread_spawn`（pthread / CreateThread 收口） | `plat.c:1526-1535,1623-1632` |
-| `plat.c` | `nm_now_ms`（单调时钟） | `plat.c:733-748` |
-| `plat.c` | `nm_map_file`（只读映射，POSIX mmap / Win CreateFileMapping） | `plat.c:296-328` |
-| `plat.c` | `nm_font_candidates`（中文/系统字体候选链） | `plat.c:1372-1401` |
-| `mem.h` | `NM_MMAP_THRESHOLD_BYTES` 宏、注释 | `mem.h:7-22` |
-| `mem.c` | `nm_pin_allocator`（构造函数钉死分配器） | `mem.c:16-34` |
+| `plat.h` | 不透明 typedef：`SkMutex`/`SkCond`/`SkProc`/`SkDir` | `plat.h:72,81,90,132` |
+| `plat.h` | `sk_thread_spawn` / `sk_proc_spawn` / `sk_now_ms` / `sk_tts_speak` / `sk_font_candidates` 声明 | `plat.h:99,135,145,156,196` |
+| `plat.h` | `sk_map_file` / `sk_unmap_file` 声明 | `plat.h:66-67` |
+| `plat.c` | `struct SkMutex` / `struct SkCond` / `struct SkProc` / `struct SkDir`（真实结构在 `#ifdef` 内） | `plat.c:351-360,1407,1454,571,1539,1568,1579` |
+| `plat.c` | `sk_thread_spawn`（pthread / CreateThread 收口） | `plat.c:1526-1535,1623-1632` |
+| `plat.c` | `sk_now_ms`（单调时钟） | `plat.c:733-748` |
+| `plat.c` | `sk_map_file`（只读映射，POSIX mmap / Win CreateFileMapping） | `plat.c:296-328` |
+| `plat.c` | `sk_font_candidates`（中文/系统字体候选链） | `plat.c:1372-1401` |
+| `mem.h` | `SK_MMAP_THRESHOLD_BYTES` 宏、注释 | `mem.h:7-22` |
+| `mem.c` | `sk_pin_allocator`（构造函数钉死分配器） | `mem.c:16-34` |
 | `strpool.h` | `StrPool` 不透明类型与接口声明 | `strpool.h:9-23` |
 | `strpool.c` | `struct StrPool`、`fnv1a`、`sp_intern` / `sp_get` / `sp_serialize` | `strpool.c:7-17,19-24,72-110,117-121,126-137` |
 
-> 注：`nm_proc_spawn`、`nm_tts_speak` 的**声明**见 3.1；其完整实现（常驻子进程 + 管道、离线 TTS 队列与后台朗读线程，对应 `plat.c:587-1185`）见 3.2 节末尾的完整源码。
+> 注：`sk_proc_spawn`、`sk_tts_speak` 的**声明**见 3.1；其完整实现（常驻子进程 + 管道、离线 TTS 队列与后台朗读线程，对应 `plat.c:587-1185`）见 3.2 节末尾的完整源码。
 
 ## 三、完整实现代码
 
 ### 3.1 `plat.h` 关键声明（typedef 与接口）
 
 ```h
-/* 目录枚举。返回的条目名属于 NmDir，下次 nm_dir_next 前有效；
+/* 目录枚举。返回的条目名属于 SkDir，下次 sk_dir_next 前有效；
  * "." 与 ".." 已跳过。顺序由文件系统决定，需要可复现就自己排序
  * （mapset_load / skedaddle_places_build 都先收集再 qsort）。 */
-typedef struct NmDir NmDir;
-NmDir      *nm_dir_open(const char *path);
-const char *nm_dir_next(NmDir *d);
-void        nm_dir_close(NmDir *d);
+typedef struct SkDir SkDir;
+SkDir      *sk_dir_open(const char *path);
+const char *sk_dir_next(SkDir *d);
+void        sk_dir_close(SkDir *d);
 
 /* 只读映射整个文件，长度写入 *out_len，返回基址；失败返回 NULL。
  * 空文件返回 NULL（与旧行为一致：size<=0 不当可映射）。 */
-void *nm_map_file(const char *path, size_t *out_len);
-void  nm_unmap_file(void *addr, size_t len);
+void *sk_map_file(const char *path, size_t *out_len);
+void  sk_unmap_file(void *addr, size_t len);
 
-/* 互斥锁（跨平台）。业务代码只调 nm_mutex_*，不直接碰 pthread / CRITICAL_SECTION。
- * 单一所有权：创建者负责 nm_mutex_destroy。锁内不要做阻塞/耗时操作。 */
-typedef struct NmMutex NmMutex;
-NmMutex *nm_mutex_create(void);
-void     nm_mutex_destroy(NmMutex *m);
-void     nm_mutex_lock(NmMutex *m);
-void     nm_mutex_unlock(NmMutex *m);
+/* 互斥锁（跨平台）。业务代码只调 sk_mutex_*，不直接碰 pthread / CRITICAL_SECTION。
+ * 单一所有权：创建者负责 sk_mutex_destroy。锁内不要做阻塞/耗时操作。 */
+typedef struct SkMutex SkMutex;
+SkMutex *sk_mutex_create(void);
+void     sk_mutex_destroy(SkMutex *m);
+void     sk_mutex_lock(SkMutex *m);
+void     sk_mutex_unlock(SkMutex *m);
 
 /* 条件变量（跨平台）。用来做"生产者-消费者"队列：等待方必须已持有
- * nm_mutex_lock，nm_cond_wait 返回时**重新持有**该锁。
- * 单一所有权：创建者负责 nm_cond_destroy。 */
-typedef struct NmCond NmCond;
-NmCond  *nm_cond_create(void);
-void     nm_cond_destroy(NmCond *c);
-void     nm_cond_wait(NmCond *c, NmMutex *m);   /* 释放锁 → 等信号 → 重获锁 */
-void     nm_cond_signal(NmCond *c);              /* 唤醒一个等待者 */
-void     nm_cond_broadcast(NmCond *c);           /* 唤醒全部等待者 */
+ * sk_mutex_lock，sk_cond_wait 返回时**重新持有**该锁。
+ * 单一所有权：创建者负责 sk_cond_destroy。 */
+typedef struct SkCond SkCond;
+SkCond  *sk_cond_create(void);
+void     sk_cond_destroy(SkCond *c);
+void     sk_cond_wait(SkCond *c, SkMutex *m);   /* 释放锁 → 等信号 → 重获锁 */
+void     sk_cond_signal(SkCond *c);              /* 唤醒一个等待者 */
+void     sk_cond_broadcast(SkCond *c);           /* 唤醒全部等待者 */
 
 /* 起一个脱离式（detached）线程跑 f(arg)。成功返回 0，失败返回 -1。
  * 线程自行结束，调用方不 join；f 内部自行处理自己的资源。 */
-int nm_thread_spawn(void (*f)(void *), void *arg);
+int sk_thread_spawn(void (*f)(void *), void *arg);
 
 /* 常驻子进程 + 管道（跨平台）
  *
@@ -80,44 +80,44 @@ int nm_thread_spawn(void (*f)(void *), void *arg);
  * 接一条管道，逐行喂文本。
  *
  * 用法：spawn → 反复 write → close（关管道让子进程看到 EOF 并退出）。
- * 单一所有权：创建者负责 nm_proc_close。 */
-typedef struct NmProc NmProc;
+ * 单一所有权：创建者负责 sk_proc_close。 */
+typedef struct SkProc SkProc;
 /* 起常驻子进程并把它的 stdin 接上管道。成功返回句柄，失败返回 NULL。
  * argv 必须以 NULL 结尾；argv[0] 是程序路径。 */
-NmProc *nm_proc_spawn(const char *exe, char *const argv[]);
+SkProc *sk_proc_spawn(const char *exe, char *const argv[]);
 /* 往子进程 stdin 写一段文本（不追加换行，调用方自己决定）。
  * 返回写入字节数；失败返回 -1。 */
-int     nm_proc_write(NmProc *p, const char *text);
+int     sk_proc_write(SkProc *p, const char *text);
 /* 关闭 stdin 并等子进程退出，释放句柄。p 为 NULL 时什么都不做。
  * 返回子进程退出码；取不到返回 -1。 */
-int     nm_proc_close(NmProc *p);
+int     sk_proc_close(SkProc *p);
 /* 子进程是否还活着。p 为 NULL 或已退出返回 0。 */
-int     nm_proc_alive(NmProc *p);
+int     sk_proc_alive(SkProc *p);
 
-uint64_t nm_now_ms(void);             /* 单调时钟，毫秒 */
-uint64_t nm_now_us(void);             /* 单调时钟，微秒（基准测试要亚毫秒精度） */
-void     nm_sleep_ms(unsigned ms);
-double   nm_peak_rss_mb(void);        /* 峰值驻留内存（MB） */
+uint64_t sk_now_ms(void);             /* 单调时钟，毫秒 */
+uint64_t sk_now_us(void);             /* 单调时钟，微秒（基准测试要亚毫秒精度） */
+void     sk_sleep_ms(unsigned ms);
+double   sk_peak_rss_mb(void);        /* 峰值驻留内存（MB） */
 
 /* ---------------- 语音播报（离线 TTS） ----------------
  * 跨平台离线发声：Windows 走 PowerShell + System.Speech（SAPI），
  * 其它平台按 PATH 探测 espeak-ng / espeak / say。真正的发声在分离线程里
- * 做（nm_thread_spawn），调用方（导航每帧推进）绝不被阻塞。
- * 设 NAVIMAP_TTS_DRYRUN=文件路径 时只把文本写进该文件、不真正发声，
+ * 做（sk_thread_spawn），调用方（导航每帧推进）绝不被阻塞。
+ * 设 SKEDADDLE_TTS_DRYRUN=文件路径 时只把文本写进该文件、不真正发声，
  * 用于无头自测（本机没有音频设备 / 没有 TTS 引擎时也能断言集成是否正确）。 */
-int  nm_tts_speak(const char *text);          /* 返回 1=已提交(或 dryrun 已写) / 0=无引擎 */
+int  sk_tts_speak(const char *text);          /* 返回 1=已提交(或 dryrun 已写) / 0=无引擎 */
 
 /* 逐平台字体候选链（宋体优先，理由见 render/font.c 的注释）。
  * 返回的数组与字符串都是静态存储，勿 free。 */
-const char *const *nm_font_candidates(size_t *n);
+const char *const *sk_font_candidates(size_t *n);
 ```
 
 ### 3.2 `plat.c` 实现
 
-**文件只读映射 `nm_map_file`（POSIX 用 `mmap`，Windows 用 `CreateFileMapping` + `MapViewOfFile`）：**
+**文件只读映射 `sk_map_file`（POSIX 用 `mmap`，Windows 用 `CreateFileMapping` + `MapViewOfFile`）：**
 
 ```c
-void *nm_map_file(const char *path, size_t *out_len)
+void *sk_map_file(const char *path, size_t *out_len)
 {
     if (!path) return NULL;
 #ifdef _WIN32
@@ -131,7 +131,7 @@ void *nm_map_file(const char *path, size_t *out_len)
     if (!m) return NULL;
     void *p = MapViewOfFile(m, FILE_MAP_READ, 0, 0, 0);
     if (!p) { CloseHandle(m); return NULL; }
-    if (!nm_map_reg_add(p, m)) {        /* 注册表满：视图仍然可用，句柄留在这里 */
+    if (!sk_map_reg_add(p, m)) {        /* 注册表满：视图仍然可用，句柄留在这里 */
         UnmapViewOfFile(p);
         CloseHandle(m);
         return NULL;
@@ -152,10 +152,10 @@ void *nm_map_file(const char *path, size_t *out_len)
 }
 ```
 
-**单调时钟 `nm_now_ms`（POSIX 用 `clock_gettime(CLOCK_MONOTONIC)`，Windows 用 `QueryPerformanceCounter`）：**
+**单调时钟 `sk_now_ms`（POSIX 用 `clock_gettime(CLOCK_MONOTONIC)`，Windows 用 `QueryPerformanceCounter`）：**
 
 ```c
-uint64_t nm_now_ms(void)
+uint64_t sk_now_ms(void)
 {
 #ifdef _WIN32
     static LARGE_INTEGER freq;
@@ -173,37 +173,37 @@ uint64_t nm_now_ms(void)
 }
 ```
 
-**并发层：不透明结构与 `nm_thread_spawn` 的 pthread / CreateThread 双实现（平台差异收口于此）。**
+**并发层：不透明结构与 `sk_thread_spawn` 的 pthread / CreateThread 双实现（平台差异收口于此）。**
 
 Windows 分支：
 
 ```c
-struct NmMutex { HANDLE h; };
+struct SkMutex { HANDLE h; };
 
-NmMutex *nm_mutex_create(void)
+SkMutex *sk_mutex_create(void)
 {
     HANDLE h = CreateMutexA(NULL, FALSE, NULL);
     if (!h) return NULL;
-    NmMutex *m = (NmMutex *)malloc(sizeof *m);
+    SkMutex *m = (SkMutex *)malloc(sizeof *m);
     if (!m) { CloseHandle(h); return NULL; }
     m->h = h;
     return m;
 }
 
-void nm_mutex_destroy(NmMutex *m)
+void sk_mutex_destroy(SkMutex *m)
 {
     if (!m) return;
     CloseHandle(m->h);
     free(m);
 }
 
-void nm_mutex_lock(NmMutex *m)
+void sk_mutex_lock(SkMutex *m)
 {
     if (!m) return;
     WaitForSingleObject(m->h, INFINITE);
 }
 
-void nm_mutex_unlock(NmMutex *m)
+void sk_mutex_unlock(SkMutex *m)
 {
     if (!m) return;
     ReleaseMutex(m->h);
@@ -211,15 +211,15 @@ void nm_mutex_unlock(NmMutex *m)
 
 /* 条件变量：Windows 用**自动重置事件** + 一个"世代计数"实现
  * "signal 只唤醒一个等待者"的语义。 */
-struct NmCond {
+struct SkCond {
     HANDLE ev;        /* 自动重置事件 */
-    LONG  gen;        /* 世代计数（由配对的 NmMutex 保护） */
+    LONG  gen;        /* 世代计数（由配对的 SkMutex 保护） */
     int   waiters;    /* 当前等待者数（broadcast 时要知道要唤醒几个） */
 };
 
-NmCond *nm_cond_create(void)
+SkCond *sk_cond_create(void)
 {
-    NmCond *c = (NmCond *)malloc(sizeof *c);
+    SkCond *c = (SkCond *)malloc(sizeof *c);
     if (!c) return NULL;
     c->ev = CreateEventA(NULL, FALSE, FALSE, NULL);   /* 自动重置、初始未置位 */
     if (!c->ev) { free(c); return NULL; }
@@ -228,48 +228,48 @@ NmCond *nm_cond_create(void)
     return c;
 }
 
-void nm_cond_destroy(NmCond *c)
+void sk_cond_destroy(SkCond *c)
 {
     if (!c) return;
     CloseHandle(c->ev);
     free(c);
 }
 
-void nm_cond_wait(NmCond *c, NmMutex *m)
+void sk_cond_wait(SkCond *c, SkMutex *m)
 {
     if (!c) return;
     LONG g = c->gen;
     c->waiters++;
-    nm_mutex_unlock(m);                 /* ★ 等待期间必须放锁，否则与唤醒者死锁 */
+    sk_mutex_unlock(m);                 /* ★ 等待期间必须放锁，否则与唤醒者死锁 */
     WaitForSingleObject(c->ev, INFINITE);
-    nm_mutex_lock(m);
+    sk_mutex_lock(m);
     while (c->gen == g) {
-        nm_mutex_unlock(m);
+        sk_mutex_unlock(m);
         WaitForSingleObject(c->ev, INFINITE);
-        nm_mutex_lock(m);
+        sk_mutex_lock(m);
     }
     c->waiters--;
 }
 
-void nm_cond_signal(NmCond *c)
+void sk_cond_signal(SkCond *c)
 {
     if (!c) return;
-    c->gen++;                           /* 由调用方持有的 NmMutex 保护 */
+    c->gen++;                           /* 由调用方持有的 SkMutex 保护 */
     SetEvent(c->ev);
 }
 
-void nm_cond_broadcast(NmCond *c)
+void sk_cond_broadcast(SkCond *c)
 {
     if (!c) return;
-    c->gen++;                           /* 由调用方持有的 NmMutex 保护 */
+    c->gen++;                           /* 由调用方持有的 SkMutex 保护 */
     for (int i = 0; i < c->waiters; i++) SetEvent(c->ev);
 }
 
-struct NmThreadArg { void (*f)(void *); void *arg; };
+struct SkThreadArg { void (*f)(void *); void *arg; };
 
-static DWORD WINAPI nm_thread_tramp(LPVOID p)
+static DWORD WINAPI sk_thread_tramp(LPVOID p)
 {
-    struct NmThreadArg *a = (struct NmThreadArg *)p;
+    struct SkThreadArg *a = (struct SkThreadArg *)p;
     void (*f)(void *) = a->f;
     void *arg = a->arg;
     free(a);
@@ -277,12 +277,12 @@ static DWORD WINAPI nm_thread_tramp(LPVOID p)
     return 0;
 }
 
-int nm_thread_spawn(void (*f)(void *), void *arg)
+int sk_thread_spawn(void (*f)(void *), void *arg)
 {
-    struct NmThreadArg *a = (struct NmThreadArg *)malloc(sizeof *a);
+    struct SkThreadArg *a = (struct SkThreadArg *)malloc(sizeof *a);
     if (!a) return -1;
     a->f = f; a->arg = arg;
-    HANDLE h = CreateThread(NULL, 0, nm_thread_tramp, a, 0, NULL);
+    HANDLE h = CreateThread(NULL, 0, sk_thread_tramp, a, 0, NULL);
     if (!h) { free(a); return -1; }
     CloseHandle(h);          /* 线程自己会跑完，句柄不必留着 */
     return 0;
@@ -292,53 +292,53 @@ int nm_thread_spawn(void (*f)(void *), void *arg)
 POSIX 分支（pthread 收口）：
 
 ```c
-struct NmMutex { pthread_mutex_t m; };
+struct SkMutex { pthread_mutex_t m; };
 
-NmMutex *nm_mutex_create(void)
+SkMutex *sk_mutex_create(void)
 {
-    NmMutex *m = (NmMutex *)malloc(sizeof *m);
+    SkMutex *m = (SkMutex *)malloc(sizeof *m);
     if (!m) return NULL;
     if (pthread_mutex_init(&m->m, NULL) != 0) { free(m); return NULL; }
     return m;
 }
 
-void nm_mutex_destroy(NmMutex *m)
+void sk_mutex_destroy(SkMutex *m)
 {
     if (!m) return;
     pthread_mutex_destroy(&m->m);
     free(m);
 }
 
-void nm_mutex_lock(NmMutex *m)
+void sk_mutex_lock(SkMutex *m)
 {
     if (!m) return;
     pthread_mutex_lock(&m->m);
 }
 
-void nm_mutex_unlock(NmMutex *m)
+void sk_mutex_unlock(SkMutex *m)
 {
     if (!m) return;
     pthread_mutex_unlock(&m->m);
 }
 
-struct NmCond { pthread_cond_t c; };
+struct SkCond { pthread_cond_t c; };
 
-NmCond *nm_cond_create(void)
+SkCond *sk_cond_create(void)
 {
-    NmCond *c = (NmCond *)malloc(sizeof *c);
+    SkCond *c = (SkCond *)malloc(sizeof *c);
     if (!c) return NULL;
     if (pthread_cond_init(&c->c, NULL) != 0) { free(c); return NULL; }
     return c;
 }
 
-void nm_cond_destroy(NmCond *c)
+void sk_cond_destroy(SkCond *c)
 {
     if (!c) return;
     pthread_cond_destroy(&c->c);
     free(c);
 }
 
-void nm_cond_wait(NmCond *c, NmMutex *m)
+void sk_cond_wait(SkCond *c, SkMutex *m)
 {
     if (!c) return;
     /* 契约：调用方**已持有** m（pthread_cond_wait 自己管放锁/重获）。 */
@@ -351,23 +351,23 @@ void nm_cond_wait(NmCond *c, NmMutex *m)
     }
 }
 
-void nm_cond_signal(NmCond *c)
+void sk_cond_signal(SkCond *c)
 {
     if (!c) return;
     pthread_cond_signal(&c->c);
 }
 
-void nm_cond_broadcast(NmCond *c)
+void sk_cond_broadcast(SkCond *c)
 {
     if (!c) return;
     pthread_cond_broadcast(&c->c);
 }
 
-struct NmThreadArg { void (*f)(void *); void *arg; };
+struct SkThreadArg { void (*f)(void *); void *arg; };
 
-static void *nm_thread_tramp(void *p)
+static void *sk_thread_tramp(void *p)
 {
-    struct NmThreadArg *a = (struct NmThreadArg *)p;
+    struct SkThreadArg *a = (struct SkThreadArg *)p;
     void (*f)(void *) = a->f;
     void *arg = a->arg;
     free(a);
@@ -375,22 +375,22 @@ static void *nm_thread_tramp(void *p)
     return NULL;
 }
 
-int nm_thread_spawn(void (*f)(void *), void *arg)
+int sk_thread_spawn(void (*f)(void *), void *arg)
 {
-    struct NmThreadArg *a = (struct NmThreadArg *)malloc(sizeof *a);
+    struct SkThreadArg *a = (struct SkThreadArg *)malloc(sizeof *a);
     if (!a) return -1;
     a->f = f; a->arg = arg;
     pthread_t t;
-    if (pthread_create(&t, NULL, nm_thread_tramp, a) != 0) { free(a); return -1; }
+    if (pthread_create(&t, NULL, sk_thread_tramp, a) != 0) { free(a); return -1; }
     pthread_detach(t);
     return 0;
 }
 ```
 
-**`NmDir` 与 `NmProc` 的真实结构（同样只在 `plat.c` 内可见）：**
+**`SkDir` 与 `SkProc` 的真实结构（同样只在 `plat.c` 内可见）：**
 
 ```c
-struct NmDir {
+struct SkDir {
 #ifdef _WIN32
     HANDLE           h;
     WIN32_FIND_DATAA fd;
@@ -402,7 +402,7 @@ struct NmDir {
 };
 
 #ifdef _WIN32
-struct NmProc {
+struct SkProc {
     HANDLE  hProc;
     HANDLE  hThread;
     HANDLE  hIn;        /* 写端（我们的 stdin 管道） */
@@ -410,7 +410,7 @@ struct NmProc {
     DWORD   code;
 };
 #else
-struct NmProc {
+struct SkProc {
     pid_t pid;
     int   fd;           /* 写端 */
     int   closed;
@@ -419,10 +419,10 @@ struct NmProc {
 #endif
 ```
 
-**字体候选链 `nm_font_candidates`（首次调用缓存，先内置 Noto 后系统字体兜底）：**
+**字体候选链 `sk_font_candidates`（首次调用缓存，先内置 Noto 后系统字体兜底）：**
 
 ```c
-const char *const *nm_font_candidates(size_t *n)
+const char *const *sk_font_candidates(size_t *n)
 {
     if (!s_cand_init) {
         s_cand_init = 1;
@@ -457,7 +457,7 @@ const char *const *nm_font_candidates(size_t *n)
 > 完整源码 · `src/utils/plat.c:587-1185`（常驻子进程 + 管道、离线 TTS 队列与后台朗读线程）
 
 ```c
-NmProc *nm_proc_spawn(const char *exe, char *const argv[])
+SkProc *sk_proc_spawn(const char *exe, char *const argv[])
 {
     if (!exe || !argv || !argv[0]) return NULL;
 #ifdef _WIN32
@@ -510,7 +510,7 @@ NmProc *nm_proc_spawn(const char *exe, char *const argv[])
     CloseHandle(rd);
     if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
 
-    NmProc *p = (NmProc *)malloc(sizeof *p);
+    SkProc *p = (SkProc *)malloc(sizeof *p);
     if (!p) { CloseHandle(pi.hProcess); CloseHandle(pi.hThread); CloseHandle(wr); return NULL; }
     p->hProc = pi.hProcess;
     p->hThread = pi.hThread;
@@ -535,7 +535,7 @@ NmProc *nm_proc_spawn(const char *exe, char *const argv[])
         _exit(127);
     }
     close(fds[0]);
-    NmProc *p = (NmProc *)malloc(sizeof *p);
+    SkProc *p = (SkProc *)malloc(sizeof *p);
     if (!p) { close(fds[1]); kill(pid, SIGKILL); waitpid(pid, NULL, 0); return NULL; }
     p->pid = pid;
     p->fd = fds[1];
@@ -545,7 +545,7 @@ NmProc *nm_proc_spawn(const char *exe, char *const argv[])
 #endif
 }
 
-int nm_proc_write(NmProc *p, const char *text)
+int sk_proc_write(SkProc *p, const char *text)
 {
     if (!p || !text || p->closed) return -1;
 #ifdef _WIN32
@@ -564,7 +564,7 @@ int nm_proc_write(NmProc *p, const char *text)
 #endif
 }
 
-int nm_proc_alive(NmProc *p)
+int sk_proc_alive(SkProc *p)
 {
     if (!p) return 0;
 #ifdef _WIN32
@@ -578,7 +578,7 @@ int nm_proc_alive(NmProc *p)
 #endif
 }
 
-int nm_proc_close(NmProc *p)
+int sk_proc_close(SkProc *p)
 {
     if (!p) return -1;
 #ifdef _WIN32
@@ -603,7 +603,7 @@ int nm_proc_close(NmProc *p)
 #endif
 }
 
-uint64_t nm_now_ms(void)
+uint64_t sk_now_ms(void)
 {
 #ifdef _WIN32
     static LARGE_INTEGER freq;
@@ -620,7 +620,7 @@ uint64_t nm_now_ms(void)
 #endif
 }
 
-uint64_t nm_now_us(void)
+uint64_t sk_now_us(void)
 {
 #ifdef _WIN32
     static LARGE_INTEGER freq;
@@ -637,7 +637,7 @@ uint64_t nm_now_us(void)
 #endif
 }
 
-void nm_sleep_ms(unsigned ms)
+void sk_sleep_ms(unsigned ms)
 {
 #ifdef _WIN32
     Sleep(ms);
@@ -649,7 +649,7 @@ void nm_sleep_ms(unsigned ms)
 #endif
 }
 
-double nm_peak_rss_mb(void)
+double sk_peak_rss_mb(void)
 {
 #ifdef _WIN32
     PROCESS_MEMORY_COUNTERS pmc;
@@ -688,7 +688,7 @@ double nm_peak_rss_mb(void)
 /* ---- DRYRUN：无头自测用，把"发声"重定向到文件（确定性） ---- */
 static int tts_dryrun_write(const char *text)
 {
-    const char *dry = getenv("NAVIMAP_TTS_DRYRUN");
+    const char *dry = getenv("SKEDADDLE_TTS_DRYRUN");
     if (!dry || !*dry) return 0;
     FILE *f = fopen(dry, "ab");
     if (!f) return 0;
@@ -703,11 +703,11 @@ static void tts_speak_once(const char *text)
 {
 #ifdef _WIN32
     char ps[1024];
-    if (nm_find_in_path("powershell.exe", ps, sizeof(ps)) != 0) return;
+    if (sk_find_in_path("powershell.exe", ps, sizeof(ps)) != 0) return;
     char tmpl[1024];
-    int k = snprintf(tmpl, sizeof(tmpl), "%s/navimap_tts_%d_%llu.ps1",
-                     nm_temp_dir(), (int)nm_get_pid(),
-                     (unsigned long long)nm_now_ms());
+    int k = snprintf(tmpl, sizeof(tmpl), "%s/skedaddle_tts_%d_%llu.ps1",
+                     sk_temp_dir(), (int)sk_get_pid(),
+                     (unsigned long long)sk_now_ms());
     if (k < 0 || (size_t)k >= sizeof(tmpl)) return;
     FILE *f = fopen(tmpl, "wb");
     if (!f) return;
@@ -724,25 +724,25 @@ static void tts_speak_once(const char *text)
     fclose(f);
     char *argv[] = { ps, "-NoProfile", "-NonInteractive", "-File", tmpl, NULL };
     int code = 0;
-    nm_spawn_wait(ps, argv, &code);
-    nm_unlink(tmpl);
+    sk_spawn_wait(ps, argv, &code);
+    sk_unlink(tmpl);
 #else
     char exe[1024];
-    if (nm_find_in_path("spd-say", exe, sizeof(exe)) == 0) {
+    if (sk_find_in_path("spd-say", exe, sizeof(exe)) == 0) {
         char *argv[] = { exe, "-l", "zh", "-t", (char *)text, NULL };
-        int c = 0; nm_spawn_wait(exe, argv, &c); return;
+        int c = 0; sk_spawn_wait(exe, argv, &c); return;
     }
-    if (nm_find_in_path("espeak-ng", exe, sizeof(exe)) == 0) {
+    if (sk_find_in_path("espeak-ng", exe, sizeof(exe)) == 0) {
         char *argv[] = { exe, "-v", "zh", "-s", "160", (char *)text, NULL };
-        int c = 0; nm_spawn_wait(exe, argv, &c); return;
+        int c = 0; sk_spawn_wait(exe, argv, &c); return;
     }
-    if (nm_find_in_path("espeak", exe, sizeof(exe)) == 0) {
+    if (sk_find_in_path("espeak", exe, sizeof(exe)) == 0) {
         char *argv[] = { exe, "-v", "zh", "-s", "160", (char *)text, NULL };
-        int c = 0; nm_spawn_wait(exe, argv, &c); return;
+        int c = 0; sk_spawn_wait(exe, argv, &c); return;
     }
-    if (nm_find_in_path("say", exe, sizeof(exe)) == 0) {
+    if (sk_find_in_path("say", exe, sizeof(exe)) == 0) {
         char *argv[] = { exe, (char *)text, NULL };
-        int c = 0; nm_spawn_wait(exe, argv, &c); return;
+        int c = 0; sk_spawn_wait(exe, argv, &c); return;
     }
 #endif
     /* 没有任何引擎：静默（无头环境不报错） */
@@ -750,7 +750,7 @@ static void tts_speak_once(const char *text)
 
 /* ---- 常驻会话（Windows）：一个 powershell 进程，逐行喂文本 ---- */
 #ifdef _WIN32
-static NmProc *g_sapi = NULL;      /* 常驻会话（NULL = 还没起或已坏） */
+static SkProc *g_sapi = NULL;      /* 常驻会话（NULL = 还没起或已坏） */
 static char     g_sapi_script[1024]; /* 脚本文件路径（NULL 串 = 还没写） */
 
 /* ★ 为什么用 `-File <脚本>` 而不是 `-Command <脚本>`：
@@ -787,7 +787,7 @@ static int sapi_script_write(void)
 {
     if (g_sapi_script[0]) return 1;
     int k = snprintf(g_sapi_script, sizeof g_sapi_script,
-                     "%s/navimap_tts_session_%d.ps1", nm_temp_dir(), (int)nm_get_pid());
+                     "%s/skedaddle_tts_session_%d.ps1", sk_temp_dir(), (int)sk_get_pid());
     if (k < 0 || (size_t)k >= sizeof g_sapi_script) { g_sapi_script[0] = '\0'; return 0; }
     FILE *f = fopen(g_sapi_script, "wb");
     if (!f) { g_sapi_script[0] = '\0'; return 0; }
@@ -800,19 +800,19 @@ static int sapi_script_write(void)
 
 static int sapi_session_start(void)
 {
-    if (g_sapi && nm_proc_alive(g_sapi)) return 1;
-    if (g_sapi) { nm_proc_close(g_sapi); g_sapi = NULL; }
+    if (g_sapi && sk_proc_alive(g_sapi)) return 1;
+    if (g_sapi) { sk_proc_close(g_sapi); g_sapi = NULL; }
 
     char ps[1024];
-    if (nm_find_in_path("powershell.exe", ps, sizeof(ps)) != 0) return 0;
+    if (sk_find_in_path("powershell.exe", ps, sizeof(ps)) != 0) return 0;
     if (!sapi_script_write()) return 0;
 
     char *argv[] = { ps, "-NoProfile", "-NonInteractive", "-File", g_sapi_script, NULL };
-    g_sapi = nm_proc_spawn(ps, argv);
+    g_sapi = sk_proc_spawn(ps, argv);
     if (!g_sapi) return 0;
     /* 探测会话是否真的起来了：写一行空行，若管道已断则写失败。 */
-    if (nm_proc_write(g_sapi, "\n") < 0) {
-        nm_proc_close(g_sapi);
+    if (sk_proc_write(g_sapi, "\n") < 0) {
+        sk_proc_close(g_sapi);
         g_sapi = NULL;
         return 0;
     }
@@ -822,16 +822,16 @@ static int sapi_session_start(void)
 
 /* ---- POSIX 常驻会话：festival 从 stdin 读文本；其余是一次性的 ---- */
 #ifndef _WIN32
-static NmProc *g_festival = NULL;
+static SkProc *g_festival = NULL;
 
 static int festival_session_start(void)
 {
-    if (g_festival && nm_proc_alive(g_festival)) return 1;
-    if (g_festival) { nm_proc_close(g_festival); g_festival = NULL; }
+    if (g_festival && sk_proc_alive(g_festival)) return 1;
+    if (g_festival) { sk_proc_close(g_festival); g_festival = NULL; }
     char exe[1024];
-    if (nm_find_in_path("festival", exe, sizeof(exe)) != 0) return 0;
+    if (sk_find_in_path("festival", exe, sizeof(exe)) != 0) return 0;
     char *argv[] = { exe, "--tts", NULL };
-    g_festival = nm_proc_spawn(exe, argv);
+    g_festival = sk_proc_spawn(exe, argv);
     return g_festival != NULL;
 }
 #endif
@@ -848,9 +848,9 @@ static void tts_backend_speak(const char *text)
             buf[k++] = (*p == '\n' || *p == '\r') ? ' ' : *p;
         }
         buf[k] = '\0';
-        if (nm_proc_write(g_sapi, buf) > 0 && nm_proc_write(g_sapi, "\n") > 0) return;
+        if (sk_proc_write(g_sapi, buf) > 0 && sk_proc_write(g_sapi, "\n") > 0) return;
         /* 写失败 ⇒ 会话坏了 ⇒ 回退单句模式（OsmAnd: sessionBroken） */
-        nm_proc_close(g_sapi);
+        sk_proc_close(g_sapi);
         g_sapi = NULL;
     }
     tts_speak_once(text);
@@ -860,9 +860,9 @@ static void tts_backend_speak(const char *text)
      * 原先漏了这步调用 ⇒ festival_session_start 成了死函数、且 Linux 下
      * festival 路径永远走不到（g_festival 恒为 NULL）。 */
     if (!g_festival) festival_session_start();
-    if (g_festival && nm_proc_alive(g_festival)) {
-        if (nm_proc_write(g_festival, text) > 0 && nm_proc_write(g_festival, "\n") > 0) return;
-        nm_proc_close(g_festival);
+    if (g_festival && sk_proc_alive(g_festival)) {
+        if (sk_proc_write(g_festival, text) > 0 && sk_proc_write(g_festival, "\n") > 0) return;
+        sk_proc_close(g_festival);
         g_festival = NULL;
     }
     tts_speak_once(text);
@@ -878,9 +878,9 @@ typedef struct TtsItem {
 } TtsItem;
 
 static struct {
-    NmMutex *lock;
-    NmCond  *not_empty;     /* 有文本可取 */
-    NmCond  *not_full;      /* 队列有空间 */
+    SkMutex *lock;
+    SkCond  *not_empty;     /* 有文本可取 */
+    SkCond  *not_full;      /* 队列有空间 */
     TtsItem *head, *tail;
     int      count;
     int      running;       /* worker 是否已起 */
@@ -893,14 +893,14 @@ static struct {
 /* ★ 受理计数：计数点放在**入队之前**、调用线程内、无竞争。
  *   不能读队列长度 —— 后台线程会异步喝空队列，"入队后立刻读 size()"是
  *   与活消费者赛跑（OsmAnd 踩过同一个坑，见 Speech.OFFERED 的注释）。 */
-int nm_tts_offered_count(void) { return g_tts.offered; }
+int sk_tts_offered_count(void) { return g_tts.offered; }
 
 /* ★ 已交付引擎计数：计数点在**把文本交给引擎之后**、后台线程内。
  *   与"受理"配对可断言"队列真的被消费了"—— 只看受理数证明不了 worker
  *   真的在跑（可能线程没起来）。
  *   ★ 注意它**不等于"已播完"**：常驻会话下"写入管道"就返回了，合成还在
- *     子进程那边进行中。要等真正播完用 nm_tts_flush()。 */
-int nm_tts_delivered_count(void) { return g_tts.delivered; }
+ *     子进程那边进行中。要等真正播完用 sk_tts_flush()。 */
+int sk_tts_delivered_count(void) { return g_tts.delivered; }
 
 /* ★ 等待"已受理的句子全部播完"。实现：关掉常驻会话的写端 ⇒ 子进程读到
  *   EOF ⇒ 循环退出 ⇒ 子进程退出前会把当前句说完。于是"子进程退出"
@@ -908,25 +908,25 @@ int nm_tts_delivered_count(void) { return g_tts.delivered; }
  *   返回 0 = 已排空并播完；-1 = 没有会话可关（无引擎）。
  *   ★ 这是判定"播报真的出声了"的唯一可靠手段：常驻会话下写入即返回，
  *     看写入返回证明不了合成完成。 */
-int nm_tts_flush(void)
+int sk_tts_flush(void)
 {
     if (!g_tts.running) return -1;
     /* 先等队列排空（worker 把最后一句也交给引擎） */
     for (int i = 0; i < 2000; i++) {
-        nm_mutex_lock(g_tts.lock);
+        sk_mutex_lock(g_tts.lock);
         int empty = (g_tts.count == 0 && g_tts.inflight == 0);
-        nm_mutex_unlock(g_tts.lock);
+        sk_mutex_unlock(g_tts.lock);
         if (empty) break;
-        nm_sleep_ms(5);
+        sk_sleep_ms(5);
     }
 #ifdef _WIN32
     if (g_sapi) {
-        nm_proc_close(g_sapi);      /* 关写端 ⇒ 子进程读到 EOF ⇒ 说完当前句后退出 */
+        sk_proc_close(g_sapi);      /* 关写端 ⇒ 子进程读到 EOF ⇒ 说完当前句后退出 */
         g_sapi = NULL;
     }
 #else
     if (g_festival) {
-        nm_proc_close(g_festival);
+        sk_proc_close(g_festival);
         g_festival = NULL;
     }
 #endif
@@ -961,23 +961,23 @@ static void tts_worker(void *p)
 {
     (void)p;
     for (;;) {
-        nm_mutex_lock(g_tts.lock);
+        sk_mutex_lock(g_tts.lock);
         while (g_tts.count == 0 && !g_tts.stop)
-            nm_cond_wait(g_tts.not_empty, g_tts.lock);
-        if (g_tts.count == 0 && g_tts.stop) { nm_mutex_unlock(g_tts.lock); break; }
+            sk_cond_wait(g_tts.not_empty, g_tts.lock);
+        if (g_tts.count == 0 && g_tts.stop) { sk_mutex_unlock(g_tts.lock); break; }
         char *text = tts_queue_pop();
         g_tts.inflight = 1;          /* 取走即算"在飞"（flush 据此判断没排空） */
-        nm_cond_signal(g_tts.not_full);
-        nm_mutex_unlock(g_tts.lock);
+        sk_cond_signal(g_tts.not_full);
+        sk_mutex_unlock(g_tts.lock);
 
         if (text) {
             tts_backend_speak(text);
             free(text);
-            nm_mutex_lock(g_tts.lock);
+            sk_mutex_lock(g_tts.lock);
             g_tts.delivered++;
             g_tts.inflight = 0;
-            nm_cond_signal(g_tts.not_full);
-            nm_mutex_unlock(g_tts.lock);
+            sk_cond_signal(g_tts.not_full);
+            sk_mutex_unlock(g_tts.lock);
         }
     }
 }
@@ -985,19 +985,19 @@ static void tts_worker(void *p)
 static int tts_queue_init(void)
 {
     if (g_tts.running) return 1;
-    g_tts.lock      = nm_mutex_create();
-    g_tts.not_empty = nm_cond_create();
-    g_tts.not_full  = nm_cond_create();
+    g_tts.lock      = sk_mutex_create();
+    g_tts.not_empty = sk_cond_create();
+    g_tts.not_full  = sk_cond_create();
     if (!g_tts.lock || !g_tts.not_empty || !g_tts.not_full) return 0;
     g_tts.head = g_tts.tail = NULL;
     g_tts.count = 0;
     g_tts.stop = 0;
     g_tts.running = 1;
-    if (nm_thread_spawn(tts_worker, NULL) != 0) { g_tts.running = 0; return 0; }
+    if (sk_thread_spawn(tts_worker, NULL) != 0) { g_tts.running = 0; return 0; }
     return 1;
 }
 
-int nm_tts_speak(const char *text)
+int sk_tts_speak(const char *text)
 {
     if (!text || !*text) return 0;
 
@@ -1005,7 +1005,7 @@ int nm_tts_speak(const char *text)
     if (tts_dryrun_write(text)) return 1;
 
     /* 本机没有可用引擎就不受理（无头环境静默） */
-    if (!nm_tts_available()) return 0;
+    if (!sk_tts_available()) return 0;
 
     if (!tts_queue_init()) {
         /* 起不了队列（内存不足等极端情况）⇒ 退回"每句一个进程"的旧行为。
@@ -1014,9 +1014,9 @@ int nm_tts_speak(const char *text)
         return 1;
     }
 
-    char *copy = nm_strdup(text);
+    char *copy = sk_strdup(text);
     if (!copy) return 0;
-    nm_mutex_lock(g_tts.lock);
+    sk_mutex_lock(g_tts.lock);
     g_tts.offered++;
     /* 队列满 ⇒ 丢掉最老的（导航播报宁可少一句也不要延迟堆积） */
     while (g_tts.count >= TTS_QUEUE_MAX) {
@@ -1025,23 +1025,23 @@ int nm_tts_speak(const char *text)
         free(old);
     }
     tts_queue_push(copy);
-    nm_cond_signal(g_tts.not_empty);
-    nm_mutex_unlock(g_tts.lock);
+    sk_cond_signal(g_tts.not_empty);
+    sk_mutex_unlock(g_tts.lock);
     return 1;
 }
 
-int nm_tts_available(void)
+int sk_tts_available(void)
 {
 #ifdef _WIN32
     char exe[1024];
-    return nm_find_in_path("powershell.exe", exe, sizeof(exe)) == 0 ? 1 : 0;
+    return sk_find_in_path("powershell.exe", exe, sizeof(exe)) == 0 ? 1 : 0;
 #else
     char exe[1024];
-    if (nm_find_in_path("spd-say", exe, sizeof(exe)) == 0) return 1;
-    if (nm_find_in_path("espeak-ng", exe, sizeof(exe)) == 0) return 1;
-    if (nm_find_in_path("espeak",   exe, sizeof(exe)) == 0) return 1;
-    if (nm_find_in_path("festival", exe, sizeof(exe)) == 0) return 1;
-    if (nm_find_in_path("say",      exe, sizeof(exe)) == 0) return 1;
+    if (sk_find_in_path("spd-say", exe, sizeof(exe)) == 0) return 1;
+    if (sk_find_in_path("espeak-ng", exe, sizeof(exe)) == 0) return 1;
+    if (sk_find_in_path("espeak",   exe, sizeof(exe)) == 0) return 1;
+    if (sk_find_in_path("festival", exe, sizeof(exe)) == 0) return 1;
+    if (sk_find_in_path("say",      exe, sizeof(exe)) == 0) return 1;
     return 0;
 #endif
 }
@@ -1050,7 +1050,7 @@ int nm_tts_available(void)
  * ★ **已弃用**：导航播报改走 route/voice.c 的"速度 × 秒数"模型
  *   （抄 OsmAnd 的 AnnounceTimeDistances），高速上固定 300 m 会来不及。
  *   这里保留是为了不破坏外部调用方与既有自测，新代码不要再用。 */
-int nm_tts_tier_for_distance(double to_go_m)
+int sk_tts_tier_for_distance(double to_go_m)
 {
     if (to_go_m <= 60.0)  return 2;   /* 立即层：即将转向 */
     if (to_go_m <= 300.0) return 1;   /* 接近层：提前预告 */
@@ -1065,18 +1065,18 @@ int nm_tts_tier_for_distance(double to_go_m)
  * 本机（UOS 20 / glibc 2.28.34-deepin1 / aarch64）实测：
  *   glibc 会动态调整 mmap_threshold —— 每释放一个 mmap 大块，阈值就被抬到该块大小。
  *   于是之后十几 MB 的数组不再走 mmap，改从 brk 主堆分配，而这条路径在本机不可靠，
- *   表现为某个函数里出现"不可能的取值"并 SIGSEGV（上一版 NavMap 正是崩在
+ *   表现为某个函数里出现"不可能的取值"并 SIGSEGV（上一版 Skedaddle 正是崩在
  *   append_block_to_map）。进程启动时钉死分配器即可，与具体取值无关，
  *   "显式设置这两个参数"这件事本身才是关键（置上 no_dyn_threshold）。
  * ------------------------------------------------------------------------- */
-#define NM_MMAP_THRESHOLD_BYTES (128 * 1024)
+#define SK_MMAP_THRESHOLD_BYTES (128 * 1024)
 
 /* 只读文件映射；返回映射地址，长度写入 *out_len。失败返回 NULL。
  * 实现走平台层（utils/plat.c）：POSIX mmap / Windows CreateFileMapping。 */
-void *nm_mmap_file(const char *path, size_t *out_len);
+void *sk_mmap_file(const char *path, size_t *out_len);
 
 /* 解除映射（Windows 上还要关掉映射句柄，所以地址和长度都要原样传回）。 */
-int nm_munmap(void *addr, size_t len);
+int sk_munmap(void *addr, size_t len);
 ```
 
 ```c
@@ -1093,25 +1093,25 @@ int nm_munmap(void *addr, size_t len);
  *   是 GCC/Clang 的（MSVC 没有）。两个条件都不满足时整段消失——不能留个
  *   空函数，-Wall -Wextra 会把未使用的 static 函数当警告（零警告门禁）。
  *
- * 映射本身走平台层（nm_map_file/nm_unmap_file）：POSIX 是 mmap，
+ * 映射本身走平台层（sk_map_file/sk_unmap_file）：POSIX 是 mmap，
  * Windows 是 CreateFileMapping + MapViewOfFile。 */
 #if !defined(_WIN32) && defined(M_MMAP_THRESHOLD) && defined(__GNUC__)
 __attribute__((constructor(101)))
-static void nm_pin_allocator(void)
+static void sk_pin_allocator(void)
 {
-    mallopt(M_MMAP_THRESHOLD, NM_MMAP_THRESHOLD_BYTES);
+    mallopt(M_MMAP_THRESHOLD, SK_MMAP_THRESHOLD_BYTES);
     mallopt(M_TRIM_THRESHOLD, -1);
 }
 #endif
 
-void *nm_mmap_file(const char *path, size_t *out_len)
+void *sk_mmap_file(const char *path, size_t *out_len)
 {
-    return nm_map_file(path, out_len);
+    return sk_map_file(path, out_len);
 }
 
-int nm_munmap(void *addr, size_t len)
+int sk_munmap(void *addr, size_t len)
 {
-    nm_unmap_file(addr, len);
+    sk_unmap_file(addr, len);
     return 0;
 }
 ```
@@ -1259,15 +1259,15 @@ void sp_serialize(StrPool *p, uint8_t **out, size_t *out_len)
 
 ## 四、与其他功能之间的联系
 
-- **被几乎所有模块使用**：`graph_build.c`/`route.c`/`paint.c`/`ui_qt/*` 只调 `nm_*` 接口。`nm_font_candidates` 被 `render/font.c` 组建字体集；`NmMutex`/`NmCond` 支撑 TTS 后台朗读线程与并发加载；`nm_map_file`（经 `nm_mmap_file`）是所有大文件（nodes.bin / 边表）只读映射的底座。
-- **与 L1 / L3 交汇**：`StrPool` 是 L3 PBF 路名去重后的落盘容器（`names.bin`，`sp_serialize` 输出 `[u32 count][u32 off[count+1]][bytes]`）；`nm_now_ms`/`nm_thread_spawn` 在 L4 / L5 的并行建图与瓦片加载中反复出现。
-- **与 L11 导航语音**：`nm_tts_speak` / `nm_tts_flush` 依赖 `nm_thread_spawn` + `NmMutex`/`NmCond` 实现后台串行朗读线程，调用方（导航每帧推进）绝不被阻塞。
-- **链接纪律**：`plat.c` 的线程用 pthread 实现，故 `-pthread` 由 `navmap_plat` 库统一承载（`CMakeLists.txt` 相关目标）。漏挂会在链接 `skedaddle_tts_selftest` 时报 `pthread_create` 未定义。
+- **被几乎所有模块使用**：`graph_build.c`/`route.c`/`paint.c`/`ui_qt/*` 只调 `sk_*` 接口。`sk_font_candidates` 被 `render/font.c` 组建字体集；`SkMutex`/`SkCond` 支撑 TTS 后台朗读线程与并发加载；`sk_map_file`（经 `sk_mmap_file`）是所有大文件（nodes.bin / 边表）只读映射的底座。
+- **与 L1 / L3 交汇**：`StrPool` 是 L3 PBF 路名去重后的落盘容器（`names.bin`，`sp_serialize` 输出 `[u32 count][u32 off[count+1]][bytes]`）；`sk_now_ms`/`sk_thread_spawn` 在 L4 / L5 的并行建图与瓦片加载中反复出现。
+- **与 L11 导航语音**：`sk_tts_speak` / `sk_tts_flush` 依赖 `sk_thread_spawn` + `SkMutex`/`SkCond` 实现后台串行朗读线程，调用方（导航每帧推进）绝不被阻塞。
+- **链接纪律**：`plat.c` 的线程用 pthread 实现，故 `-pthread` 由 `skedaddle_plat` 库统一承载（`CMakeLists.txt` 相关目标）。漏挂会在链接 `skedaddle_tts_selftest` 时报 `pthread_create` 未定义。
 - **与 L13 架构门禁**：业务代码零 `#ifdef _WIN32` 是跨平台门禁的验收点之一（`cross-platform-portability-audit` 思路）。
 
 ## 五、演示、练习与验收
 
 - **演示**：运行 `./build_rel/skedaddle_plat_selftest`。它全接口自验收（路径、文件映射、互斥/条件变量、线程、时间、字体链、TTS dryrun 等），正反双向断言契约。
-- **练习**：在 `plat.c` 里加一个 `nm_sleep_ms`（已存在，可仿写 `nm_now_us` 之类的新工具），并在一个 selftest 里调用它——全程不碰任何业务 `.c`。验证 `-pthread` 只在 `navmap_plat` 挂一次：故意在别的库漏掉，看链接 `skedaddle_tts_selftest` 报 `pthread_create` 未定义。
-- **阅读验证**：直接读源码确认——`nm_thread_spawn` 在 POSIX 下调 `pthread_create` 并 `pthread_detach`；`nm_pin_allocator` 用 `constructor(101)` 钉死 `M_MMAP_THRESHOLD=128*1024`；`sp_intern` 对空串/NULL 返回 `SP_EMPTY_ID`（0），`sp_get` 对 id 0 / 越界返回 `""`。
-- **验收**：能在不碰业务代码的前提下新增一个跨平台小工具函数，并解释 `-pthread` 为何只在 `navmap_plat` 挂一次、`nm_pin_allocator` 为何要钉死分配器、`StrPool` 为何 id 0 固定为"无名"。
+- **练习**：在 `plat.c` 里加一个 `sk_sleep_ms`（已存在，可仿写 `sk_now_us` 之类的新工具），并在一个 selftest 里调用它——全程不碰任何业务 `.c`。验证 `-pthread` 只在 `skedaddle_plat` 挂一次：故意在别的库漏掉，看链接 `skedaddle_tts_selftest` 报 `pthread_create` 未定义。
+- **阅读验证**：直接读源码确认——`sk_thread_spawn` 在 POSIX 下调 `pthread_create` 并 `pthread_detach`；`sk_pin_allocator` 用 `constructor(101)` 钉死 `M_MMAP_THRESHOLD=128*1024`；`sp_intern` 对空串/NULL 返回 `SP_EMPTY_ID`（0），`sp_get` 对 id 0 / 越界返回 `""`。
+- **验收**：能在不碰业务代码的前提下新增一个跨平台小工具函数，并解释 `-pthread` 为何只在 `skedaddle_plat` 挂一次、`sk_pin_allocator` 为何要钉死分配器、`StrPool` 为何 id 0 固定为"无名"。

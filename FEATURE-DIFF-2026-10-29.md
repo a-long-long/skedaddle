@@ -1,7 +1,7 @@
-# 功能差异：osmand-app vs navimap（2026-10-29 更新）
+# 功能差异：osmand-app vs skedaddle（2026-10-29 更新）
 
 > 对照方 A = `/home/along/osmand-app`（OsmAnd 完整产品家族；本机可直接对照的是桌面克隆
-> `nav-desktop` + 官方 C++ 引擎 `OsmAnd-core`）。对照方 B = `/home/along/navimap`（从零写的
+> `nav-desktop` + 官方 C++ 引擎 `OsmAnd-core`）。对照方 B = `/home/along/skedaddle`（从零写的
 > 纯 C + Qt 离线导航，只吃 `.osm.pbf`，自研 NMBIN）。
 > 性能数字见 `OSMAND-FULL-COMPARISON-2026-10-27.md` §3（本轮未复测，标为"文档口径"）。
 > 本文件只讲**功能差异**，且对齐到 2026-10-29 的状态（含 10-28 副机的 6 个 UI/功能提交，
@@ -14,11 +14,11 @@
 **不是"谁多谁少"的线性胜负，而是两条相反的设计赌注**：
 - **osmand-app** 走「广度优先」——吃官方 OBF、复用官方引擎与数据（POI/地址/公交/地形全在 OBF 里），
   功能是"成品级"的宽。
-- **navimap** 走「性能优先」——只吃 PBF、离线预抽成扁平常量、自写软件光栅 + 双向 A\* + ALT，
+- **skedaddle** 走「性能优先」——只吃 PBF、离线预抽成扁平常量、自写软件光栅 + 双向 A\* + ALT，
   在"地图秒开、路线秒算、低内存"这件事上领先一个数量级，代价是功能宽度窄。
 
 **可比性边界（先讲清，否则数字会被误读）**：
-1. 地图**格式不同**：osmand 用 OBF（含地图/地址/POI/公交/路由五套索引），navimap 用自研 NMBIN
+1. 地图**格式不同**：osmand 用 OBF（含地图/地址/POI/公交/路由五套索引），skedaddle 用自研 NMBIN
    （只抽导航最小集）。所以 osmand 的"搜索能搜门牌/292 类 POI"本质是"数据里有"，不是"它算法强"。
 2. 范围不同：本报告以 `nav-desktop`（桌面克隆）为对等体；**完整 android 客户端还有
    Android Auto、插件体系、OSM 编辑、云同步、测量工具等**，那些是 Android 专属、不在桌面对比内。
@@ -28,7 +28,7 @@
 
 ## 1. 两个项目是什么
 
-| | osmand-app（以 nav-desktop 为对等体） | navimap |
+| | osmand-app（以 nav-desktop 为对等体） | skedaddle |
 |---|---|---|
 | 定位 | OsmAnd 界面的桌面复刻，**目标可日常使用的成品** | 从零写的离线导航，**目标打通全链路 + 把性能做到极致** |
 | 语言/工具链 | Java（`--release 11`/17）+ Swing/JavaFX；直接调官方引擎 | C11 + Qt5（前端）/ SDL2（已弃）；CMake / gcc 8.3 |
@@ -45,24 +45,24 @@
 
 ### 2.1 地图数据
 
-| 能力 | osmand-app | navimap | 说明 |
+| 能力 | osmand-app | skedaddle | 说明 |
 |---|---|---|---|
-| OBF 官方格式 | 有 | 无 | navimap 最大生态差距，不能用 OsmAnd 数据 |
+| OBF 官方格式 | 有 | 无 | skedaddle 最大生态差距，不能用 OsmAnd 数据 |
 | `.osm.pbf` | 部分（仅用于转 OBF） | 有（原生） | |
 | PBF→OBF 内置转换 | 有（`IndexCreator`） | 无（用 `sync_maps.sh` 直抽 NMBIN） | |
-| 在线下载地图 | 有（官方 list ~1048 项） | 有（Qt 对话框 + Geofabrik 列表 + `HEAD` 新鲜度比对） | navimap 下载前查重比对方更细 |
+| 在线下载地图 | 有（官方 list ~1048 项） | 有（Qt 对话框 + Geofabrik 列表 + `HEAD` 新鲜度比对） | skedaddle 下载前查重比对方更细 |
 | 无图区提示 | 有（反查 + 下载按钮） | 有（反查国家/省/市/区 + 预选对应 Geofabrik 地区） | 两者都已对齐 |
 | 本机数据规模 | 3 省 OBF / 790 MB | 8 省 / 13 GB（5,228 万节点） | |
 
 ### 2.2 渲染
 
-| 能力 | osmand-app | navimap | 说明 |
+| 能力 | osmand-app | skedaddle | 说明 |
 |---|---|---|---|
 | 渲染方式 | Java2D / JavaFX 光栅桥 | 自写软件光栅 + Qt 画布贴图 | 两边都是 CPU 光栅，都无 GPU 路径 |
 | 样式系统 | 有（`render.xml` 引擎，14+9 套样式） | 无（固定 4 层） | 这是 osmand 渲染慢的主因之一，也是其强项 |
-| 昼/夜 | 有（自动日出日落 + 手动） | 有（手动 `day_night` + D 键） | navimap 无自动切换 |
+| 昼/夜 | 有（自动日出日落 + 手动） | 有（手动 `day_night` + D 键） | skedaddle 无自动切换 |
 | POI 图标 | 有（3006 个 SVG + 自写 SVG 引擎 + 官方分类） | 部分（12 种矢量标记，形状+颜色） | 差距仍大 |
-| 瓦片缓存 | 有（256px + LRU + 异步） | 无（每帧全量重画） | navimap 靠把单帧压到 ~30ms 硬扛 |
+| 瓦片缓存 | 有（256px + LRU + 异步） | 无（每帧全量重画） | skedaddle 靠把单帧压到 ~30ms 硬扛 |
 | 在线瓦片 | 有（XYZ / MBTiles / WMS） | 无 | |
 | 地形/等高线 | 有（AWS terrarium + marching squares + Horn） | 部分（**代码全通 + 高程刻度 + 防重叠 + SRTM 自动下载链路已接**，但本机无 DEM 数据 → 运行时仍无等高线） | 10-28 副机给等高线加了高程标注与标注防重叠 |
 | 3D 视图 | 有（透视 + 光照 + 深度遮挡） | 无 | |
@@ -70,53 +70,53 @@
 
 ### 2.3 搜索
 
-| 能力 | osmand-app | navimap | 说明 |
+| 能力 | osmand-app | skedaddle | 说明 |
 |---|---|---|---|
 | 引擎 | 官方 `SearchUICore` 短语递进 + 中文类别融合 + 面包屑 | 自研 SQLite bigram 倒排 + 子串复核 + 距离/权重排序 | |
 | 地名库 | 官方 OBF 索引 | `places_auto.db` 46 万条 | |
-| 地址/门牌 | 部分（OBF 有地址索引，但未全接） | 无 | navimap 完全无地址层 |
+| 地址/门牌 | 部分（OBF 有地址索引，但未全接） | 无 | skedaddle 完全无地址层 |
 | POI 分类 | 有（19 顶层 + 中文别名） | 无（只有地名库） | |
 | 在线反查/搜索 | 有（精确到省/市/区/街道） | 无 | |
 
 ### 2.4 路线规划
 
-| 能力 | osmand-app | navimap | 说明 |
+| 能力 | osmand-app | skedaddle | 说明 |
 |---|---|---|---|
 | 引擎 | 官方 `RoutePlannerFrontEnd` + `GeneralRouter` | 自研 A\* + 双向 A\*，状态键 = e7 坐标（跨省零映射表） | |
-| 加速预处理 | 无（朴素 A\*） | 有（30 地标 ALT 表 + 自适应 w） | navimap 性能来源之一 |
+| 加速预处理 | 无（朴素 A\*） | 有（30 地标 ALT 表 + 自适应 w） | skedaddle 性能来源之一 |
 | 出行方式 | 有（car/bicycle/pedestrian/**public_transport**） | 部分（仅车行，含 `only_*` 限制语义） | |
 | 参数面板 | 有（`routing.xml` 32 参数） | 部分（命令行 + 代码 `RouteOpts`） | |
-| 多方案 | 有（推荐/避高速/最短 + 变体） | 有（4 条：最快/最短/避收费/避非铺装） | navimap 已对齐 |
+| 多方案 | 有（推荐/避高速/最短 + 变体） | 有（4 条：最快/最短/避收费/避非铺装） | skedaddle 已对齐 |
 | 途经点 | 有（多段 + 到达播报 + 偏航跳过） | 无 | |
 | 手动避让 | 有（右键避让 + 对话框 + 持久化） | 部分（仅参数化 `avoid_toll`/`avoid_unpaved`） | |
 | 公共交通 | 有 | 无 | |
-| 转向限制 | 有（官方完整） | 有（自研 3387 条：kind0/only_*/via=way） | navimap 已对齐 |
+| 转向限制 | 有（官方完整） | 有（自研 3387 条：kind0/only_*/via=way） | skedaddle 已对齐 |
 | GPX 贴合路线 | 有 | 无 | |
 | 导出 GPX | 有（trk + rte + wpt） | 部分（trk + wpt，无 rte；另可 `--geojson=`） | |
 
 ### 2.5 导航引导
 
-| 能力 | osmand-app | navimap | 说明 |
+| 能力 | osmand-app | skedaddle | 说明 |
 |---|---|---|---|
 | 状态机 | 有（投影/距转向/剩余/偏航/到达/限速） | 有（`navsim` 纯计算层，CLI+GUI 共用） | |
-| 语音播报 | 有（Windows SAPI 常驻 / POSIX 后端链） | 有（`route/voice.c` 897 行，移植官方 `VoiceRouter` + TTS 后端链） | navimap 已补上 |
+| 语音播报 | 有（Windows SAPI 常驻 / POSIX 后端链） | 有（`route/voice.c` 897 行，移植官方 `VoiceRouter` + TTS 后端链） | skedaddle 已补上 |
 | 车道指示 | 有 | 部分（`lanes.bin` + `lane_names.bin`；本机 tianjin 未生成 → `skedaddle_lane_selftest` FAIL） | |
 | 沿线告警 | 有（13 类） | 部分（7 类：测速/限速/收费站/铁路道口/停车让行/人行横道/隧道+危桥） | 差 6 类 |
 | 转向箭头 | 有（自绘矢量） | 有（底部指令条大字） | |
 | 自动缩放/指北针 | 有（车速分档 + 路口拉近 + 指北针） | 有（指北针 + 自动拉近 z15） | |
 | ETA + 单位制 | 有（公制/英制/航海） | 部分（只公制"预计 X 分"） | |
-| 定位源 | 有（模拟 / NMEA UDP / Windows 定位 / Linux 串口 GPS） | 无（仅模拟注入） | navimap 真实定位缺失 |
+| 定位源 | 有（模拟 / NMEA UDP / Windows 定位 / Linux 串口 GPS） | 无（仅模拟注入） | skedaddle 真实定位缺失 |
 
 ### 2.6 产品功能
 
-| 能力 | osmand-app | navimap | 说明 |
+| 能力 | osmand-app | skedaddle | 说明 |
 |---|---|---|---|
-| 收藏 | 有（分组+颜色+折叠+`favourites.gpx` 互通） | 有（分组+面板+`tracks.db` 持久化，不与 OsmAnd 互通） | navimap 已对齐 |
+| 收藏 | 有（分组+颜色+折叠+`favourites.gpx` 互通） | 有（分组+面板+`tracks.db` 持久化，不与 OsmAnd 互通） | skedaddle 已对齐 |
 | 历史 | 有 | 无 | |
-| 轨迹记录 | 有（5m/2s 采样 + 实时红线） | 有（`gpx_store` + `trackdraw` + 面板） | navimap 已对齐 |
-| GPX 导入/导出 | 有（含海拔/时间剖面） | 有（解析+写出+渲染，无剖面图） | navimap 已对齐 |
-| 距离/面积测量 | 有（左键加点/双击结束） | 无 | navimap 缺 |
-| 坐标网格与坐标系 | 有（WGS84/UTM/CGCS2000/高斯 3°/6° 带） | 有（WGS84/CGCS2000/北京54/西安80 + 公里网 GK3/GK6/UTM；**10-28 新增高斯正反算 `gauss_fwd/gauss_inv` + 网格类型与坐标系解耦、默认方里格**） | navimap 坐标系覆盖更偏国标 |
+| 轨迹记录 | 有（5m/2s 采样 + 实时红线） | 有（`gpx_store` + `trackdraw` + 面板） | skedaddle 已对齐 |
+| GPX 导入/导出 | 有（含海拔/时间剖面） | 有（解析+写出+渲染，无剖面图） | skedaddle 已对齐 |
+| 距离/面积测量 | 有（左键加点/双击结束） | 无 | skedaddle 缺 |
+| 坐标网格与坐标系 | 有（WGS84/UTM/CGCS2000/高斯 3°/6° 带） | 有（WGS84/CGCS2000/北京54/西安80 + 公里网 GK3/GK6/UTM；**10-28 新增高斯正反算 `gauss_fwd/gauss_inv` + 网格类型与坐标系解耦、默认方里格**） | skedaddle 坐标系覆盖更偏国标 |
 | 区域管理 | 有（世界→洲→国家→省 433 区域 + 下载/更新/删除） | 部分（只有下载列表，无多级树） | |
 | 设置持久化 | 有（`settings.properties`，几百项） | 有（`SETTINGS_SCHEMA` 现约 12-13 项：昼夜/面板/POI/地名/等高线/语音/模式/字号/LOD/基准/网格细分/网格类型…） | |
 | 统一设置入口 | 有（常规/地形/3D 三页对话框） | 有（**10-28 副机把显示开关统一收进「设置」菜单** + 其他分散各菜单） | 较 10-27 改善 |
@@ -125,7 +125,7 @@
 
 ### 2.7 坐标系/网格（单列，因 10-28 变化集中在此）
 
-| | osmand-app | navimap |
+| | osmand-app | skedaddle |
 |---|---|---|
 | 基准 | WGS84 / CGCS2000 / UTM / 高斯 3°/6° 带 | WGS84 / CGCS2000 / 北京54 / 西安80（国标四基准）+ GK3/GK6/UTM 公里网 |
 | 10-28 新增 | — | ① 方里格走真实高斯-克吕格正反算（`gauss_fwd/gauss_inv`，含 500km 假东偏移）；② 网格类型与坐标系解耦为独立 `grid_type` 设置，默认方里格；③ 坐标网按钮改悬停提示、只作开关 |
@@ -134,7 +134,7 @@
 
 ## 3. 自 10-27 报告以来的变化（10-28 那一轮推进）
 
-10-27 对比报告成稿后，navimap 在 10-28 由**副机（Windows）完成 6 个提交**，本机 10-29 07:31
+10-27 对比报告成稿后，skedaddle 在 10-28 由**副机（Windows）完成 6 个提交**，本机 10-29 07:31
 快进合并。相对 10-27 报告的**功能口径**变化：
 
 | 变化 | 10-27 报告状态 | 10-29 当前状态 |
@@ -152,7 +152,7 @@
 
 ## 4. 各自独有 / 对方没有的能力
 
-**osmand-app 有、navimap 完全没有（硬缺口）**
+**osmand-app 有、skedaddle 完全没有（硬缺口）**
 - OBF 格式与官方生态数据（POI 292 类、地址/门牌、公交索引）
 - 公共交通路线 + 站点图层
 - 3D 视图、在线瓦片（XYZ/MBTiles/WMS）、地形阴影
@@ -161,9 +161,9 @@
 - 真实定位源（NMEA/系统定位/串口 GPS）
 - 区域多级树管理、Live Updates 增量更新、历史记录
 - 单位制切换、多语言、MGRS/Plus Code 坐标解析、ETA 绝对到达时刻
-- 13 类沿线告警（navimap 仅 7 类）
+- 13 类沿线告警（skedaddle 仅 7 类）
 
-**navimap 有、相对 osmand-app 桌面版更突出**
+**skedaddle 有、相对 osmand-app 桌面版更突出**
 - 性能数量级领先（渲染 6.6~21.1×、算路 45~89× 下界、算路内存 8.1×）
 - 自研扁平常量 CSR + 双向 A\* + ALT（可移植到 osmand 的算法杠杆）
 - 离线预抽数据、单帧内容驱动、负载波动极小（29~33ms 三轮不变）
@@ -179,7 +179,7 @@
 - 短板：单帧 200~570ms（靠瓦片缓存掩盖）、JVM 固定开销（算路 395MB 起步）、无加速预处理、
   发布包 374MB。
 
-### navimap
+### skedaddle
 - 优势：性能数量级领先且稳定、功能覆盖已接近基础够用（语音/GPX/收藏/轨迹/坐标系/多方案/车道全有）、
   零警告门禁 + 确定性判据优先。
 - 短板：不认 OBF、5 项硬缺口（公交/途经点/3D/在线瓦片/真实定位）、无瓦片缓存、部署轻量优势被 Qt 削半
@@ -192,19 +192,19 @@
 | 场景 | 更合适 | 理由 |
 |---|---|---|
 | 日常桌面导航 | osmand-app | 唯一有公交/途经点/3D/真实定位/13 类告警 |
-| 低配 arm64 / 嵌入式 | navimap | 68MB vs 374MB、算路 49MB vs 395MB |
-| 地图秒开、路线秒算 | navimap | 30ms 一帧、16ms 一条路 |
-| 用 OsmAnd `.obf` / 与官方数据互通 | osmand-app | navimap 只吃 PBF |
-| 3D / 地形 / 在线瓦片 / POI 图标 | osmand-app | navimap 全无 |
-| 学"扁平 CSR / ALT / 软件光栅" | navimap | PLAN.md 有推导 |
+| 低配 arm64 / 嵌入式 | skedaddle | 68MB vs 374MB、算路 49MB vs 395MB |
+| 地图秒开、路线秒算 | skedaddle | 30ms 一帧、16ms 一条路 |
+| 用 OsmAnd `.obf` / 与官方数据互通 | osmand-app | skedaddle 只吃 PBF |
+| 3D / 地形 / 在线瓦片 / POI 图标 | osmand-app | skedaddle 全无 |
+| 学"扁平 CSR / ALT / 软件光栅" | skedaddle | PLAN.md 有推导 |
 
 ---
 
 ## 7. 来源
 
-- `navimap` 侧：git 提交 `ab43b18..1654cf0`（10-28 副机 6 提交）+ 本机 `7df5929`（10-29 合并后修复）；
+- `skedaddle` 侧：git 提交 `ab43b18..1654cf0`（10-28 副机 6 提交）+ 本机 `7df5929`（10-29 合并后修复）；
   `.workbuddy/memory/2026-10-28.md` 副机工作日志；`.workbuddy/memory/2026-10-29.md` 合并复盘。
 - `osmand-app` 侧：`nav-desktop/GAP-ANALYSIS.md`（2026-10-21）、`nav-desktop/MISSING-FEATURES.md`
-  （2026-09-26，10-08 复核）、`navimap/OSMAND-APP-MODULES.md`（2026-10-22）。
-- 性能数字（未复测）：`navimap/OSMAND-FULL-COMPARISON-2026-10-27.md` §3。
+  （2026-09-26，10-08 复核）、`skedaddle/OSMAND-APP-MODULES.md`（2026-10-22）。
+- 性能数字（未复测）：`skedaddle/OSMAND-FULL-COMPARISON-2026-10-27.md` §3。
 - 渲染/算路/内存的绝对数字为"文档口径"，本轮未重跑；如需最新数字应重跑附录命令。

@@ -27,7 +27,7 @@ static void mv_prepare(const MapView *v)
         m->c_rot == v->rot &&
         m->c_w == v->w && m->c_h == v->h)
         return;
-    nm_mercator(v->lat, v->lon, &m->cx, &m->cy);
+    sk_mercator(v->lat, v->lon, &m->cx, &m->cy);
     m->scale = 256.0 * pow(2.0, v->zoom);
     m->c_lat = v->lat; m->c_lon = v->lon; m->c_zoom = v->zoom;
     m->c_rot = v->rot;
@@ -39,11 +39,11 @@ int mv_project(const MapView *v, double lat, double lon, int *x, int *y)
 {
     mv_prepare(v);
     MapView *m = (MapView *)v;
-    /* ★ 这里不用 nm_mercator：那个 sin+log 版本在每帧几十万次调用的场合
+    /* ★ 这里不用 sk_mercator：那个 sin+log 版本在每帧几十万次调用的场合
        是真花钱的（z9 一帧 30 ms）。墨卡托的 x 本来就只跟经度线性相关，
        y 只跟纬度相关且足够光滑 → 走查表插值版，见 geo.c 的误差账。 */
     double wx = (lon + 180.0) / 360.0;
-    double wy = nm_mercator_y_fast(lat);
+    double wy = sk_mercator_y_fast(lat);
     double sx = (wx - m->cx) * m->scale;
     double sy = (wy - m->cy) * m->scale;
     if (m->rot != 0.0) {
@@ -84,7 +84,7 @@ void mv_unproject(const MapView *v, int x, int y, double *lat, double *lon)
     }
     double wx = m->cx + sx / m->scale;
     double wy = m->cy + sy / m->scale;
-    nm_mercator_inv(wx, wy, lat, lon);
+    sk_mercator_inv(wx, wy, lat, lon);
 }
 
 void mv_visible_bbox(const MapView *v, double bbox[4])
@@ -98,12 +98,12 @@ void mv_visible_bbox(const MapView *v, double bbox[4])
 void mv_pan_pixels(MapView *v, int dx, int dy)
 {
     double cx, cy;
-    nm_mercator(v->lat, v->lon, &cx, &cy);
+    sk_mercator(v->lat, v->lon, &cx, &cy);
     double s = mv_scale(v);
     double wx = cx - (double)dx / s;
     double wy = cy - (double)dy / s;
     if (wy < 0) wy = 0; else if (wy > 1) wy = 1;
-    nm_mercator_inv(wx, wy, &v->lat, &v->lon);
+    sk_mercator_inv(wx, wy, &v->lat, &v->lon);
     if (v->lon < -180) v->lon += 360;
     if (v->lon >  180) v->lon -= 360;
 }
@@ -115,13 +115,13 @@ void mv_zoom_at(MapView *v, double dzoom, int px, int py)
     mv_unproject(v, px, py, &alat, &alon);
     v->zoom += dzoom;
     double ax, ay, cx, cy;
-    nm_mercator(alat, alon, &ax, &ay);
-    nm_mercator(v->lat, v->lon, &cx, &cy);
+    sk_mercator(alat, alon, &ax, &ay);
+    sk_mercator(v->lat, v->lon, &cx, &cy);
     double s = mv_scale(v);
     double wx = ax - (px - v->w / 2.0) / s;
     double wy = ay - (py - v->h / 2.0) / s;
     if (wy < 0) wy = 0; else if (wy > 1) wy = 1;
-    nm_mercator_inv(wx, wy, &v->lat, &v->lon);
+    sk_mercator_inv(wx, wy, &v->lat, &v->lon);
 }
 
 void mv_clamp_zoom(MapView *v, double zmin, double zmax)
@@ -134,8 +134,8 @@ void mv_fit_bbox(MapView *v, double lat0, double lon0,
                  double lat1, double lon1, double margin_px)
 {
     double x0, y0, x1, y1;
-    nm_mercator(lat0, lon0, &x0, &y0);
-    nm_mercator(lat1, lon1, &x1, &y1);
+    sk_mercator(lat0, lon0, &x0, &y0);
+    sk_mercator(lat1, lon1, &x1, &y1);
     double dx = fabs(x1 - x0), dy = fabs(y1 - y0);
     if (dx < 1e-9) dx = 1e-9;
     if (dy < 1e-9) dy = 1e-9;
@@ -148,5 +148,5 @@ void mv_fit_bbox(MapView *v, double lat0, double lon0,
     v->zoom = log2(s / 256.0);
 
     /* 中心 = 墨卡托矩形的中点（不是经纬度中点，否则高纬会偏） */
-    nm_mercator_inv((x0 + x1) / 2.0, (y0 + y1) / 2.0, &v->lat, &v->lon);
+    sk_mercator_inv((x0 + x1) / 2.0, (y0 + y1) / 2.0, &v->lat, &v->lon);
 }

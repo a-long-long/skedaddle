@@ -55,7 +55,7 @@ int app_init(App *a, const char *graph_dir, int w, int h,
 {
     memset(a, 0, sizeof(*a));
     /* 设置持久化：先载入配置文件，把值当成默认值填进 App；下面既有的
-       CLI 参数 / NAVIMAP_* 环境变量读取会自然覆盖（谁后写谁赢），
+       CLI 参数 / SKEDADDLE_* 环境变量读取会自然覆盖（谁后写谁赢），
        从而满足"命令行与环境变量优先级高于配置文件"。 */
     a->cfg = settings_create();
     if (a->cfg) settings_load(a->cfg, NULL);
@@ -67,7 +67,7 @@ int app_init(App *a, const char *graph_dir, int w, int h,
         int dm = settings_get_int(a->cfg, "day_night", 2);
         a->day_night_mode = (dm >= 0 && dm <= 2) ? dm : 2;
     }
-    a->gpu_available = nm_has_gpu();
+    a->gpu_available = sk_has_gpu();
     fprintf(stderr, "GPU 检测: %s（本项目为软件光栅，无 GPU 渲染路径，此值仅作信息展示）\n",
             a->gpu_available ? "可用" : "无");
     a->show_poi    = settings_get_bool(a->cfg, "show_poi", 1);
@@ -93,8 +93,8 @@ int app_init(App *a, const char *graph_dir, int w, int h,
     a->sim_speed_idx = SIM_SPEED_DEFAULT;
     a->sim_follow = 1;
     /* 互斥量用平台抽象层（不直接碰 pthread / CRITICAL_SECTION）。
-       nm_mutex 不依赖任何窗口系统，这里直接建。 */
-    a->nav_mu = nm_mutex_create();     /* 算路线程与主线程之间的那点状态 */
+       sk_mutex 不依赖任何窗口系统，这里直接建。 */
+    a->nav_mu = sk_mutex_create();     /* 算路线程与主线程之间的那点状态 */
     if (!a->nav_mu) fprintf(stderr, "提示: 建不了互斥量，导航功能不可用\n");
 
     /* 图集加载。graph_dir 既可以是单个省目录（products/graph/beijing），
@@ -113,9 +113,9 @@ int app_init(App *a, const char *graph_dir, int w, int h,
     if (ab) a->ab = *ab;
     else { a->ab.enable = 1; a->ab.src_dir = NULL; a->ab.tool = NULL; }
 
-    /* 字体可选。优先级：命令行 --font > 环境变量 NAVIMAP_FONT > 默认宋体候选链。
+    /* 字体可选。优先级：命令行 --font > 环境变量 SKEDADDLE_FONT > 默认宋体候选链。
        "none"/空串 表示显式关闭文字标注（纯图形模式）。 */
-    if (!font_path) font_path = getenv("NAVMAP_FONT");
+    if (!font_path) font_path = getenv("SKEDADDLE_FONT");
     int want_font = !(font_path && (font_path[0] == '\0' ||
                                     strcmp(font_path, "none") == 0));
     a->font_size = font_size > 0 ? font_size
@@ -156,7 +156,7 @@ int app_init(App *a, const char *graph_dir, int w, int h,
        定的，没有"临时放大"这回事。没有字体时保持 NULL，指令条退化为小字。 */
     if (a->font_path[0]) a->font_big = font_open(a->font_path, app_big_size(a->font_size));
 
-    const char *places = getenv("NAVMAP_PLACES");
+    const char *places = getenv("SKEDADDLE_PLACES");
     if (!places || !*places) places = "products/places_auto.db";
     if (label_cache_init(&a->places, places) == 0) a->has_places = 1;
     /* 搜索库：同一个文件，但**另开一个连接**——LabelCache 可能正拿着语句在
@@ -185,8 +185,8 @@ int app_init(App *a, const char *graph_dir, int w, int h,
     double clat = 39.9, clon = 116.4, czoom = 12.0;
     if (a->ms.n == 1 && a->ms.srcs[0].nodes.hdr.rec_count) {
         const uint8_t *r = a->ms.srcs[0].nodes.data;
-        clat = nm_get_i32(r + NF_LAT) / 1e7;
-        clon = nm_get_i32(r + NF_LON) / 1e7;
+        clat = sk_get_i32(r + NF_LAT) / 1e7;
+        clon = sk_get_i32(r + NF_LON) / 1e7;
     } else if (a->ms.n > 1) {
         /* ★ 用 64 位算：两个 e7 经度相加（10.5 亿 + 12.6 亿）会溢出 int32，
            中心被算到西经去（实测 -98.9°，图上自然什么都没有） */
@@ -234,15 +234,15 @@ void app_shutdown(App *a)
        必须等它退出再销毁：nav_busy 由 nav_mu 保护，这里自旋等一下。
        退出路径上最多等几秒，不当成错误。 */
     if (a->nav_mu) {
-        nm_mutex_lock(a->nav_mu);
+        sk_mutex_lock(a->nav_mu);
         a->nav_stop = 1;                 /* 排队的请求不再开工 */
-        nm_mutex_unlock(a->nav_mu);
+        sk_mutex_unlock(a->nav_mu);
         for (int i = 0; i < 3000; i++) { /* 最多等 30 秒：跨省长途 5 秒级 */
-            nm_mutex_lock(a->nav_mu);
+            sk_mutex_lock(a->nav_mu);
             int busy = a->nav_busy;
-            nm_mutex_unlock(a->nav_mu);
+            sk_mutex_unlock(a->nav_mu);
             if (!busy) break;
-            nm_sleep_ms(10);
+            sk_sleep_ms(10);
         }
     }
     if (a->nav_done) { route_result_set_free(&a->nav_done->alts); free(a->nav_done); a->nav_done = NULL; }
@@ -250,7 +250,7 @@ void app_shutdown(App *a)
     if (a->have_alts) route_result_set_free(&a->ralts);
     maneuver_free(&a->man);
     router_destroy(a->router);
-    if (a->nav_mu) { nm_mutex_destroy(a->nav_mu); a->nav_mu = NULL; }
+    if (a->nav_mu) { sk_mutex_destroy(a->nav_mu); a->nav_mu = NULL; }
     mapset_free(&a->ms);
     dedup_free(&a->dd);
     label_cache_free(&a->places);
@@ -336,7 +336,7 @@ static void app_update_daynight(App *a)
     if (a->day_night_mode == 1)        eff = 1;                     /* 夜间（手动） */
     else if (a->day_night_mode == 2) {                            /* 自动 */
         time_t now = time(NULL);
-        eff = nm_sun_is_night(a->view.lat, a->view.lon, now) ? 1 : 0;
+        eff = sk_sun_is_night(a->view.lat, a->view.lon, now) ? 1 : 0;
     } else                             eff = 0;                     /* 白天（手动） */
     if (eff != a->day_night) { a->day_night = eff; a->need_redraw = 1; }
 }
@@ -366,7 +366,7 @@ void app_persist_settings(App *a)
 
 /* 改某个浮层的透明度（百分比）。UI（SDL 设置子面板 / Qt 对话框）统一走这里：
  * 改 App + 立即写设置 + 标红重绘；真正落盘仍在 app_persist_settings。 */
-void app_ovl_alpha_set(App *a, NmOverlay id, int pct)
+void app_ovl_alpha_set(App *a, SkOverlay id, int pct)
 {
     if (!a || id < 0 || id >= OVL_COUNT) return;
     int v = ovl_clamp_pct(pct);
@@ -380,7 +380,7 @@ void app_ovl_alpha_set(App *a, NmOverlay id, int pct)
 void app_ovl_alpha_reset(App *a)
 {
     if (!a) return;
-    for (int i = 0; i < OVL_COUNT; i++) app_ovl_alpha_set(a, (NmOverlay)i,
+    for (int i = 0; i < OVL_COUNT; i++) app_ovl_alpha_set(a, (SkOverlay)i,
                                                           OVL_ALPHA_DEFAULT);
 }
 
@@ -437,9 +437,9 @@ static void nav_snap_info(const MapSet *ms, RNode n,
     if (n.prov >= (uint32_t)ms->n) return;
     mapset_ensure_loaded((MapSet *)ms, (int)n.prov);   /* 该省可能已被 set_view 卸载 */
     const uint8_t *nr = ms->srcs[n.prov].nodes.data +
-                        (uint64_t)n.node * NM_NODE_BYTES;
-    if (slat) *slat = nm_get_i32(nr + NF_LAT) / 1e7;
-    if (slon) *slon = nm_get_i32(nr + NF_LON) / 1e7;
+                        (uint64_t)n.node * SK_NODE_BYTES;
+    if (slat) *slat = sk_get_i32(nr + NF_LAT) / 1e7;
+    if (slon) *slon = sk_get_i32(nr + NF_LON) / 1e7;
     if (prov) *prov = (int)n.prov;
 }
 
@@ -458,11 +458,11 @@ static void nav_worker(void *ud)
 
     for (;;) {
         NavPick pa, pb;
-        nm_mutex_lock(a->nav_mu);
+        sk_mutex_lock(a->nav_mu);
         pa = a->req_a;
         pb = a->req_b;
         a->nav_pending = 0;
-        nm_mutex_unlock(a->nav_mu);
+        sk_mutex_unlock(a->nav_mu);
 
         NavResult *res = calloc(1, sizeof(NavResult));
         if (!res) { fprintf(stderr, "导航: 内存不足\n"); break; }
@@ -516,13 +516,13 @@ static void nav_worker(void *ud)
             }
         }
 
-        nm_mutex_lock(a->nav_mu);
+        sk_mutex_lock(a->nav_mu);
         if (a->nav_done) { route_result_set_free(&a->nav_done->alts); free(a->nav_done); }
         a->nav_done = res;
         a->nav_done_flag = 1;
         int again = a->nav_pending && !a->nav_stop;
         if (!again) a->nav_busy = 0;
-        nm_mutex_unlock(a->nav_mu);
+        sk_mutex_unlock(a->nav_mu);
         if (!again) break;
     }
 }
@@ -535,19 +535,19 @@ void nav_request(App *a)
         return;
     }
     int start = 0;
-    nm_mutex_lock(a->nav_mu);
+    sk_mutex_lock(a->nav_mu);
     a->req_a = a->pick_a;
     a->req_b = a->pick_b;
     if (a->nav_busy) a->nav_pending = 1;    /* 手头这单跑完再算新的 */
     else { a->nav_busy = 1; start = 1; }
-    nm_mutex_unlock(a->nav_mu);
+    sk_mutex_unlock(a->nav_mu);
     if (!start) return;
 
-    a->nav_t0 = nm_now_ms();
-    if (nm_thread_spawn(nav_worker, a) != 0) {
-        nm_mutex_lock(a->nav_mu);
+    a->nav_t0 = sk_now_ms();
+    if (sk_thread_spawn(nav_worker, a) != 0) {
+        sk_mutex_lock(a->nav_mu);
         a->nav_busy = 0;
-        nm_mutex_unlock(a->nav_mu);
+        sk_mutex_unlock(a->nav_mu);
         snprintf(a->nav_msg, sizeof(a->nav_msg), "算路线程起不来");
         return;
     }                                          /* 结果走 nav_done，不等它 join */
@@ -558,10 +558,10 @@ void app_nav_poll(App *a)
     if (!a->nav_done_flag) return;
 
     NavResult *res = NULL;
-    nm_mutex_lock(a->nav_mu);
+    sk_mutex_lock(a->nav_mu);
     if (a->nav_done) { res = a->nav_done; a->nav_done = NULL; }
     a->nav_done_flag = 0;
-    nm_mutex_unlock(a->nav_mu);
+    sk_mutex_unlock(a->nav_mu);
     if (!res) return;
 
     int was_sim = a->sim_on;            /* 偏航重算后要接着模拟 */
@@ -602,7 +602,7 @@ void app_nav_poll(App *a)
             a->sim.speed_mul = sim_speed_of(a);
             a->sim_on = 1;
             a->sim_paused = 0;
-            a->sim_tick = nm_now_ms();
+            a->sim_tick = sk_now_ms();
         }
         printf("路线  %.2f km  约 %.0f 分  %u 段  %d 条指令  展开 %llu  %llu ms\n",
                a->rr.total_m / 1000.0, a->rr.total_s / 60.0, a->rr.n - 1,
@@ -641,7 +641,7 @@ void app_nav_select_alt(App *a, int k)
         a->sim.speed_mul = sim_speed_of(a);
         a->sim_on = 1;
         a->sim_paused = 0;
-        a->sim_tick = nm_now_ms();
+        a->sim_tick = sk_now_ms();
     }
     a->need_redraw = 1;
 }
@@ -929,7 +929,7 @@ void app_nav_sim_toggle(App *a)
         a->sim_paused = 0;
         nav_announce_reset(a);
         a->sim_follow = 1;
-        a->sim_tick = nm_now_ms();
+        a->sim_tick = sk_now_ms();
         a->nav_msg[0] = '\0';
         /* 导航视角：z<14 时路口看不清，转向提示无从判断对不对 */
         if (a->view.zoom < 14.0) a->view.zoom = 15.0;
@@ -986,7 +986,7 @@ void app_nav_sim_tick(App *a)
     /* have_rr 一起判：正常情况下 sim_on 蕴含 have_rr（drop 时会一起关），
        这里再挡一道，悬空指针就进不了 navsim_advance。 */
     if (!a->sim_on || !a->have_rr || a->sim_paused) return;
-    uint64_t now = nm_now_ms();
+    uint64_t now = sk_now_ms();
     double dt = (double)(now - a->sim_tick) / 1000.0;
     a->sim_tick = now;
     if (dt <= 0) return;
@@ -1185,11 +1185,11 @@ static void paint_frame(Raster *rs, App *a, PaintStats *st)
      * 走平台层的单调时钟（clock_gettime / QueryPerformanceCounter），
      * 不在业务代码里直接调 POSIX 时钟。 */
     uint64_t ts0, ts1;
-#define TICK(fld) (ts1 = nm_now_ms(), \
+#define TICK(fld) (ts1 = sk_now_ms(), \
                    st->fld += (double)(ts1 - ts0), \
                    ts0 = ts1)
 
-    ts0 = nm_now_ms();
+    ts0 = sk_now_ms();
     paint_background(rs, a->view.w, a->view.h);
     TICK(ms_bg);
 
@@ -1592,7 +1592,7 @@ int app_gpx_import_dir(App *a, const char *dir)
         const char *nm = e->d_name;
         size_t L = strlen(nm);
         if (L < 4u || strcmp(nm + L - 4, ".gpx") != 0) continue;
-        if (nm_path_join(path, sizeof(path), dir, nm) != 0) continue;
+        if (sk_path_join(path, sizeof(path), dir, nm) != 0) continue;
         int rc = app_gpx_import(a, path);
         if (rc > 0) added += rc;
         else if (rc < 0) fprintf(stderr, "[gpx] 导入失败: %s\n", path);
@@ -1643,9 +1643,9 @@ int app_gpx_snap(App *a, int idx)
 int app_gpx_export_default(App *a)
 {
     if (!a) return -1;
-    const char *cfg = nm_config_dir();
+    const char *cfg = sk_config_dir();
     char path[2048];
-    if (!cfg || nm_path_join(path, sizeof(path), cfg, "export.gpx") != 0) return -1;
+    if (!cfg || sk_path_join(path, sizeof(path), cfg, "export.gpx") != 0) return -1;
     int rc = app_gpx_export(a, path);
     if (rc == 0) fprintf(stderr, "[gpx] 已导出到 %s\n", path);
     else         fprintf(stderr, "[gpx] 导出失败\n");

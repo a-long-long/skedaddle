@@ -36,8 +36,8 @@
  * 用法：skedaddle_datum_selftest
  */
 #include "utils/datum.h"
-#include "utils/geo.h"   /* nm_haversine_m */
-#include "utils/plat.h"  /* nm_config_dir（临时格网文件） */
+#include "utils/geo.h"   /* sk_haversine_m */
+#include "utils/plat.h"  /* sk_config_dir（临时格网文件） */
 
 #include <stdio.h>
 #include <string.h>
@@ -132,7 +132,7 @@ int main(void)
         check(e < 1e-9, "CGCS2000 往返误差 < 1e-9 度（亚毫米）");
         double la, lo;
         datum_wgs84_to(DATUM_CGCS2000, 39.9042, 116.4074, 0, &la, &lo, NULL);
-        double shift = nm_haversine_m(39.9042, 116.4074, la, lo);
+        double shift = sk_haversine_m(39.9042, 116.4074, la, lo);
         check(shift < 5.0, "CGCS2000 相对 WGS84 偏移 < 5 m（近等）");
     }
 
@@ -182,7 +182,7 @@ int main(void)
          *    但它登记适用区是塔里木盆地西南 ⇒ 华北会偏，这里只卡量级。 */
         double la, lo;
         datum_wgs84_to(DATUM_BJ54, 39.9042, 116.4074, 0, &la, &lo, NULL);
-        double dbj = nm_haversine_m(39.9042, 116.4074, la, lo);
+        double dbj = sk_haversine_m(39.9042, 116.4074, la, lo);
         printf("    北京54 @北京: 水平偏移 %.1f m\n", dbj);
         check(dbj > 10.0 && dbj < 500.0, "北京54 偏移合理且非零（10 m < d < 500 m）");
 
@@ -192,7 +192,7 @@ int main(void)
         /* 负向对照：WGS84 必须（浮点噪声内）零偏移 —— 若某天给 WGS84 也加了
          * 平移，这条会 FAIL。用 1 µm 容差而不是 == 0.0（ECEF 往返有 ~1e-9 m 噪声）。 */
         datum_wgs84_to(DATUM_WGS84, 39.9042, 116.4074, 0, &la, &lo, NULL);
-        double dw = nm_haversine_m(39.9042, 116.4074, la, lo);
+        double dw = sk_haversine_m(39.9042, 116.4074, la, lo);
         printf("    WGS84 自往返: 偏移 %.3e m\n", dw);
         check(dw < 1e-6, "负向对照: WGS84 偏移 ≈ 0（< 1 µm）");
     }
@@ -400,7 +400,7 @@ int main(void)
 
         /* (d) 从文件加载（拿到改正量数据后转成这个格式即可用） */
         char path[512];
-        snprintf(path, sizeof path, "%s/datum_grid_test.txt", nm_config_dir());
+        snprintf(path, sizeof path, "%s/datum_grid_test.txt", sk_config_dir());
         FILE *f = fopen(path, "w");
         if (f) {
             fprintf(f, "# 改正量测试格网：北 +12.5 m / 东 -37.5 m\n");

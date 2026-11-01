@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_ROUTE_COST_H
-#define NAVIMAP_ROUTE_COST_H
+#ifndef SKEDADDLE_ROUTE_COST_H
+#define SKEDADDLE_ROUTE_COST_H
 
 #include "route/route_priv.h"   /* 完整 Router / MapSrc / MapSet / 常量 / H_SPEED_KMH */
 
@@ -18,7 +18,7 @@ double heur(const Router *r, int dir, int32_t lat_e7, int32_t lon_e7);
 /* 节点坐标键（coord_key_e7）。 */
 uint64_t node_coord(const MapSrc *s, uint32_t node);
 
-/* 地标表总开关（NAVIMAP_LM=0 关）。 */
+/* 地标表总开关（SKEDADDLE_LM=0 关）。 */
 int lm_enabled(void);
 
 /* 诊断旋钮：在地表 penalty 上再加 N 米（默认 0）。 */

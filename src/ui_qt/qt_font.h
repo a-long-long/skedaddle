@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_QT_FONT_H
-#define NAVIMAP_QT_FONT_H
+#ifndef SKEDADDLE_QT_FONT_H
+#define SKEDADDLE_QT_FONT_H
 
 #include <QString>
 

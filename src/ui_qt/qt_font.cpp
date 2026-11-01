@@ -9,7 +9,7 @@
  * DroidSansFallback.ttf，Qt 侧什么都没有。
  *
  * 解法：**把 C 侧自带的字体注册进 Qt 的字体数据库**，让两套用同一批字体。
- *   ① 遍历 nm_font_candidates()（含内置 Noto 系列 + DroidSansFallback + 系统字体），
+ *   ① 遍历 sk_font_candidates()（含内置 Noto 系列 + DroidSansFallback + 系统字体），
  *      用 QFontDatabase::addApplicationFont() 注册；
  *   ② 挑出**确实含中文字形**的族作为应用默认字体；
  *   ③ 用 QFont::setFamilies() 同时列出中英族，让 Qt 自己做 per-glyph 回退
@@ -41,7 +41,7 @@
 
 extern "C" {
 #include "render/font.h"     /* font_open / font_probe_glyph / font_close */
-#include "utils/plat.h"      /* nm_font_candidates */
+#include "utils/plat.h"      /* sk_font_candidates */
 }
 
 /* 这个字体**文件**里有没有"中"字形？直接查 cmap，不依赖 Qt 的度量。 */
@@ -62,7 +62,7 @@ static bool file_has_cjk(const char *path)
 QString qt_setup_fonts(int pointSize)
 {
     size_t n = 0;
-    const char *const *cands = nm_font_candidates(&n);
+    const char *const *cands = sk_font_candidates(&n);
 
     /* ① 注册所有候选字体进 Qt 字体库，并记录"文件 → 族名"的对应关系。
      *    ★ 判定"能否画中文"要按**文件**来，不能只按族名：同一个文件可能

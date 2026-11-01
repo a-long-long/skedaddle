@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_ROAD_TAGS_H
-#define NAVIMAP_ROAD_TAGS_H
+#ifndef SKEDADDLE_ROAD_TAGS_H
+#define SKEDADDLE_ROAD_TAGS_H
 
 #include <stdint.h>
 #include <stddef.h>

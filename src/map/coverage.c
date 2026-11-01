@@ -72,8 +72,8 @@ int mapset_coverage(const MapSet *ms, double lat, double lon, double radius_m,
     if (!have_index) return COV_UNKNOWN;
 
     double wx, wy;
-    nm_mercator(lat, lon, &wx, &wy);
-    double Z = (double)(1u << NM_TILE_Z);
+    sk_mercator(lat, lon, &wx, &wy);
+    double Z = (double)(1u << SK_TILE_Z);
     int cx = (int)(wx * Z), cy = (int)(wy * Z);
 
     /* Z14 一个瓦片在赤道约 2.45 km，往高纬度还要再乘 cos(lat)，
@@ -187,7 +187,7 @@ static int nearest_capital(double lat, double lon, double *dist_km)
     int    bi = -1;
     double best = 1e18;
     for (size_t i = 0; i < sizeof(CAPITAL) / sizeof(CAPITAL[0]); i++) {
-        double d = nm_haversine_m(lat, lon, CAPITAL[i].lat, CAPITAL[i].lon) / 1000.0;
+        double d = sk_haversine_m(lat, lon, CAPITAL[i].lat, CAPITAL[i].lon) / 1000.0;
         if (d < best) { best = d; bi = (int)i; }
     }
     if (dist_km) *dist_km = (bi >= 0) ? best : -1.0;
@@ -204,7 +204,7 @@ static double bbox_dist_km(const int32_t bbox[4], int32_t lat_e7, int32_t lon_e7
     if (clon < bbox[1]) clon = bbox[1];
     if (clon > bbox[3]) clon = bbox[3];
     if (clat == lat_e7 && clon == lon_e7) return 0.0;
-    return nm_haversine_m(lat_e7 / 1e7, lon_e7 / 1e7,
+    return sk_haversine_m(lat_e7 / 1e7, lon_e7 / 1e7,
                         clat / 1e7,   clon / 1e7) / 1000.0;
 }
 

@@ -1,9 +1,9 @@
-#ifndef NAVIMAP_MAP_VIEW_H
-#define NAVIMAP_MAP_VIEW_H
+#ifndef SKEDADDLE_MAP_VIEW_H
+#define SKEDADDLE_MAP_VIEW_H
 
 #include <stdint.h>
 #include <math.h>
-#include "utils/geo.h"      /* nm_mercator_y_fast：mv_proj 内联要用 */
+#include "utils/geo.h"      /* sk_mercator_y_fast：mv_proj 内联要用 */
 
 /* 视口：中心经纬度 + 缩放级别 + 屏幕尺寸。
  * 坐标链只有这一处定义，别在别的地方手写投影：
@@ -59,7 +59,7 @@ void mv_proj_begin(const MapView *v, MvProj *p);
 static inline void mv_proj(const MvProj *p, double lat, double lon, int *x, int *y)
 {
     double wx = (lon + 180.0) / 360.0;
-    double wy = nm_mercator_y_fast(lat);
+    double wy = sk_mercator_y_fast(lat);
     double sx = (wx - p->cx) * p->scale;
     double sy = (wy - p->cy) * p->scale;
     /* rot==0 时这一支恒不进，热路径与改造前逐位等价 */

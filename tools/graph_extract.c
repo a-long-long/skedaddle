@@ -45,12 +45,12 @@ int main(int argc, char **argv)
         fprintf(stderr, "用法: %s --out=<目录> <file.osm.pbf>\n", argv[0]);
         return 2;
     }
-    nm_mkdir_p(out_dir);
+    sk_mkdir_p(out_dir);
 
     /* 源文件指纹：同步脚本靠 size+mtime 判断产物是否过期 */
     uint64_t src_bytes = 0;
     int64_t  src_mtime = 0;
-    nm_stat_file(src, &src_bytes, &src_mtime);
+    sk_stat_file(src, &src_bytes, &src_mtime);
 
     GraphBuildStats st;
     memset(&st, 0, sizeof(st));
@@ -111,7 +111,7 @@ int main(int argc, char **argv)
     snprintf(mp, sizeof(mp), "%s/manifest.txt", out_dir);
     FILE *f = fopen(mp, "wb");
     if (f) {
-        fprintf(f, "# NavMap 路网抽取结果（自描述二进制 NAVMBIN v%d）\n", NMBIN_VERSION);
+        fprintf(f, "# Skedaddle 路网抽取结果（自描述二进制 NAVMBIN v%d）\n", NMBIN_VERSION);
         fprintf(f, "source         %s\n", src);
         fprintf(f, "src_bytes      %" PRIu64 "\n", src_bytes);
         fprintf(f, "src_mtime      %" PRId64 "\n", src_mtime);

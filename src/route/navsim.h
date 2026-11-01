@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_NAVSIM_H
-#define NAVIMAP_NAVSIM_H
+#ifndef SKEDADDLE_NAVSIM_H
+#define SKEDADDLE_NAVSIM_H
 
 #include <stdint.h>
 #include "route/route.h"

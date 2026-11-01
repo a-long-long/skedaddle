@@ -18,12 +18,12 @@
 |---|---|---|
 | `scripts/check_layers.sh` | 解析真实 `#include`（剥块注释与行注释）算模块依赖图，与方向表比对，违规打印文件行号并 `exit 1` | `scripts/check_layers.sh:1-179`（完整体见第三节） |
 | `scripts/regress.sh` | 全量回归；`ASSERT-OK/ASSERT-FAIL` 双判据（退出码 + 标记）；覆盖渲染/路由/语音/平台/门禁等几十个用例 | `scripts/regress.sh:1-802`（关键判据函数见第三节；完整源码已内嵌于 3.6 节，全文 802 行） |
-| `CMakeLists.txt`（分层段） | 分层链接：模块库按 DAG 顺序定义，`navimap_core` 聚合；已移除 `-Wl,--start-group`，链接器单趟解析即第二道防线 | `CMakeLists.txt:142-365` |
+| `CMakeLists.txt`（分层段） | 分层链接：模块库按 DAG 顺序定义，`skedaddle_core` 聚合；已移除 `-Wl,--start-group`，链接器单趟解析即第二道防线 | `CMakeLists.txt:142-365` |
 | `tools/core_no_sdl.c` | 架构边界门禁：核心与 Qt 前端零 SDL 符号；对照体必须含 SDL（负向对照，证明检查器非空壳） | `tools/core_no_sdl.c:1-230`（完整体见第三节） |
 | `tools/blend_equiv.c` | alpha 混色与 SDL 软渲染器逐像素等价对照（去 SDL 化合法链 SDL2） | `tools/blend_equiv.c:1-160`（完整体见第三节） |
 | `tools/clip_equiv.c` | 线段裁剪与 `SDL_IntersectRectAndLine` 等价对照（20 万随机线段） | `tools/clip_equiv.c:1-77`（完整体见第三节） |
 
-分层方向表（来自 `check_layers.sh:65-73`，即第三节脚本中的 `NM_ALLOWED_*` 环境变量）：
+分层方向表（来自 `check_layers.sh:65-73`，即第三节脚本中的 `SK_ALLOWED_*` 环境变量）：
 
 ```
 utils    叶子，零内部依赖
@@ -110,15 +110,15 @@ say_result() { printf '%s\n' "$*"; }
 #     route → render / ui / ui_qt
 #     search→ map / render / route / ui / ui_qt
 # ---------------------------------------------------------------------------
-export NM_ALLOWED_map="map pbf utils"
-export NM_ALLOWED_pbf="pbf"
-export NM_ALLOWED_route="route map utils"
-export NM_ALLOWED_search="search utils"
-export NM_ALLOWED_settings="settings utils"
-export NM_ALLOWED_render="render map route search settings utils"
-export NM_ALLOWED_ui="ui map render route search settings utils"
-export NM_ALLOWED_ui_qt="ui_qt map render settings ui utils"
-export NM_ALLOWED_utils="utils"
+export SK_ALLOWED_map="map pbf utils"
+export SK_ALLOWED_pbf="pbf"
+export SK_ALLOWED_route="route map utils"
+export SK_ALLOWED_search="search utils"
+export SK_ALLOWED_settings="settings utils"
+export SK_ALLOWED_render="render map route search settings utils"
+export SK_ALLOWED_ui="ui map render route search settings utils"
+export SK_ALLOWED_ui_qt="ui_qt map render settings ui utils"
+export SK_ALLOWED_utils="utils"
 
 PY=$(command -v python3 || command -v python)
 if [ -z "$PY" ]; then
@@ -170,7 +170,7 @@ for mod in MODS:
 # 允许方向表
 allowed = {}
 for mod in MODS:
-    env_key = "NM_ALLOWED_" + mod
+    env_key = "SK_ALLOWED_" + mod
     allowed[mod] = set(os.environ.get(env_key, "").split())
 
 # 汇总模块级依赖（去重）
@@ -286,81 +286,81 @@ set(UI_SRCS
     src/ui/chrome.c
     src/ui/audit.c)
 
-# 阶段 2 模块库（DAG 顺序，见上方 MODULE_SRCS 注释；聚合层 navimap_core 见下方）。
+# 阶段 2 模块库（DAG 顺序，见上方 MODULE_SRCS 注释；聚合层 skedaddle_core 见下方）。
 # 每个模块库 PUBLIC 暴露 ${CMAKE_SOURCE_DIR}/src 含入根（消费者可用 "map/xxx.h"），
-# 并链入自身的模块依赖。第三方库（z/sqlite3/protoc/m）统一由下方 navimap_core 聚合层
+# 并链入自身的模块依赖。第三方库（z/sqlite3/protoc/m）统一由下方 skedaddle_core 聚合层
 # 承载，模块库本身只表达"模块↔模块"依赖，便于独立复用。
 
-# navmap_map：pbf + 全部叶子库
-# gpx.c 真正调用 sqlite3_*（tracks.db 用户数据）⇒ 与 navmap_search 同样把
-# sqlite3 收进本模块库，保证 gpx 系列工具只链 navmap_map 也能解析数据库符号。
-add_library(navmap_map STATIC ${MAP_SRCS})
-target_include_directories(navmap_map PUBLIC
+# skedaddle_map：pbf + 全部叶子库
+# gpx.c 真正调用 sqlite3_*（tracks.db 用户数据）⇒ 与 skedaddle_search 同样把
+# sqlite3 收进本模块库，保证 gpx 系列工具只链 skedaddle_map 也能解析数据库符号。
+add_library(skedaddle_map STATIC ${MAP_SRCS})
+target_include_directories(skedaddle_map PUBLIC
     ${CMAKE_SOURCE_DIR}/src ${GEN_DIR}
     ${ZLIB_INCLUDE_DIRS} ${SQLITE3_INCLUDE_DIRS}
     ${PROTOC_INCLUDE_DIRS} ${PROTOC_REAL_INCLUDE_DIR})
-target_link_libraries(navmap_map PUBLIC
-    navmap_pbf navmap_geo navmap_strpool navmap_plat navmap_mem
+target_link_libraries(skedaddle_map PUBLIC
+    skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem
     ${SQLITE3_LIBRARIES})
 
-# navmap_search：仅叶子库（search→utils）。search.c 真正调用 sqlite3_*，
+# skedaddle_search：仅叶子库（search→utils）。search.c 真正调用 sqlite3_*，
 # 故把 sqlite3 收进本模块库，保证 search 系列工具（skedaddle_search_cli/skedaddle_places_build）
-# 只链 navmap_search 也能解析数据库符号（模块可独立复用，不必拖整库）。
-add_library(navmap_search STATIC ${SEARCH_SRCS})
-target_include_directories(navmap_search PUBLIC
+# 只链 skedaddle_search 也能解析数据库符号（模块可独立复用，不必拖整库）。
+add_library(skedaddle_search STATIC ${SEARCH_SRCS})
+target_include_directories(skedaddle_search PUBLIC
     ${CMAKE_SOURCE_DIR}/src ${GEN_DIR}
     ${ZLIB_INCLUDE_DIRS} ${SQLITE3_INCLUDE_DIRS}
     ${PROTOC_INCLUDE_DIRS} ${PROTOC_REAL_INCLUDE_DIR})
-target_link_libraries(navmap_search PUBLIC
-    navmap_geo navmap_strpool navmap_plat navmap_mem
+target_link_libraries(skedaddle_search PUBLIC
+    skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem
     ${SQLITE3_LIBRARIES})
 
-# navmap_route：map + 叶子库
-add_library(navmap_route STATIC ${ROUTE_SRCS})
-target_include_directories(navmap_route PUBLIC
+# skedaddle_route：map + 叶子库
+add_library(skedaddle_route STATIC ${ROUTE_SRCS})
+target_include_directories(skedaddle_route PUBLIC
     ${CMAKE_SOURCE_DIR}/src ${GEN_DIR}
     ${ZLIB_INCLUDE_DIRS} ${SQLITE3_INCLUDE_DIRS}
     ${PROTOC_INCLUDE_DIRS} ${PROTOC_REAL_INCLUDE_DIR})
-target_link_libraries(navmap_route PUBLIC
-    navmap_map navmap_geo navmap_strpool navmap_plat navmap_mem)
+target_link_libraries(skedaddle_route PUBLIC
+    skedaddle_map skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem)
 
-# navmap_render：map + route + search + settings + 叶子库
+# skedaddle_render：map + route + search + settings + 叶子库
 #   ★ 2026-10-28 R2 起 render 零 ui 依赖（chrome/audit 已移到 ui），
 #     符号级环消除 ⇒ 无需再靠 start-group 消解，也不再隐式依赖 ui。
-add_library(navmap_render STATIC ${RENDER_SRCS})
-target_include_directories(navmap_render PUBLIC
+add_library(skedaddle_render STATIC ${RENDER_SRCS})
+target_include_directories(skedaddle_render PUBLIC
     ${CMAKE_SOURCE_DIR}/src ${GEN_DIR}
     ${ZLIB_INCLUDE_DIRS} ${SQLITE3_INCLUDE_DIRS}
     ${PROTOC_INCLUDE_DIRS} ${PROTOC_REAL_INCLUDE_DIR})
-target_link_libraries(navmap_render PUBLIC
-    navmap_map navmap_route navmap_search navmap_settings
-    navmap_geo navmap_strpool navmap_plat navmap_mem)
+target_link_libraries(skedaddle_render PUBLIC
+    skedaddle_map skedaddle_route skedaddle_search skedaddle_settings
+    skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem)
 
-# navmap_ui：render + route + search + map + 叶子库
-add_library(navmap_ui STATIC ${UI_SRCS})
-target_include_directories(navmap_ui PUBLIC
+# skedaddle_ui：render + route + search + map + 叶子库
+add_library(skedaddle_ui STATIC ${UI_SRCS})
+target_include_directories(skedaddle_ui PUBLIC
     ${CMAKE_SOURCE_DIR}/src ${GEN_DIR}
     ${ZLIB_INCLUDE_DIRS} ${SQLITE3_INCLUDE_DIRS}
     ${PROTOC_INCLUDE_DIRS} ${PROTOC_REAL_INCLUDE_DIR})
-target_link_libraries(navmap_ui PUBLIC
-    navmap_render navmap_route navmap_search navmap_map navmap_settings
-    navmap_geo navmap_strpool navmap_plat navmap_mem)
+target_link_libraries(skedaddle_ui PUBLIC
+    skedaddle_render skedaddle_route skedaddle_search skedaddle_map skedaddle_settings
+    skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem)
 
-# navmap_settings：完整设置系统（极简 INI 存读 + 设置清单），依赖仅 plat。
-add_library(navmap_settings STATIC src/settings/settings.c)
-target_include_directories(navmap_settings PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(navmap_settings PUBLIC navmap_plat)
+# skedaddle_settings：完整设置系统（极简 INI 存读 + 设置清单），依赖仅 plat。
+add_library(skedaddle_settings STATIC src/settings/settings.c)
+target_include_directories(skedaddle_settings PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(skedaddle_settings PUBLIC skedaddle_plat)
 
-# navimap_core：聚合层（方案2 架构边界的对外门面）。
+# skedaddle_core：聚合层（方案2 架构边界的对外门面）。
 #   ★ 仅含一个无副作用的锚点符号（src/core_anchor.c），不含业务 .c；
 #     把 5 个模块库 + 5 个叶子库 + 第三方库聚合成一个链接面，
-#     使 24 个 exe / skedaddle 等无需改动即可继续链接 navimap_core。
+#     使 24 个 exe / skedaddle 等无需改动即可继续链接 skedaddle_core。
 #   ★ 核心零 SDL：聚合层连 SDL 的 include 都不给；SDL 仅 skedaddle_blend_equiv / skedaddle_clip_equiv 合法链。
-add_library(navimap_core STATIC src/core_anchor.c)
+add_library(skedaddle_core STATIC src/core_anchor.c)
 
 # ★ 核心不含 SDL：连 include 路径都不给。理由见上面"依赖"一节的架构约束。
 #   谁需要 SDL（去 SDL 化门禁对照体）自己去直接链 SDL2。
-target_include_directories(navimap_core PUBLIC
+target_include_directories(skedaddle_core PUBLIC
     ${CMAKE_SOURCE_DIR}/src
     ${GEN_DIR}
     ${ZLIB_INCLUDE_DIRS}
@@ -373,24 +373,24 @@ target_include_directories(navimap_core PUBLIC
 # 第二次 target_link_libraries（且包在 if() 内）"会误报 target not built by this project，
 # 故用配置期变量在这里一次性决定平台库，再在下方单次调用里展开。
 if(UNIX)
-    set(NAVIMAP_CORE_SYS_LIBS m)
+    set(SKEDADDLE_CORE_SYS_LIBS m)
 elseif(WIN32)
-    set(NAVIMAP_CORE_SYS_LIBS psapi)
+    set(SKEDADDLE_CORE_SYS_LIBS psapi)
 else()
-    set(NAVIMAP_CORE_SYS_LIBS "")
+    set(SKEDADDLE_CORE_SYS_LIBS "")
 endif()
 
 # ★ 2026-10-28 R2：模块依赖已是纯 DAG（render 零 ui 依赖，符号级环消除），
 #   链接器单趟即可按拓扑序解析全部符号 ⇒ 不再需要 -Wl,--start-group。
 #   ★ 刻意保留"单趟链接"这项约束：start-group 会让链接器多轮扫描，把将来
 #     新引入的符号级环**悄悄补上** ⇒ 边界形同虚设。R3 的分层门禁负责防回流。
-target_link_libraries(navimap_core PUBLIC
-    navmap_map navmap_route navmap_search navmap_render navmap_ui navmap_settings
-    navmap_pbf navmap_geo navmap_strpool navmap_plat navmap_mem
-    ${ZLIB_LIBRARIES} ${SQLITE3_LIBRARIES} ${PROTOC_LIB} ${NAVIMAP_CORE_SYS_LIBS})
+target_link_libraries(skedaddle_core PUBLIC
+    skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui skedaddle_settings
+    skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem
+    ${ZLIB_LIBRARIES} ${SQLITE3_LIBRARIES} ${PROTOC_LIB} ${SKEDADDLE_CORE_SYS_LIBS})
 ```
 
-`skedaddle` 只链 `navimap_core + Qt Widgets`，离屏出图走 `src/ui/offscreen_shot.c`（零 SDL），见 `CMakeLists.txt:496-512` 与 `CMakeLists.txt:529-531`（门禁工具 `skedaddle_core_no_sdl` 只链 `nm_link_tool`，不碰 SDL）。
+`skedaddle` 只链 `skedaddle_core + Qt Widgets`，离屏出图走 `src/ui/offscreen_shot.c`（零 SDL），见 `CMakeLists.txt:496-512` 与 `CMakeLists.txt:529-531`（门禁工具 `skedaddle_core_no_sdl` 只链 `sk_link_tool`，不碰 SDL）。
 
 ### 3.3 架构边界门禁：`tools/core_no_sdl.c`（完整体）
 
@@ -404,16 +404,16 @@ target_link_libraries(navimap_core PUBLIC
  *   某次改动里悄悄失效：core 里多加一个 #include <SDL.h> 或一个 SDL 调用，
  *   编译照样过、Qt 照样能跑（只是间接多依赖了 SDL2.dll），直到某天有人在没装
  *   SDL 的机器上构建 Qt 前端才炸。静态链接下更隐蔽：core.a 里引了 SDL 符号，
- *   最终由 navimap_qt 链接进去，依赖就落到 Qt 前端头上了。
+ *   最终由 skedaddle_qt 链接进去，依赖就落到 Qt 前端头上了。
  *
  * 判据（查符号表，不是"看起来没有"）：
  *   正向：目标里不得出现任何 SDL_ 未定义符号；
- *   反向：SDL 适配层（navmap.exe）**必须**含 SDL 符号 —— 证明这个检查器
+ *   反向：SDL 适配层（skedaddle.exe）**必须**含 SDL 符号 —— 证明这个检查器
  *         不是"查不出东西的空壳"。
  *
  * ★ 为什么必须**两个提取器取并集**（踩过的坑）：
  *   - `nm -u <PE exe>`：Windows 的 PE 可执行文件里，导入的 DLL 符号**不进**
- *     未定义符号表（实测 navimap.exe 只有 3 行，全是 CRT 的 __tls_*）。
+ *     未定义符号表（实测 skedaddle.exe 只有 3 行，全是 CRT 的 __tls_*）。
  *     真正的 SDL_CreateWindow 之类在 **objdump -p 的导入表**里。
  *   - `objdump -p <PE exe>`：只对 PE 有用；Linux 的 ELF 走这条只能拿到
  *     .dynamic 段，静态库的导入符号看不到。
@@ -432,10 +432,10 @@ target_link_libraries(navimap_core PUBLIC
 #include "utils/plat.h"
 
 #if defined(_WIN32)
-#  define NM_EXE      "nm.exe"
+#  define SK_EXE      "nm.exe"
 #  define OBJDUMP_EXE "objdump.exe"
 #else
-#  define NM_EXE      "nm"
+#  define SK_EXE      "nm"
 #  define OBJDUMP_EXE "objdump"
 #endif
 
@@ -446,10 +446,10 @@ static char g_stderr_path[1200];
 static const char *stderr_path(void)
 {
     if (!g_stderr_path[0]) {
-        const char *dir = nm_temp_dir();
-        snprintf(g_stderr_path, sizeof(g_stderr_path), "%s%snm_no_sdl_%ld.err",
+        const char *dir = sk_temp_dir();
+        snprintf(g_stderr_path, sizeof(g_stderr_path), "%s%ssk_no_sdl_%ld.err",
                  dir ? dir : ".", (dir && dir[0] && dir[strlen(dir) - 1] == '/') ? "" : "/",
-                 (long)nm_get_pid());
+                 (long)sk_get_pid());
     }
     return g_stderr_path;
 }
@@ -459,7 +459,7 @@ static const char *stderr_path(void)
  * ★ 为什么必须自己找（踩过的坑）：Windows 上 popen 走的是**原生** CreateProcess，
  *   它继承的是当前进程的 PATH；而 MSYS2 的 PATH（/d/msys64/ucrt64/bin）在
  *   原生进程里未必被翻译过去 —— 实测 popen("nm.exe ...") 报"系统找不到指定的
- *   文件"，可同一个 shell 里 nm.exe 明明能跑。用 plat 的 nm_find_in_path
+ *   文件"，可同一个 shell 里 nm.exe 明明能跑。用 plat 的 sk_find_in_path
  *   （它自己按 Windows 的 ';' 规则切 PATH、并且会补 .exe）就稳了。
  *
  * 找不到就返回 NULL ⇒ 调用方报"无法判定"，绝不静默当成"通过"。 */
@@ -468,7 +468,7 @@ static const char *find_tool(const char *name)
     static char buf[2][1024];
     static int  slot = 0;
     char path[1024];
-    if (nm_find_in_path(name, path, sizeof(path)) == 0) {
+    if (sk_find_in_path(name, path, sizeof(path)) == 0) {
         char *b = buf[slot];
         slot = (slot + 1) % 2;
         snprintf(b, sizeof(buf[0]), "%s", path);
@@ -495,7 +495,7 @@ typedef struct {
  *   ★★ 但 `2>&1` 同样有害：stderr 的错误行会混进 stdout，被当成"符号行"计数。
  *      后果是**假绿**——命令根本没跑起来（"文件不存在"之类），错误行也凑出了
  *      total>0，于是判成"提取成功且无 SDL"。实测就踩到了：把 SDL 版
- *      navimap.exe 传给"期望无 SDL"的判据，它报了 OK。
+ *      skedaddle.exe 传给"期望无 SDL"的判据，它报了 OK。
  *      正确做法：**stderr 单独重定向到临时文件**，stdout 走管道；
  *      再用**退出码**判定这次提取到底成功没有。
  *
@@ -539,7 +539,7 @@ static void scan_file(const char *file, Scan *sc)
     char cmd[2600];
 
     /* ① 未定义符号表：静态库与 Linux ELF 有效 */
-    const char *nm = find_tool(NM_EXE);
+    const char *nm = find_tool(SK_EXE);
     if (nm) {
         make_cmd(cmd, sizeof(cmd), nm, "-u", file);
         run_scan(cmd, sc);
@@ -590,7 +590,7 @@ int main(int argc, char **argv)
 
         /* ★ 判定用"提取器是否成功"（退出码），不是"扫到几行"。
          *   用行数判定会假绿：命令失败时 stderr 混进 stdout 也凑得出行数。
-         *   实测踩到过——把 SDL 版 navimap.exe 传给"期望无 SDL"的判据，
+         *   实测踩到过——把 SDL 版 skedaddle.exe 传给"期望无 SDL"的判据，
          *   因为 nm 在 PE 上不列 DLL 导入符号（只有 3 行 CRT 符号）、
          *   objdump 的输出又被 stderr 噪声污染，结果报了 OK。 */
         if (!sc.ok) {
@@ -960,7 +960,7 @@ run_neg() {
 if [ -x "$BUILD/skedaddle_core_no_sdl" ]; then
     exefile() { if [ -x "$1.exe" ]; then echo "$1.exe"; else echo "$1"; fi; }
     run skedaddle_core_no_sdl "CORE-NO-SDL-OK" "$BUILD/skedaddle_core_no_sdl" \
-        "$(exefile "$BUILD/skedaddle")" "$BUILD/libnavimap_core.a"
+        "$(exefile "$BUILD/skedaddle")" "$BUILD/libskedaddle_core.a"
     run core_no_sdl_sdl "CORE-NO-SDL-OK" "$BUILD/skedaddle_core_no_sdl" --expect-sdl \
         "$(exefile "$BUILD/skedaddle_blend_equiv")"
 fi
@@ -1003,7 +1003,7 @@ for a in "$@"; do
         *) echo "未知参数: $a" >&2; exit 2 ;;
     esac
 done
-SHOTS=${SHOTS:-${TMPDIR:-/tmp}/navimap_regress}
+SHOTS=${SHOTS:-${TMPDIR:-/tmp}/skedaddle_regress}
 mkdir -p "$SHOTS"
 
 if [ "$DO_BUILD" = 1 ]; then
@@ -1167,7 +1167,7 @@ run rev_verify "REV-VERIFY-OK" "$BUILD/skedaddle_revbuild_cli" --graph="$GRAPH" 
 # 2) 回退路径必须活着：临时图集只链数据、不链 rev.bin（符号链接，零复制），
 #    路由必须照常算出**同样**的里程。"没有缓存就自己建"这条自愈路径平时
 #    不走，不走就不会被发现坏掉——所以必须有一条用例专门走它。
-# 3) 改坏的 rev.bin 在严格模式（NAVIMAP_REV_STRICT=1）下必须被拒绝并回退：
+# 3) 改坏的 rev.bin 在严格模式（SKEDADDLE_REV_STRICT=1）下必须被拒绝并回退：
 #    结构校验（magic/规模/尾哨兵）挡不住正文单字节损坏，这是刻意的取舍，
 #    但严格模式必须能挡住，否则那条取舍就没有兜底。
 REVT=$SHOTS/revtest
@@ -1197,7 +1197,7 @@ LN_FROM=41.8057,123.4315
 LN_TO=38.9140,121.6147
 run rev_cached "ROUTE-OK" "$BUILD/skedaddle_route_cli" --graph="$REVT/ok"   --from=$LN_FROM --to=$LN_TO
 run rev_norev  "ROUTE-OK" "$BUILD/skedaddle_route_cli" --graph="$REVT/none" --from=$LN_FROM --to=$LN_TO
-run rev_bad_strict "建反向索引" env NAVIMAP_REV_STRICT=1 "$BUILD/skedaddle_route_cli" \
+run rev_bad_strict "建反向索引" env SKEDADDLE_REV_STRICT=1 "$BUILD/skedaddle_route_cli" \
         --graph="$REVT/bad" --from=$LN_FROM --to=$LN_TO
 
 # 有缓存 / 没缓存 必须给出**同一条**路线（里程逐位相同）
@@ -1231,7 +1231,7 @@ run skedaddle_tts_selftest "TTS-OK" "$BUILD/skedaddle_tts_selftest"
 run skedaddle_voice_selftest "VOICE-OK" "$BUILD/skedaddle_voice_selftest"
 
 # ---- 语音播报**端到端**（走生产接线 nav_voice_frame，验证"窗口真的播了"）----
-# 用 NAVIMAP_TTS_DRYRUN 截下 nm_tts_speak 交出去的话来断言；单函数自测抓不到接线 bug。
+# 用 SKEDADDLE_TTS_DRYRUN 截下 sk_tts_speak 交出去的话来断言；单函数自测抓不到接线 bug。
 run skedaddle_voice_e2e "VOICE-E2E-OK" "$BUILD/skedaddle_voice_e2e"
 
 # ---- 多方案对比（阶段 12）----
@@ -1254,7 +1254,7 @@ run skedaddle_datum_selftest "DATUM-OK" "$BUILD/skedaddle_datum_selftest"
 
 # ---- 去 SDL 化的三条门禁（方案2）----
 #
-# 背景：navimap_core 已做到"零 SDL"，Qt 前端（skedaddle）一行 SDL 都不链，
+# 背景：skedaddle_core 已做到"零 SDL"，Qt 前端（skedaddle）一行 SDL 都不链，
 # SDL 只存在于两个**去 SDL 化对照体**（skedaddle_blend_equiv / skedaddle_clip_equiv，它们必须链
 # SDL 才能跟 SDL 软渲染器逐像素对拍）。这条边界一旦被悄悄放宽，
 # 编译照样过、运行照样正常，只是 Qt 前端又背上了 SDL2.dll 依赖 —— 直到某天
@@ -1277,7 +1277,7 @@ run skedaddle_clip_equiv "CLIP-EQUIV-OK" "$BUILD/skedaddle_clip_equiv"
 if [ -x "$BUILD/skedaddle_core_no_sdl" ]; then
     exefile() { if [ -x "$1.exe" ]; then echo "$1.exe"; else echo "$1"; fi; }
     run skedaddle_core_no_sdl "CORE-NO-SDL-OK" "$BUILD/skedaddle_core_no_sdl" \
-        "$(exefile "$BUILD/skedaddle")" "$BUILD/libnavimap_core.a"
+        "$(exefile "$BUILD/skedaddle")" "$BUILD/libskedaddle_core.a"
     run core_no_sdl_sdl "CORE-NO-SDL-OK" "$BUILD/skedaddle_core_no_sdl" --expect-sdl \
         "$(exefile "$BUILD/skedaddle_blend_equiv")"
 fi
@@ -1305,7 +1305,7 @@ fi
 # ---- 字体链的中文覆盖（中文变方框的根因门禁）----
 #
 # 地图上的文字（C 侧 stb_truetype）和 Qt 控件上的文字（Qt 自己的字体系统）
-# **共用同一条候选链**（plat.c 的 nm_font_candidates）。链里没有能画中文的
+# **共用同一条候选链**（plat.c 的 sk_font_candidates）。链里没有能画中文的
 # 字体 ⇒ 两边都变方框（tofu）。
 #
 # 为什么单列一条：字体链的失效是**静默**的 —— 编译过、运行正常、地图照画，
@@ -1355,8 +1355,8 @@ if [ -x "$BUILD/skedaddle" ] || [ -x "$BUILD/skedaddle.exe" ]; then
     #   隔离后这条用例只受代码影响，不受本机状态影响。
     CFG_UIT="$SHOTS/ui_test_cfg"
     /bin/rm -rf "$CFG_UIT" 2>/dev/null
-    mkdir -p "$CFG_UIT/navimap"
-    printf 'day_night=0\nshow_panel=1\nshow_poi=1\nshow_labels=1\nvoice_on=1\nmode=0\nfont_size=14\nmax_class=4\nview_lat=39.94\nview_lon=116.405\nview_zoom=13\ndatum=0\ngrid_type=1\nalpha_search=75\nalpha_rcol=75\n' > "$CFG_UIT/navimap/settings.ini"
+    mkdir -p "$CFG_UIT/skedaddle"
+    printf 'day_night=0\nshow_panel=1\nshow_poi=1\nshow_labels=1\nvoice_on=1\nmode=0\nfont_size=14\nmax_class=4\nview_lat=39.94\nview_lon=116.405\nview_zoom=13\ndatum=0\ngrid_type=1\nalpha_search=75\nalpha_rcol=75\n' > "$CFG_UIT/skedaddle/settings.ini"
     run qt_ui_test "QT-UI-OK" qt_run \
         env APPDATA="$CFG_UIT/appdata" XDG_CONFIG_HOME="$CFG_UIT/xdg" \
         "$(exefile2 "$BUILD/skedaddle")" --ui-test --w=900 --h=600
@@ -1381,7 +1381,7 @@ run heap_bench "HEAP-BENCH" "$BUILD/skedaddle_heap_selftest" --bench=6019,200000
 
 # ---- 瓦片下标：查表版 vs 精确版 逐点等价（PLAN.md §36）----
 # ① 全图 5228 万个真实节点逐点比，外加定向构造的 49 万个"正好落在瓦片边界上"
-#    的点（按瓦片单位扰动）。nm_tile_of 取错瓦片 ⇒ 缝合成员查错 ⇒ 路线错，
+#    的点（按瓦片单位扰动）。sk_tile_of 取错瓦片 ⇒ 缝合成员查错 ⇒ 路线错，
 #    而误差只有万分之几个点会触发，**抽样测不出来**。
 run tile_eq "TILE-SELFTEST-OK" "$BUILD/skedaddle_tile_selftest" --graph="$GRAPH"
 
@@ -1402,7 +1402,7 @@ if [ -x "$BUILD/skedaddle" ] || [ -x "$BUILD/skedaddle.exe" ]; then
     run nomap_prompt "nomap_select" qt_run \
         "$(exefile2 "$BUILD/skedaddle")" --graph="$GRAPH" \
         --lat=30.0 --lon=110.0 --zoom=10 --w=1280 --h=800 \
-        --shot=/tmp/navimap_regress/nomap.png --shot-nomap
+        --shot=/tmp/skedaddle_regress/nomap.png --shot-nomap
 fi
 run search      "查询 中关村"  "$BUILD/skedaddle_search_cli"
 # 地名库自检：每条 place 都得能反查出 bigram，kind 不许超出 PLK_ROAD。
@@ -1510,7 +1510,7 @@ run route_far_dalian "ROUTE-OK" "$BUILD/skedaddle_route_cli" --graph="$GRAPH" \
 #     换默认的 hi 重跑 ⇒ 根本不是 w=1.0（§49"兜底只能有一个入口"的延伸）。
 LM_ADMISSIBLE_SLACK=1
 _lm_exact() {  # $1 = 1 开表 / 0 无表；stdout = 预计分钟
-    NAVIMAP_LM="$1" "$BUILD/skedaddle_route_cli" --graph="$GRAPH" \
+    SKEDADDLE_LM="$1" "$BUILD/skedaddle_route_cli" --graph="$GRAPH" \
         --from=37.87,112.55 --to=38.04,114.51 --repeat=1 \
         --exact --heur-w=1.0 --heur-w-hi=1.0 2>/dev/null |
     sed -n 's/^预计 *\([0-9]*\) 分.*/\1/p' | head -1
@@ -1568,7 +1568,7 @@ fi
 GPX_FILE="$SHOTS/gpx_case.gpx"
 cat > "$GPX_FILE" <<'GEOF'
 <?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="navimap-regress">
+<gpx version="1.1" creator="skedaddle-regress">
   <wpt lat="39.9520" lon="116.3960"><name>故宫东门</name></wpt>
   <wpt lat="39.9480" lon="116.4040"><name>王府井</name></wpt>
   <trk><name>回归测试线</name><trkseg>
@@ -1643,7 +1643,7 @@ ovl_shot() {   # $1=key $2=pct $3=输出
 }
 # 标题栏矩形 0,0,800,30（CHROME_TITLE_H=30）；右栏四按钮 750,88,42,184
 # ★ 离屏通道设 a.qt_ui=0，chrome 由 C 核心画进缓冲；标题栏**只有底板没有文字**
-#   （离屏通道不加载字体，"NavMap" 那行字不画）⇒ 这条只验底板比值 + 逐浮层独立，
+#   （离屏通道不加载字体，"Skedaddle" 那行字不画）⇒ 这条只验底板比值 + 逐浮层独立，
 #   前景判据 --fg=0 跳过。前景（文字/图标）保持清晰由下面两条验：
 #   C 右栏（图标，本段）与 Qt 搜索按钮（**文字**，--shot 视觉验收段）。
 ovl_shot alpha_title 100 "$SHOTS/ovl_title_100.bmp"
@@ -1678,8 +1678,8 @@ if [ -x "$BUILD/skedaddle.exe" ] || [ -x "$BUILD/skedaddle" ]; then
     QEXE=$(if [ -x "$BUILD/skedaddle.exe" ]; then echo "$BUILD/skedaddle.exe"; else echo "$BUILD/skedaddle"; fi)
     CFGQ="$SHOTS/ovl_qt_cfg"
     /bin/rm -rf "$CFGQ" 2>/dev/null
-    mkdir -p "$CFGQ/navimap"
-    printf 'day_night=0\nshow_panel=1\nshow_poi=1\nshow_labels=1\nvoice_on=1\nmode=0\nfont_size=14\nmax_class=4\nview_lat=39.94\nview_lon=116.405\nview_zoom=13\ndatum=0\ngrid_type=1\n' > "$CFGQ/navimap/settings.ini"
+    mkdir -p "$CFGQ/skedaddle"
+    printf 'day_night=0\nshow_panel=1\nshow_poi=1\nshow_labels=1\nvoice_on=1\nmode=0\nfont_size=14\nmax_class=4\nview_lat=39.94\nview_lon=116.405\nview_zoom=13\ndatum=0\ngrid_type=1\n' > "$CFGQ/skedaddle/settings.ini"
     for pv in 100 75 0; do
         qt_run env APPDATA="$CFGQ" XDG_CONFIG_HOME="$CFGQ/xdg" \
             "$QEXE" --graph="$GRAPH" --w=800 --h=600 \
@@ -1739,7 +1739,7 @@ fi
 # 打印"1 条轨迹"（内存侧成功了），但一条也不落库、**没有任何提示**，
 # 重启后收藏全丢。全新账户 / 刚清过 %APPDATA% 必中。
 # 判据：把配置目录指到一个**尚不存在**的路径，跑一次导入，断言 tracks.db 真被建出来。
-# ★ 负向对照：把 gpx_db_default_path 里的 nm_mkdir_p 那行注掉 ⇒ 目录不建、
+# ★ 负向对照：把 gpx_db_default_path 里的 sk_mkdir_p 那行注掉 ⇒ 目录不建、
 #   sqlite 打不开 ⇒ 这条 FAIL（实测过一次）。
 # 跨平台：Windows 看 APPDATA，其余看 XDG_CONFIG_HOME；两个都设，哪个生效都能验。
 if [ -x "$BUILD/skedaddle.exe" ] || [ -x "$BUILD/skedaddle" ]; then
@@ -1751,7 +1751,7 @@ if [ -x "$BUILD/skedaddle.exe" ] || [ -x "$BUILD/skedaddle" ]; then
         --shot="$SHOTS/gpx_cfg.bmp" > "$SHOTS/gpx_persist.log" 2>&1
     # 两种平台口径都找一遍，任一处出现 tracks.db 即算建出来了
     found=0
-    for cand in "$CFG/appdata/navimap/tracks.db" "$CFG/xdg/navimap/tracks.db"; do
+    for cand in "$CFG/appdata/skedaddle/tracks.db" "$CFG/xdg/skedaddle/tracks.db"; do
         [ -s "$cand" ] && found=1
     done
     if [ "$found" = 1 ]; then
@@ -1801,5 +1801,5 @@ echo "=== 结果: $pass 通过 / $fail 失败   日志与截图: $SHOTS"
   - `./scripts/regress.sh`（看基线全绿）。
 - **练习**：
   - 把 `src/render/paint.h` 的 `AREA_DOT_PX` 改到 8，跑 `regress.sh` 的 `area_lod_tier`，确认被抓出（z9 上限 108000，档位 8 ⇒ 111916 必 FAIL）；改回 4；
-  - 把 `links` 方向表中 `NM_ALLOWED_map` 偷偷加 `render`，看 `check_layers.sh` 从 FAIL 变 PASS 的反向实验，理解“门禁必须有分辨力”。
+  - 把 `links` 方向表中 `SK_ALLOWED_map` 偷偷加 `render`，看 `check_layers.sh` 从 FAIL 变 PASS 的反向实验，理解“门禁必须有分辨力”。
 - **验收**：能独立跑全套门禁，并解释“为什么判据要用确定性量而非时间、为什么 start-group 被移除、为什么 skedaddle_core_no_sdl 需要 `--expect-sdl` 负向对照”。

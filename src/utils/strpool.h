@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_STRPOOL_H
-#define NAVIMAP_STRPOOL_H
+#ifndef SKEDADDLE_STRPOOL_H
+#define SKEDADDLE_STRPOOL_H
 
 #include <stddef.h>
 #include <stdint.h>

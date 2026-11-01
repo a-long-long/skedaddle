@@ -1,6 +1,6 @@
 # 第 11 课：导航层与语音
 
-> 模块：`src/route/voice.{c,h}`、`src/ui/voice_wire.{c,h}`、`src/utils/plat.{c,h}`（重点 `nm_tts_speak`）
+> 模块：`src/route/voice.{c,h}`、`src/ui/voice_wire.{c,h}`、`src/utils/plat.{c,h}`（重点 `sk_tts_speak`）
 > 前置：第 10 课 `RouteResult`、GPS/模拟定位概念、TTS 冷却概念。
 
 ## 一、教学目的
@@ -12,7 +12,7 @@
 - 解释为什么 `voice_wire.c` 是**唯一接线点**，生产与 `tools/voice_e2e.c` 自测共用同一份代码；
 - 说明"到达帧例外"为什么必须先播报（`arrived` 那一帧不受 `paused` 抑制），否则收尾语永远播不出来（这是实打实踩过的 bug）；
 - 解释 15s 同文本冷却的作用——`say()`（`say_dup`）是**所有**播报（限速/到达/告警/转向）的唯一出口，四类播报一视同仁；
-- 区分"该播第几级"（策略，`voice_announce_state`）与"这句话怎么说"（话术，`voice_*_phrase`）两件事，二者都在 `voice.c`，而真正"出声"只在 `plat.c` 的 `nm_tts_speak`。
+- 区分"该播第几级"（策略，`voice_announce_state`）与"这句话怎么说"（话术，`voice_*_phrase`）两件事，二者都在 `voice.c`，而真正"出声"只在 `plat.c` 的 `sk_tts_speak`。
 
 ## 二、功能构成
 
@@ -21,15 +21,15 @@
 | `src/route/voice.h` | 播报策略的公开接口：分级提前量常量、告警类型、冷却常量、`VoiceRouter`/`VoiceFrame` 结构、各 `voice_*` 原型 | `voice.h:1` 起 |
 | `src/route/voice.c` | **纯逻辑**：只决定"该播第几级 + 这句话怎么说"，不碰发声/线程 | `voice.c:1` 起 |
 | `src/ui/voice_wire.h` | 接线层的状态集合 `NavVoiceCtx` 与入口 `nav_voice_frame` 声明 | `voice_wire.h:36` |
-| `src/ui/voice_wire.c` | **唯一接线点**：取状态 → `voice_tick` 编排 → `nm_tts_speak` 发声；到达帧例外处理 | `voice_wire.c:15` |
-| `src/utils/plat.h` | 平台抽象层声明，含离线 TTS 接口 `nm_tts_speak` 等 | `plat.h:150` 起 |
-| `src/utils/plat.c` | `nm_tts_speak` 实现（常驻会话 + 队列 + 后台朗读线程） | `plat.c:1127` |
+| `src/ui/voice_wire.c` | **唯一接线点**：取状态 → `voice_tick` 编排 → `sk_tts_speak` 发声；到达帧例外处理 | `voice_wire.c:15` |
+| `src/utils/plat.h` | 平台抽象层声明，含离线 TTS 接口 `sk_tts_speak` 等 | `plat.h:150` 起 |
+| `src/utils/plat.c` | `sk_tts_speak` 实现（常驻会话 + 队列 + 后台朗读线程） | `plat.c:1127` |
 
 **分层要点**
 
 - **策略层**：`src/route/voice.c`——抄写自 OsmAnd，纯逻辑、零平台依赖（不碰 SDL、不碰线程、不发声）。回答两个问题："现在该播第几级？"（`voice_announce_state`）和"这句话怎么说？"（`voice_turn_phrase`/`voice_alarm_phrase`/`voice_spoken_distance`）。
 - **接线层**：`src/ui/voice_wire.c`——取哪些状态、按什么顺序交给 TTS。这一帧的编排（`voice_tick`）本身在 `voice.c`，接线层只负责"取状态 + 发声"。
-- **发声层**：`nm_tts_speak`（`src/utils/plat.c`）——跨平台离线 TTS，Windows 走 PowerShell+SAPI 常驻会话，其它平台探测 espeak-ng/espeak/say/festival。
+- **发声层**：`sk_tts_speak`（`src/utils/plat.c`）——跨平台离线 TTS，Windows 走 PowerShell+SAPI 常驻会话，其它平台探测 espeak-ng/espeak/say/festival。
 
 关键结构（均在 `voice.h`）：
 
@@ -42,8 +42,8 @@
 ### 3.1 策略层接口 `src/route/voice.h`（完整）
 
 ```h
-#ifndef NAVIMAP_VOICE_H
-#define NAVIMAP_VOICE_H
+#ifndef SKEDADDLE_VOICE_H
+#define SKEDADDLE_VOICE_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -78,7 +78,7 @@
  * 慢路上不啰嗦。
  *
  * 本模块是**纯逻辑、零平台依赖**：只决定"该说什么"，不碰发声。
- * 发声在 utils/plat.c（nm_tts_speak）。这样判据能在 CLI 里无头跑。
+ * 发声在 utils/plat.c（sk_tts_speak）。这样判据能在 CLI 里无头跑。
  * ------------------------------------------------------------------------- */
 
 /* ---- 播报层级 ----
@@ -371,7 +371,7 @@ int  voice_tick(VoiceRouter *vr, const RouteResult *rr, const ManeuverList *ml,
                 int man_idx, double to_go_m, double speed_ms, double remain_m,
                 int arrived, uint64_t now_ms, VoiceFrame *out);
 
-#endif /* NAVIMAP_VOICE_H */
+#endif /* SKEDADDLE_VOICE_H */
 ```
 
 ### 3.2 接线层声明 `src/ui/voice_wire.h`（完整）
@@ -390,8 +390,8 @@ int  voice_tick(VoiceRouter *vr, const RouteResult *rr, const ManeuverList *ml,
  *   策略层（该播第几级 / 话术 / 冷却）在 route/voice.c，纯逻辑、零平台依赖；
  *   接线层（这一帧取哪些状态、按什么顺序交给 TTS）在本模块。
  */
-#ifndef NAVIMAP_UI_VOICE_WIRE_H
-#define NAVIMAP_UI_VOICE_WIRE_H
+#ifndef SKEDADDLE_UI_VOICE_WIRE_H
+#define SKEDADDLE_UI_VOICE_WIRE_H
 
 #include <stdint.h>
 
@@ -424,9 +424,9 @@ typedef struct {
 
 /* 播报一帧（生产接线函数）。
  *
- * ★ 时间由调用方注入（生产传 nm_now_ms()，自测传合成时钟）
+ * ★ 时间由调用方注入（生产传 sk_now_ms()，自测传合成时钟）
  *   ⇒ 冷却 / 去抖的判据确定可复现。
- * ★ 发声走 nm_tts_speak() ⇒ 无头自测用 NAVIMAP_TTS_DRYRUN
+ * ★ 发声走 sk_tts_speak() ⇒ 无头自测用 SKEDADDLE_TTS_DRYRUN
  *   捕获"窗口真正交出去的话"，而不是自己复刻一份收集逻辑。 */
 void nav_voice_frame(NavVoiceCtx *c, uint64_t now_ms);
 
@@ -491,7 +491,7 @@ void nav_voice_frame(NavVoiceCtx *c, uint64_t now_ms)
     int suppress = c->paused && !c->sim->arrived;
     if (!suppress) {
         for (int i = 0; i < n; i++)
-            nm_tts_speak(vf.text[i]);
+            sk_tts_speak(vf.text[i]);
     }
 
     /* 5) 终点收尾语（官方 NavigationDialogs.stopNavigation 的 arrived 分支）。
@@ -499,7 +499,7 @@ void nav_voice_frame(NavVoiceCtx *c, uint64_t now_ms)
      *      用 ann_finished 保证只播一次（与 vr.arrived_said 是两件事）。 */
     if (c->sim->arrived && !*c->ann_finished) {
         *c->ann_finished = 1;
-        nm_tts_speak("您已到达目的地附近，导航结束");
+        sk_tts_speak("您已到达目的地附近，导航结束");
     }
 }
 ```
@@ -513,7 +513,7 @@ void nav_voice_frame(NavVoiceCtx *c, uint64_t now_ms)
  *
  * 对应源文件见 voice.h 的头部清单。本文件是**纯逻辑**：不碰 SDL、不碰线程、
  * 不发声，只回答两个问题："现在该播第几级？" 和 "这句话怎么说？"
- * 发声由 utils/plat.c 的 nm_tts_speak 负责。
+ * 发声由 utils/plat.c 的 sk_tts_speak 负责。
  */
 #include "route/voice.h"
 
@@ -1198,36 +1198,36 @@ static double maneuver_dist_to_next(const ManeuverList *ml, int idx)
 /* ---------------- 语音播报（离线 TTS） ----------------
  * 跨平台离线发声：Windows 走 PowerShell + System.Speech（SAPI），
  * 其它平台按 PATH 探测 espeak-ng / espeak / say。真正的发声在分离线程里
- * 做（nm_thread_spawn），调用方（导航每帧推进）绝不被阻塞。
- * 设 NAVIMAP_TTS_DRYRUN=文件路径 时只把文本写进该文件、不真正发声，
+ * 做（sk_thread_spawn），调用方（导航每帧推进）绝不被阻塞。
+ * 设 SKEDADDLE_TTS_DRYRUN=文件路径 时只把文本写进该文件、不真正发声，
  * 用于无头自测（本机没有音频设备 / 没有 TTS 引擎时也能断言集成是否正确）。 */
-int  nm_tts_speak(const char *text);          /* 返回 1=已提交(或 dryrun 已写) / 0=无引擎 */
-int  nm_tts_available(void);                  /* 本机有可用引擎？（不含 dryrun） */
+int  sk_tts_speak(const char *text);          /* 返回 1=已提交(或 dryrun 已写) / 0=无引擎 */
+int  sk_tts_available(void);                  /* 本机有可用引擎？（不含 dryrun） */
 /* 累计被**受理**的播报句数（只读观测口，不改变任何状态）。
  * ★ 计数点在入队**之前**、调用线程内、无竞争 —— 不能读队列长度：后台
  *   朗读线程会异步喝空队列，"入队后立刻读 size()"是与活消费者赛跑
  *   （OsmAnd 的 Speech.OFFERED 踩过同一个坑）。 */
-int  nm_tts_offered_count(void);
+int  sk_tts_offered_count(void);
 /* 累计已**交付引擎**的句数（计数点在交给引擎之后、后台线程内）。
  * 与受理数配对可断言"队列真的被消费了" —— 只看受理数证明不了 worker 在跑。
  * ★ 不等于"已播完"：常驻会话下写入管道就返回，合成还在子进程那边进行中。
- *   要等真正播完用 nm_tts_flush()。 */
-int  nm_tts_delivered_count(void);
+ *   要等真正播完用 sk_tts_flush()。 */
+int  sk_tts_delivered_count(void);
 /* 等待"已受理的句子全部播完"。实现：关掉常驻会话的写端 ⇒ 子进程读到 EOF
  * ⇒ 循环退出 ⇒ 退出前会把当前句说完 ⇒ 子进程退出即精确的"播完"边界。
  * 返回 0 = 已排空并播完；-1 = 没有会话可关（无引擎）。 */
-int  nm_tts_flush(void);
+int  sk_tts_flush(void);
 ```
 
-### 3.6 发声实现 `src/utils/plat.c`：`nm_tts_speak`（完整）
+### 3.6 发声实现 `src/utils/plat.c`：`sk_tts_speak`（完整）
 
-> `nm_tts_speak` 是全部播报的终点（`voice_wire.c` 调用它）。它先走 `NAVIMAP_TTS_DRYRUN` 同步写文件（无头自测用它断言"真实交出去的话"），再判断本机是否有引擎，最后把文本送入队列由后台线程朗读。
+> `sk_tts_speak` 是全部播报的终点（`voice_wire.c` 调用它）。它先走 `SKEDADDLE_TTS_DRYRUN` 同步写文件（无头自测用它断言"真实交出去的话"），再判断本机是否有引擎，最后把文本送入队列由后台线程朗读。
 
 ```c
 /* ---- DRYRUN：无头自测用，把"发声"重定向到文件（确定性） ---- */
 static int tts_dryrun_write(const char *text)
 {
-    const char *dry = getenv("NAVIMAP_TTS_DRYRUN");
+    const char *dry = getenv("SKEDADDLE_TTS_DRYRUN");
     if (!dry || !*dry) return 0;
     FILE *f = fopen(dry, "ab");
     if (!f) return 0;
@@ -1243,11 +1243,11 @@ static void tts_speak_once(const char *text)
 {
 #ifdef _WIN32
     char ps[1024];
-    if (nm_find_in_path("powershell.exe", ps, sizeof(ps)) != 0) return;
+    if (sk_find_in_path("powershell.exe", ps, sizeof(ps)) != 0) return;
     char tmpl[1024];
-    int k = snprintf(tmpl, sizeof(tmpl), "%s/navimap_tts_%d_%llu.ps1",
-                     nm_temp_dir(), (int)nm_get_pid(),
-                     (unsigned long long)nm_now_ms());
+    int k = snprintf(tmpl, sizeof(tmpl), "%s/skedaddle_tts_%d_%llu.ps1",
+                     sk_temp_dir(), (int)sk_get_pid(),
+                     (unsigned long long)sk_now_ms());
     if (k < 0 || (size_t)k >= sizeof(tmpl)) return;
     FILE *f = fopen(tmpl, "wb");
     if (!f) return;
@@ -1264,25 +1264,25 @@ static void tts_speak_once(const char *text)
     fclose(f);
     char *argv[] = { ps, "-NoProfile", "-NonInteractive", "-File", tmpl, NULL };
     int code = 0;
-    nm_spawn_wait(ps, argv, &code);
-    nm_unlink(tmpl);
+    sk_spawn_wait(ps, argv, &code);
+    sk_unlink(tmpl);
 #else
     char exe[1024];
-    if (nm_find_in_path("spd-say", exe, sizeof(exe)) == 0) {
+    if (sk_find_in_path("spd-say", exe, sizeof(exe)) == 0) {
         char *argv[] = { exe, "-l", "zh", "-t", (char *)text, NULL };
-        int c = 0; nm_spawn_wait(exe, argv, &c); return;
+        int c = 0; sk_spawn_wait(exe, argv, &c); return;
     }
-    if (nm_find_in_path("espeak-ng", exe, sizeof(exe)) == 0) {
+    if (sk_find_in_path("espeak-ng", exe, sizeof(exe)) == 0) {
         char *argv[] = { exe, "-v", "zh", "-s", "160", (char *)text, NULL };
-        int c = 0; nm_spawn_wait(exe, argv, &c); return;
+        int c = 0; sk_spawn_wait(exe, argv, &c); return;
     }
-    if (nm_find_in_path("espeak", exe, sizeof(exe)) == 0) {
+    if (sk_find_in_path("espeak", exe, sizeof(exe)) == 0) {
         char *argv[] = { exe, "-v", "zh", "-s", "160", (char *)text, NULL };
-        int c = 0; nm_spawn_wait(exe, argv, &c); return;
+        int c = 0; sk_spawn_wait(exe, argv, &c); return;
     }
-    if (nm_find_in_path("say", exe, sizeof(exe)) == 0) {
+    if (sk_find_in_path("say", exe, sizeof(exe)) == 0) {
         char *argv[] = { exe, (char *)text, NULL };
-        int c = 0; nm_spawn_wait(exe, argv, &c); return;
+        int c = 0; sk_spawn_wait(exe, argv, &c); return;
     }
 #endif
     /* 没有任何引擎：静默（无头环境不报错） */
@@ -1290,7 +1290,7 @@ static void tts_speak_once(const char *text)
 
 /* ---- 常驻会话（Windows）：一个 powershell 进程，逐行喂文本 ---- */
 #ifdef _WIN32
-static NmProc *g_sapi = NULL;      /* 常驻会话（NULL = 还没起或已坏） */
+static SkProc *g_sapi = NULL;      /* 常驻会话（NULL = 还没起或已坏） */
 static char     g_sapi_script[1024]; /* 脚本文件路径（NULL 串 = 还没写） */
 
 /* ★ 为什么用 `-File <脚本>` 而不是 `-Command <脚本>`：
@@ -1327,7 +1327,7 @@ static int sapi_script_write(void)
 {
     if (g_sapi_script[0]) return 1;
     int k = snprintf(g_sapi_script, sizeof g_sapi_script,
-                     "%s/navimap_tts_session_%d.ps1", nm_temp_dir(), (int)nm_get_pid());
+                     "%s/skedaddle_tts_session_%d.ps1", sk_temp_dir(), (int)sk_get_pid());
     if (k < 0 || (size_t)k >= sizeof g_sapi_script) { g_sapi_script[0] = '\0'; return 0; }
     FILE *f = fopen(g_sapi_script, "wb");
     if (!f) { g_sapi_script[0] = '\0'; return 0; }
@@ -1340,19 +1340,19 @@ static int sapi_script_write(void)
 
 static int sapi_session_start(void)
 {
-    if (g_sapi && nm_proc_alive(g_sapi)) return 1;
-    if (g_sapi) { nm_proc_close(g_sapi); g_sapi = NULL; }
+    if (g_sapi && sk_proc_alive(g_sapi)) return 1;
+    if (g_sapi) { sk_proc_close(g_sapi); g_sapi = NULL; }
 
     char ps[1024];
-    if (nm_find_in_path("powershell.exe", ps, sizeof(ps)) != 0) return 0;
+    if (sk_find_in_path("powershell.exe", ps, sizeof(ps)) != 0) return 0;
     if (!sapi_script_write()) return 0;
 
     char *argv[] = { ps, "-NoProfile", "-NonInteractive", "-File", g_sapi_script, NULL };
-    g_sapi = nm_proc_spawn(ps, argv);
+    g_sapi = sk_proc_spawn(ps, argv);
     if (!g_sapi) return 0;
     /* 探测会话是否真的起来了：写一行空行，若管道已断则写失败。 */
-    if (nm_proc_write(g_sapi, "\n") < 0) {
-        nm_proc_close(g_sapi);
+    if (sk_proc_write(g_sapi, "\n") < 0) {
+        sk_proc_close(g_sapi);
         g_sapi = NULL;
         return 0;
     }
@@ -1362,16 +1362,16 @@ static int sapi_session_start(void)
 
 /* ---- POSIX 常驻会话：festival 从 stdin 读文本；其余是一次性的 ---- */
 #ifndef _WIN32
-static NmProc *g_festival = NULL;
+static SkProc *g_festival = NULL;
 
 static int festival_session_start(void)
 {
-    if (g_festival && nm_proc_alive(g_festival)) return 1;
-    if (g_festival) { nm_proc_close(g_festival); g_festival = NULL; }
+    if (g_festival && sk_proc_alive(g_festival)) return 1;
+    if (g_festival) { sk_proc_close(g_festival); g_festival = NULL; }
     char exe[1024];
-    if (nm_find_in_path("festival", exe, sizeof(exe)) != 0) return 0;
+    if (sk_find_in_path("festival", exe, sizeof(exe)) != 0) return 0;
     char *argv[] = { exe, "--tts", NULL };
-    g_festival = nm_proc_spawn(exe, argv);
+    g_festival = sk_proc_spawn(exe, argv);
     return g_festival != NULL;
 }
 #endif
@@ -1388,9 +1388,9 @@ static void tts_backend_speak(const char *text)
             buf[k++] = (*p == '\n' || *p == '\r') ? ' ' : *p;
         }
         buf[k] = '\0';
-        if (nm_proc_write(g_sapi, buf) > 0 && nm_proc_write(g_sapi, "\n") > 0) return;
+        if (sk_proc_write(g_sapi, buf) > 0 && sk_proc_write(g_sapi, "\n") > 0) return;
         /* 写失败 ⇒ 会话坏了 ⇒ 回退单句模式（OsmAnd: sessionBroken） */
-        nm_proc_close(g_sapi);
+        sk_proc_close(g_sapi);
         g_sapi = NULL;
     }
     tts_speak_once(text);
@@ -1400,9 +1400,9 @@ static void tts_backend_speak(const char *text)
      * 原先漏了这步调用 ⇒ festival_session_start 成了死函数、且 Linux 下
      * festival 路径永远走不到（g_festival 恒为 NULL）。 */
     if (!g_festival) festival_session_start();
-    if (g_festival && nm_proc_alive(g_festival)) {
-        if (nm_proc_write(g_festival, text) > 0 && nm_proc_write(g_festival, "\n") > 0) return;
-        nm_proc_close(g_festival);
+    if (g_festival && sk_proc_alive(g_festival)) {
+        if (sk_proc_write(g_festival, text) > 0 && sk_proc_write(g_festival, "\n") > 0) return;
+        sk_proc_close(g_festival);
         g_festival = NULL;
     }
     tts_speak_once(text);
@@ -1418,9 +1418,9 @@ typedef struct TtsItem {
 } TtsItem;
 
 static struct {
-    NmMutex *lock;
-    NmCond  *not_empty;     /* 有文本可取 */
-    NmCond  *not_full;      /* 队列有空间 */
+    SkMutex *lock;
+    SkCond  *not_empty;     /* 有文本可取 */
+    SkCond  *not_full;      /* 队列有空间 */
     TtsItem *head, *tail;
     int      count;
     int      running;       /* worker 是否已起 */
@@ -1433,14 +1433,14 @@ static struct {
 /* ★ 受理计数：计数点放在**入队之前**、调用线程内、无竞争。
  *   不能读队列长度 —— 后台线程会异步喝空队列，"入队后立刻读 size()"是
  *   与活消费者赛跑（OsmAnd 踩过同一个坑，见 Speech.OFFERED 的注释）。 */
-int nm_tts_offered_count(void) { return g_tts.offered; }
+int sk_tts_offered_count(void) { return g_tts.offered; }
 
 /* ★ 已交付引擎计数：计数点在**把文本交给引擎之后**、后台线程内。
  *   与"受理"配对可断言"队列真的被消费了"—— 只看受理数证明不了 worker
  *   真的在跑（可能线程没起来）。
  *   ★ 注意它**不等于"已播完"**：常驻会话下"写入管道"就返回了，合成还在
- *     子进程那边进行中。要等真正播完用 nm_tts_flush()。 */
-int nm_tts_delivered_count(void) { return g_tts.delivered; }
+ *     子进程那边进行中。要等真正播完用 sk_tts_flush()。 */
+int sk_tts_delivered_count(void) { return g_tts.delivered; }
 
 /* ★ 等待"已受理的句子全部播完"。实现：关掉常驻会话的写端 ⇒ 子进程读到
  *   EOF ⇒ 循环退出 ⇒ 子进程退出前会把当前句说完。于是"子进程退出"
@@ -1448,25 +1448,25 @@ int nm_tts_delivered_count(void) { return g_tts.delivered; }
  *   返回 0 = 已排空并播完；-1 = 没有会话可关（无引擎）。
  *   ★ 这是判定"播报真的出声了"的唯一可靠手段：常驻会话下写入即返回，
  *     看写入返回证明不了合成完成。 */
-int nm_tts_flush(void)
+int sk_tts_flush(void)
 {
     if (!g_tts.running) return -1;
     /* 先等队列排空（worker 把最后一句也交给引擎） */
     for (int i = 0; i < 2000; i++) {
-        nm_mutex_lock(g_tts.lock);
+        sk_mutex_lock(g_tts.lock);
         int empty = (g_tts.count == 0 && g_tts.inflight == 0);
-        nm_mutex_unlock(g_tts.lock);
+        sk_mutex_unlock(g_tts.lock);
         if (empty) break;
-        nm_sleep_ms(5);
+        sk_sleep_ms(5);
     }
 #ifdef _WIN32
     if (g_sapi) {
-        nm_proc_close(g_sapi);      /* 关写端 ⇒ 子进程读到 EOF ⇒ 说完当前句后退出 */
+        sk_proc_close(g_sapi);      /* 关写端 ⇒ 子进程读到 EOF ⇒ 说完当前句后退出 */
         g_sapi = NULL;
     }
 #else
     if (g_festival) {
-        nm_proc_close(g_festival);
+        sk_proc_close(g_festival);
         g_festival = NULL;
     }
 #endif
@@ -1501,23 +1501,23 @@ static void tts_worker(void *p)
 {
     (void)p;
     for (;;) {
-        nm_mutex_lock(g_tts.lock);
+        sk_mutex_lock(g_tts.lock);
         while (g_tts.count == 0 && !g_tts.stop)
-            nm_cond_wait(g_tts.not_empty, g_tts.lock);
-        if (g_tts.count == 0 && g_tts.stop) { nm_mutex_unlock(g_tts.lock); break; }
+            sk_cond_wait(g_tts.not_empty, g_tts.lock);
+        if (g_tts.count == 0 && g_tts.stop) { sk_mutex_unlock(g_tts.lock); break; }
         char *text = tts_queue_pop();
         g_tts.inflight = 1;          /* 取走即算"在飞"（flush 据此判断没排空） */
-        nm_cond_signal(g_tts.not_full);
-        nm_mutex_unlock(g_tts.lock);
+        sk_cond_signal(g_tts.not_full);
+        sk_mutex_unlock(g_tts.lock);
 
         if (text) {
             tts_backend_speak(text);
             free(text);
-            nm_mutex_lock(g_tts.lock);
+            sk_mutex_lock(g_tts.lock);
             g_tts.delivered++;
             g_tts.inflight = 0;
-            nm_cond_signal(g_tts.not_full);
-            nm_mutex_unlock(g_tts.lock);
+            sk_cond_signal(g_tts.not_full);
+            sk_mutex_unlock(g_tts.lock);
         }
     }
 }
@@ -1525,20 +1525,20 @@ static void tts_worker(void *p)
 static int tts_queue_init(void)
 {
     if (g_tts.running) return 1;
-    g_tts.lock      = nm_mutex_create();
-    g_tts.not_empty = nm_cond_create();
-    g_tts.not_full  = nm_cond_create();
+    g_tts.lock      = sk_mutex_create();
+    g_tts.not_empty = sk_cond_create();
+    g_tts.not_full  = sk_cond_create();
     if (!g_tts.lock || !g_tts.not_empty || !g_tts.not_full) return 0;
     g_tts.head = g_tts.tail = NULL;
     g_tts.count = 0;
     g_tts.stop = 0;
     g_tts.running = 1;
-    if (nm_thread_spawn(tts_worker, NULL) != 0) { g_tts.running = 0; return 0; }
+    if (sk_thread_spawn(tts_worker, NULL) != 0) { g_tts.running = 0; return 0; }
     return 1;
 }
 /* === src/utils/plat.c:828-1125 完 === */
 
-int nm_tts_speak(const char *text)
+int sk_tts_speak(const char *text)
 {
     if (!text || !*text) return 0;
 
@@ -1546,7 +1546,7 @@ int nm_tts_speak(const char *text)
     if (tts_dryrun_write(text)) return 1;
 
     /* 本机没有可用引擎就不受理（无头环境静默） */
-    if (!nm_tts_available()) return 0;
+    if (!sk_tts_available()) return 0;
 
     if (!tts_queue_init()) {
         /* 起不了队列（内存不足等极端情况）⇒ 退回"每句一个进程"的旧行为。
@@ -1555,9 +1555,9 @@ int nm_tts_speak(const char *text)
         return 1;
     }
 
-    char *copy = nm_strdup(text);
+    char *copy = sk_strdup(text);
     if (!copy) return 0;
-    nm_mutex_lock(g_tts.lock);
+    sk_mutex_lock(g_tts.lock);
     g_tts.offered++;
     /* 队列满 ⇒ 丢掉最老的（导航播报宁可少一句也不要延迟堆积） */
     while (g_tts.count >= TTS_QUEUE_MAX) {
@@ -1566,31 +1566,31 @@ int nm_tts_speak(const char *text)
         free(old);
     }
     tts_queue_push(copy);
-    nm_cond_signal(g_tts.not_empty);
-    nm_mutex_unlock(g_tts.lock);
+    sk_cond_signal(g_tts.not_empty);
+    sk_mutex_unlock(g_tts.lock);
     return 1;
 }
 ```
 
-> 说明：上方 `nm_tts_speak` 之前的 `tts_speak_once`/`tts_backend_speak`/`tts_worker`/`tts_queue_*` 等 TTS 队列与常驻会话机制（约 `plat.c:828`–`plat.c:1125`）已**完整**嵌入上文代码块（逐字、可编译）；`nm_tts_speak` 本身亦为**完整体**。
+> 说明：上方 `sk_tts_speak` 之前的 `tts_speak_once`/`tts_backend_speak`/`tts_worker`/`tts_queue_*` 等 TTS 队列与常驻会话机制（约 `plat.c:828`–`plat.c:1125`）已**完整**嵌入上文代码块（逐字、可编译）；`sk_tts_speak` 本身亦为**完整体**。
 
 ## 四、与其他功能之间的联系
 
 - **上游（消费）**：第 10 课 `RouteResult`（`rr`）、`ManeuverList`（`man`，由 `maneuver_build` 生成）、`NavSim`（`sim`，由 `navsim_start`/`navsim_tick` 推进）。`nav_voice_frame` 从 `NavSim` 取剩余里程/速度/到达标志、`navsim_next_maneuver` 求当前指令下标与距离。
 - **下游 · 第 12 课**：`nav_voice_frame` 被 Qt 主循环的 `MapCanvas::tick()`→`app_nav_sim_tick`→（window.c 的 `app_nav_sim_tick`）调用；Qt 的 V 键 / 设置菜单把 `App.voice_on` 置位，即 `NavVoiceCtx.voice_on`。`NavSim` 的 `off_m`/`proj_m` 供 Qt 偏航重算 UI；`VoiceFrame`/`VoiceRouter` 纯逻辑被 `tools/voice_e2e.c` 复用做无头端到端验收。
-- **横切**：发声经由第 2 课 `plat.c` 的平台抽象层（`nm_tts_speak`/`nm_thread_spawn`/`nm_proc_*`），**不链 SDL**；语音判定与渲染（第 8 课 `navdraw`）完全解耦。
+- **横切**：发声经由第 2 课 `plat.c` 的平台抽象层（`sk_tts_speak`/`sk_thread_spawn`/`sk_proc_*`），**不链 SDL**；语音判定与渲染（第 8 课 `navdraw`）完全解耦。
 - **唯一接线纪律**：`voice.c` 纯逻辑 + `plat.c` 发声，二者之间**只有** `voice_wire.c:nav_voice_frame` 这一份接线。自测 `tools/voice_e2e.c` 调的就是这一份——若把发声循环改坏，端到端判据必然变红。
 
 ## 五、演示、练习与验收
 
 - **演示**：
   - `./build_rel/skedaddle`（GUI）模拟导航，听转向/限速/到达/隧道播报；用 V 键静音验证 `voice_on` 开关。
-  - 无头端到端：`NAVIMAP_TTS_DRYRUN=/tmp/tts.txt ./build_rel/skedaddle_voice_e2e`（直接断言真实发声文本，不依赖音频设备）。
-  - 冷却/到达帧/去抖专项：`NAVIMAP_TTS_DRYRUN=/tmp/tts.txt ./build_rel/skedaddle_voice_e2e`，对照用例 A8（到达帧必播收尾语）与负向用例 #9/#10（模拟 `paused` 提前置位时收尾语仍播出）。
-  - 自检：`NAVIMAP_TTS_DRYRUN=/tmp/tts.txt ./build_rel/skedaddle_voice_selftest`。
-- **练习**：在 `voice.c` 的 `g_alarm` 表里加一条新告警（如"前方 200 米有收费站"的二级话术），用 `skedaddle_voice_e2e` + `NAVIMAP_TTS_DRYRUN` 验证它真的被说出；或改 `VOICE_COOLDOWN_SAME_TEXT_MS` 验证同文本冷却对四类播报一视同仁。
+  - 无头端到端：`SKEDADDLE_TTS_DRYRUN=/tmp/tts.txt ./build_rel/skedaddle_voice_e2e`（直接断言真实发声文本，不依赖音频设备）。
+  - 冷却/到达帧/去抖专项：`SKEDADDLE_TTS_DRYRUN=/tmp/tts.txt ./build_rel/skedaddle_voice_e2e`，对照用例 A8（到达帧必播收尾语）与负向用例 #9/#10（模拟 `paused` 提前置位时收尾语仍播出）。
+  - 自检：`SKEDADDLE_TTS_DRYRUN=/tmp/tts.txt ./build_rel/skedaddle_voice_selftest`。
+- **练习**：在 `voice.c` 的 `g_alarm` 表里加一条新告警（如"前方 200 米有收费站"的二级话术），用 `skedaddle_voice_e2e` + `SKEDADDLE_TTS_DRYRUN` 验证它真的被说出；或改 `VOICE_COOLDOWN_SAME_TEXT_MS` 验证同文本冷却对四类播报一视同仁。
 - **验收**：能解释并对照源码说明
   1. `voice_wire.c` 为什么是**唯一**接线点（对比 `tools/voice_e2e.c` 共用同一函数）；
   2. 到达帧为什么不受 `paused` 抑制（`voice_wire.c:49` 的 `suppress` 表达式）；
   3. `say_dup`（同文本 15s 冷却）是所有播报的唯一出口（`voice.c` 中四处 `say_dup` 调用）；
-  4. `voice.c` 纯逻辑、零平台依赖，`nm_tts_speak` 才真正出声。
+  4. `voice.c` 纯逻辑、零平台依赖，`sk_tts_speak` 才真正出声。

@@ -9,7 +9,7 @@ build_test/
 cmake-build-*/
 
 # 仓库根目录的 settings.ini 是跑测试时生成的临时配置，真实配置在
-# %APPDATA%/navimap/（Windows）或 $XDG_CONFIG_HOME/navimap（Linux）。
+# %APPDATA%/skedaddle/（Windows）或 $XDG_CONFIG_HOME/skedaddle（Linux）。
 /settings.ini
 
 # ===== 地图数据产物：4.2 GB，全部可重建，不入库 =====

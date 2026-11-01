@@ -1,4 +1,4 @@
-# NavMap 项目教案（循序渐进版）
+# Skedaddle 项目教案（循序渐进版）
 
 > 适用对象：有一定 C 语言基础、想通过**一个真实工程**理解"离线地图导航"全栈实现的学习者。
 > 教学主线：先让程序**跑起来** → 再读懂**每一层在做什么** → 最后能**改得动、测得准**。
@@ -21,7 +21,7 @@
 1. **能实测就不要估算**——性能瓶颈、算法正确性一律靠 `scripts/regress.sh`、像素判据、确定性量说话，不靠"我觉得"。
 2. **核心与窗口系统解耦**——C 渲染核心一行不动，Qt 只把像素缓冲包成 `QImage`。这就是为什么能"无头出图 + GUI 两套前端共用同一渲染入口"。
 3. **依赖是纯 DAG**——`utils ← pbf ← map ← route ← render ← ui ← ui_qt`，反向依赖会立刻 `undefined-reference`。`scripts/check_layers.sh` 是守护门禁。
-4. **核心零 SDL**——`navimap_core` 连 SDL 的 include 都不给；SDL 仅残留在两个去 SDL 化对照体（`skedaddle_blend_equiv`/`skedaddle_clip_equiv`）里做"逐像素等价"验证。
+4. **核心零 SDL**——`skedaddle_core` 连 SDL 的 include 都不给；SDL 仅残留在两个去 SDL 化对照体（`skedaddle_blend_equiv`/`skedaddle_clip_equiv`）里做"逐像素等价"验证。
 
 ### 0.3 课程表（建议 15 篇：第 0 课总览 → 第 14 课综合项目，编号与 `tutorial/00–14` 一一对应）
 
@@ -107,20 +107,20 @@ cmake --build build_rel -j$(nproc)
 **前置知识**：经纬度、墨卡托投影、大地基准（datum）的直觉。
 
 **必读代码**
-- `src/utils/geo.h` / `geo.c`：`nm_lat_to_i32`/`nm_i32_to_deg`（坐标量化成 1e-7 度 int32）、`nm_haversine_m`（真实测距）、`nm_mercator`/`nm_mercator_y_fast`（每帧几十万次的投影，**快版故意不逐位等于精确版**，换 5~6× 速度）。
+- `src/utils/geo.h` / `geo.c`：`sk_lat_to_i32`/`sk_i32_to_deg`（坐标量化成 1e-7 度 int32）、`sk_haversine_m`（真实测距）、`sk_mercator`/`sk_mercator_y_fast`（每帧几十万次的投影，**快版故意不逐位等于精确版**，换 5~6× 速度）。
 - `src/utils/datum.h` / `datum.c`：`DatumId`（WGS84/CGCS2000/BJ54/XA80）、`datum_wgs84_to`、`datum_gk_forward/inverse`（高斯方里格）、`DatumSevenParam`（Bursa-Wolf 七参数）。
 
 **核心讲解**
 1. **内部几何永远是 WGS84**：坐标系只影响"显示读数"（经纬网、右下角坐标、方里格），**不重投影底图**。这是坐标系教学的关键不变量。
 2. **测距一律 haversine**，Web Mercator 只用于显示，不能拿来做距离（会随纬度失真）。
-3. **精确版 vs 快版投影**：`nm_mercator_y_fast` 用查表+插值，与 `nm_mercator_inv` 不互逆——讲"精度 vs 性能"取舍的绝佳案例。
+3. **精确版 vs 快版投影**：`sk_mercator_y_fast` 用查表+插值，与 `sk_mercator_inv` 不互逆——讲"精度 vs 性能"取舍的绝佳案例。
 
 **课堂演示**
 ```bash
 ./build_rel/skedaddle_datum_selftest        # 坐标系枚举/往返/位移合理性 + 负向对照
 ```
 
-**练习**：用 `nm_haversine_m` 和 `nm_fast_dist_m` 分别算北京→上海距离，对比误差与速度。
+**练习**：用 `sk_haversine_m` 和 `sk_fast_dist_m` 分别算北京→上海距离，对比误差与速度。
 
 **验收**：能说清"为什么内部用 WGS84、为什么投影要分快慢两版"。
 
@@ -131,20 +131,20 @@ cmake --build build_rel -j$(nproc)
 **课时目标**：理解"平台差异 100% 收口到 `plat.c`"这件事为什么重要。
 
 **必读代码**
-- `src/utils/plat.h` / `plat.c`：`NmMutex`/`NmCond`/`NmProc`/`NmDir`、`nm_thread_spawn`、`nm_now_ms/us`、`nm_tts_speak`、`nm_font_candidates`（中文字体候选链）。
-- `src/utils/mem.h` / `mem.c`：`nm_mmap_file`（钉死 glibc `mmap_threshold` 避免主堆崩溃）。
+- `src/utils/plat.h` / `plat.c`：`SkMutex`/`SkCond`/`SkProc`/`SkDir`、`sk_thread_spawn`、`sk_now_ms/us`、`sk_tts_speak`、`sk_font_candidates`（中文字体候选链）。
+- `src/utils/mem.h` / `mem.c`：`sk_mmap_file`（钉死 glibc `mmap_threshold` 避免主堆崩溃）。
 - `src/utils/strpool.h`：`StrPool` + `sp_intern/sp_get`（路名去重池，id 0 = "无名"）。
 
 **核心讲解**
 1. **业务代码零 `#ifdef _WIN32`**：所有"换个平台就不成立"的调用都只在 `plat.c` 里出现。这是**可移植性 / 依赖倒置**的范本。
-2. **链接纪律**：`plat.c` 的线程用 pthread 实现，故 `-pthread` 由 `navmap_plat` 库统一承载（CMakeLists.txt:213-222）。漏挂会在链接 `skedaddle_tts_selftest` 时报 `pthread_create` 未定义。
+2. **链接纪律**：`plat.c` 的线程用 pthread 实现，故 `-pthread` 由 `skedaddle_plat` 库统一承载（CMakeLists.txt:213-222）。漏挂会在链接 `skedaddle_tts_selftest` 时报 `pthread_create` 未定义。
 
 **课堂演示**
 ```bash
 ./build_rel/skedaddle_plat_selftest        # 平台层全接口自验收（正反双向）
 ```
 
-**练习**：在 `plat.c` 里加一个 `nm_sleep_ms`（用 `usleep`/`Sleep` 适配），并在一个 selftest 里调用它。
+**练习**：在 `plat.c` 里加一个 `sk_sleep_ms`（用 `usleep`/`Sleep` 适配），并在一个 selftest 里调用它。
 
 **验收**：能在不碰任何业务 `.c` 的前提下，新增一个跨平台小工具函数。
 
@@ -232,7 +232,7 @@ cmake --build build_rel -j$(nproc)
 
 **必读代码**
 - `src/map/map_view.h` / `map_view.c`：`MapView`（`lat/lon/zoom/w/h/rot`）+ **投影缓存** `cx,cy,scale` 与惰性失效键 `c_lat/c_lon/c_zoom/c_rot/c_w/c_h`）；`mv_project`/`mv_unproj`/`mv_fit_bbox`、`mv_proj_begin`/`mv_proj`（批量投影，与逐点等价但省缓存键比对）。
-- `src/map/tileidx.h` / `tileidx.c`：瓦片键三版本——`nm_tile_of`（查表+边界回退）/`nm_tile_of_raw`（纯查表，仅供自检证"边界回退必要"）/`nm_tile_of_exact`（sin+log 参考）。
+- `src/map/tileidx.h` / `tileidx.c`：瓦片键三版本——`sk_tile_of`（查表+边界回退）/`sk_tile_of_raw`（纯查表，仅供自检证"边界回退必要"）/`sk_tile_of_exact`（sin+log 参考）。
 
 **核心讲解**
 1. **投影缓存的惰性失效**：只有视口参数真正变了才重算 `cx,cy,scale`，否则直接复用——避免每帧重投影。
@@ -244,7 +244,7 @@ cmake --build build_rel -j$(nproc)
 ./build_rel/skedaddle_tile_xcheck         # 跨省接边验证
 ```
 
-**练习**：给定两个经纬度，手算 Z14 瓦片坐标，再用 `nm_tile_of` 验证。
+**练习**：给定两个经纬度，手算 Z14 瓦片坐标，再用 `sk_tile_of` 验证。
 
 **验收**：能写出"经纬度 → 屏幕像素"的调用链，并说明投影缓存为什么能省时间。
 
@@ -347,7 +347,7 @@ python3 scripts/bmpdiff.py z9_a.bmp z9_b.bmp    # 看丢了多少要素（要素
 **核心讲解**
 1. **★ 坐标即主键 `coord_key_e7`**：学 OsmAnd `id=(x31<<31)|y31`，跨省接边不需要"本省→全局"映射表。初版用 (省,节点) 当主键让北京→天津展开 111 万、抖 560 次，换键后消失。这是**状态空间设计**的范例。
 2. **加权 A\* 的 w 是旋钮**：默认 `ROUTE_HEUR_W_DEFAULT=1.4`（京→郑 1076→88ms，代价 +2.8%）；有 lm.bin 时兜底 `1.25`（h 变紧，有效贪心度变了）；自适应两遍：第 1 遍基准 w 撞 `adapt_try=200000` 才换更重的 `1.8` 重跑。**按概率分布调参，而非手挑路线**。
-3. **没有 CH，而是 Landmark（ALT）加速**：`lm.bin` 提供下界——**但它不是严格下界**（50 条里 2 条略次优），所以开 `--exact` 不再保证最优；验收对真值用 `NAVIMAP_LM=0`。纠正"CH/contraction"的常见误解。
+3. **没有 CH，而是 Landmark（ALT）加速**：`lm.bin` 提供下界——**但它不是严格下界**（50 条里 2 条略次优），所以开 `--exact` 不再保证最优；验收对真值用 `SKEDADDLE_LM=0`。纠正"CH/contraction"的常见误解。
 4. **终止条件**：`lb = exact ? max(ff,fb) : (ff+fb)`，≥`best` 即停。
 5. **关键数据文件**：路由图 = `nodes.bin` + `edges.bin`（均 NMBIN 自描述）；加速文件 = `rev.bin`（每省反向入边）+ `lm.bin`（整图一份，带图指纹）。
 
@@ -375,10 +375,10 @@ python3 scripts/bmpdiff.py z9_a.bmp z9_b.bmp    # 看丢了多少要素（要素
 - `src/route/maneuver.h` / `maneuver.c`：`Maneuver`/`ManeuverList`——把 `RouteResult` 转成"左转/右转/到达"指令序列。
 - `src/route/navsim.h` / `navsim.c`：`NavSim`——模拟定位 / 偏航 / 剩余 ETA，`navsim_start/advance/locate`。
 - `src/route/voice.h` / `voice.c`：`VoiceRouter`/`VoiceFrame`——**只决定"说什么"**（纯逻辑）。
-- `src/ui/voice_wire.h` / `voice_wire.c`：`nav_voice_frame`——**接线层**（取状态→编排→`nm_tts_speak`）。生产与 `tools/voice_e2e.c` 共用，是唯一裁决点。
+- `src/ui/voice_wire.h` / `voice_wire.c`：`nav_voice_frame`——**接线层**（取状态→编排→`sk_tts_speak`）。生产与 `tools/voice_e2e.c` 共用，是唯一裁决点。
 
 **核心讲解**
-1. **分层**：`voice.c` 只定"说什么"，发声在 `plat.c` 的 `nm_tts_speak`；接线**只有一份**在 `voice_wire.c`。接线若长在 `App` 里，无头自测够不着只能复刻 ⇒ 判据必假绿。
+1. **分层**：`voice.c` 只定"说什么"，发声在 `plat.c` 的 `sk_tts_speak`；接线**只有一份**在 `voice_wire.c`。接线若长在 `App` 里，无头自测够不着只能复刻 ⇒ 判据必假绿。
 2. **顺序耦合**：到达那一刻既要置 `sim_paused=1` 又要播收尾语 ⇒ ①先播报后置位；②收尾语单独判、不受 paused 挡（否则永远播不出来，实测真 bug）。
 3. **冷却**：官方 `say()` 是**所有**播报唯一出口，15 秒同文本冷却对限速/到达/告警/转向一视同仁。
 
@@ -386,11 +386,11 @@ python3 scripts/bmpdiff.py z9_a.bmp z9_b.bmp    # 看丢了多少要素（要素
 ```bash
 ./build_rel/skedaddle_navsim_cli --help              # 模拟定位/偏航/ETA
 ./build_rel/skedaddle_voice_selftest                 # 播报策略（话术/提前量/节奏）
-NAVIMAP_TTS_DRYRUN=/tmp/tts.txt ./build_rel/skedaddle_voice_e2e   # 端到端：直接断言真实发声文本
+SKEDADDLE_TTS_DRYRUN=/tmp/tts.txt ./build_rel/skedaddle_voice_e2e   # 端到端：直接断言真实发声文本
 ./scripts/voice_neg.sh                     # 负向对照
 ```
 
-**练习**：在 `voice.c` 里加一条新播报规则（如"前方 200 米有收费站"），然后用 `skedaddle_voice_e2e` + `NAVIMAP_TTS_DRYRUN` 验证它真的被说出。
+**练习**：在 `voice.c` 里加一条新播报规则（如"前方 200 米有收费站"），然后用 `skedaddle_voice_e2e` + `SKEDADDLE_TTS_DRYRUN` 验证它真的被说出。
 
 **验收**：能解释"为什么 `voice_wire.c` 是唯一接线点、为什么收尾语要单独判"。
 
@@ -500,7 +500,7 @@ NAVIMAP_TTS_DRYRUN=/tmp/tts.txt ./build_rel/skedaddle_voice_e2e   # 端到端：
 
 ### C. 常见坑（给学生提前打预防针）
 
-- `nm_mercator_y_fast` ≠ `nm_mercator`（故意近似）。
+- `sk_mercator_y_fast` ≠ `sk_mercator`（故意近似）。
 - `RouteOpts` 必须**指名初始化**，位置初始化会静默错位。
 - 改 `.hpp` 后 ninja 可能不重编对应 `.cpp` ⇒ 注入的负向对照没进 exe ⇒ 假通过，需 `touch` 对应 `.cpp`。
 - 实验参数（`--ovl-alpha` 等）跑实验必须隔离配置（`XDG_CONFIG_HOME=/tmp/xxx`），否则污染真实 `settings.ini`。

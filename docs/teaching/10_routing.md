@@ -364,13 +364,13 @@ int rev_build_mem(const NMBinFile *nodes, const NMBinFile *edges,
 
     /* 计数：按 from 节点遍历（CSR 天然按 from 分组） */
     for (uint64_t i = 0; i < n; i++) {
-        const uint8_t *nr = nds + i * NM_NODE_BYTES;
-        uint32_t eb = nm_get_u32(nr + NF_EDGE_BEGIN);
-        uint32_t ec = nm_get_u16(nr + NF_EDGE_COUNT);
+        const uint8_t *nr = nds + i * SK_NODE_BYTES;
+        uint32_t eb = sk_get_u32(nr + NF_EDGE_BEGIN);
+        uint32_t ec = sk_get_u16(nr + NF_EDGE_COUNT);
         for (uint32_t k = 0; k < ec; k++) {
             uint64_t ei = (uint64_t)eb + k;
             if (ei >= ne) break;
-            uint32_t to = nm_get_u32(eds + ei * NM_EDGE_BYTES + EF_TO);
+            uint32_t to = sk_get_u32(eds + ei * SK_EDGE_BYTES + EF_TO);
             if ((uint64_t)to >= n) continue;      /* 脏数据，忽略 */
             start[to + 1]++;
         }
@@ -387,13 +387,13 @@ int rev_build_mem(const NMBinFile *nodes, const NMBinFile *edges,
     start[n] = (uint32_t)acc;
     memcpy(cur, start, ((size_t)n + 1) * sizeof(uint32_t));
     for (uint64_t i = 0; i < n; i++) {
-        const uint8_t *nr = nds + i * NM_NODE_BYTES;
-        uint32_t eb = nm_get_u32(nr + NF_EDGE_BEGIN);
-        uint32_t ec = nm_get_u16(nr + NF_EDGE_COUNT);
+        const uint8_t *nr = nds + i * SK_NODE_BYTES;
+        uint32_t eb = sk_get_u32(nr + NF_EDGE_BEGIN);
+        uint32_t ec = sk_get_u16(nr + NF_EDGE_COUNT);
         for (uint32_t k = 0; k < ec; k++) {
             uint64_t ei = (uint64_t)eb + k;
             if (ei >= ne) break;
-            uint32_t to = nm_get_u32(eds + ei * NM_EDGE_BYTES + EF_TO);
+            uint32_t to = sk_get_u32(eds + ei * SK_EDGE_BYTES + EF_TO);
             if ((uint64_t)to >= n) continue;
             list[cur[to]++] = (uint32_t)i;
         }
@@ -446,7 +446,7 @@ double lm_bound_m(const LmTable *t, size_t tc, int32_t lat_e7, int32_t lon_e7)
 }
 ```
 
-★ 它不是**严格**下界（ALT 加速启发式）：50 条里 2 条开表更差 ⇒ 带 `lm.bin` 时 `--exact`/`w=1.0` 不再保证最优。验收真值请用 `NAVIMAP_LM=0`。
+★ 它不是**严格**下界（ALT 加速启发式）：50 条里 2 条开表更差 ⇒ 带 `lm.bin` 时 `--exact`/`w=1.0` 不再保证最优。验收真值请用 `SKEDADDLE_LM=0`。
 
 ### 6. 代价与启发式（完整）：`src/route/cost.c:14-54`
 
@@ -465,7 +465,7 @@ uint8_t fallback_speed(uint8_t cls)
 
 double edge_cost(const Router *r, const uint8_t *er, double *meters)
 {
-    double m = (double)nm_get_u32(er + EF_DIST_CM) / 100.0;
+    double m = (double)sk_get_u32(er + EF_DIST_CM) / 100.0;
     if (meters) *meters = m;
     if (!r->opt.mode_time) return m;
     uint8_t sp = er[EF_SPEED];
@@ -475,7 +475,7 @@ double edge_cost(const Router *r, const uint8_t *er, double *meters)
 
 double heur(const Router *r, int dir, int32_t lat_e7, int32_t lon_e7)
 {
-    double d = nm_haversine_m((double)lat_e7 / 1e7, (double)lon_e7 / 1e7,
+    double d = sk_haversine_m((double)lat_e7 / 1e7, (double)lon_e7 / 1e7,
                               (double)r->tgt_lat[dir] / 1e7,
                               (double)r->tgt_lon[dir] / 1e7);
     if (r->lm.loaded && r->lm_tc[dir] != (size_t)-1) {
@@ -493,19 +493,19 @@ double heur(const Router *r, int dir, int32_t lat_e7, int32_t lon_e7)
 ```c
 uint64_t node_coord(const MapSrc *s, uint32_t node)
 {
-    const uint8_t *nr = s->nodes.data + (uint64_t)node * NM_NODE_BYTES;
-    return coord_key_e7(nm_get_i32(nr + NF_LAT), nm_get_i32(nr + NF_LON));
+    const uint8_t *nr = s->nodes.data + (uint64_t)node * SK_NODE_BYTES;
+    return coord_key_e7(sk_get_i32(nr + NF_LAT), sk_get_i32(nr + NF_LON));
 }
 ```
 
-**`lm_enabled`**（地标表开关，默认开；`NAVIMAP_LM=0` 关，只读一次）：`src/route/cost.c:64-72`
+**`lm_enabled`**（地标表开关，默认开；`SKEDADDLE_LM=0` 关，只读一次）：`src/route/cost.c:64-72`
 
 ```c
 int lm_enabled(void)
 {
     static int v = -1;
     if (v < 0) {
-        const char *e = getenv("NAVIMAP_LM");
+        const char *e = getenv("SKEDADDLE_LM");
         v = !(e && e[0] == '0' && e[1] == '\0');
     }
     return v;
@@ -519,7 +519,7 @@ uint32_t lm_penalty_add_m(void)
 {
     static long v = -1;
     if (v < 0) {
-        const char *e = getenv("NAVIMAP_LM_PENALTY_ADD_M");
+        const char *e = getenv("SKEDADDLE_LM_PENALTY_ADD_M");
         v = e ? atol(e) : 0;
         if (v < 0) v = 0;
         if (v > 1000000) v = 1000000;
@@ -737,7 +737,7 @@ static int plan_search(Router *r, RNode from, RNode to, RouteResult *out,
     out->elapsed_ms = now_ms() - t0;
     out->expanded = r->expanded;
     if (!found) {
-        if (getenv("NAVIMAP_ROUTE_DEBUG")) {
+        if (getenv("SKEDADDLE_ROUTE_DEBUG")) {
             fprintf(stderr,
                     "[dbg] 未连通: 展开 %llu  堆[正]=%zu 堆[反]=%zu  "
                     "状态[正]=%llu 状态[反]=%llu  best=%g\n",
@@ -851,9 +851,9 @@ static int plan_search(Router *r, RNode from, RNode to, RouteResult *out,
                 return -2;
             }
             const uint8_t *er = r->ms->srcs[pr].edges.data +
-                                (uint64_t)ae[i] * NM_EDGE_BYTES;
+                                (uint64_t)ae[i] * SK_EDGE_BYTES;
             out->pts[i].prov = pr;
-            out->pts[i].node = nm_get_u32(er + EF_TO);
+            out->pts[i].node = sk_get_u32(er + EF_TO);
         }
         if (i + 1 < n) {
             uint32_t pr = ap[i + 1];
@@ -865,9 +865,9 @@ static int plan_search(Router *r, RNode from, RNode to, RouteResult *out,
             out->edge_idx[i]  = ae[i + 1];
             out->from_node[i] = af[i + 1];
             const uint8_t *er = r->ms->srcs[pr].edges.data +
-                                (uint64_t)ae[i + 1] * NM_EDGE_BYTES;
+                                (uint64_t)ae[i + 1] * SK_EDGE_BYTES;
             out->edge_cls[i] = er[EF_CLASS];
-            out->edge_flags[i] = (uint8_t)(nm_get_u16(er + EF_FLAGS) & 0xFF);
+            out->edge_flags[i] = (uint8_t)(sk_get_u16(er + EF_FLAGS) & 0xFF);
             double meters = 0;
             edge_cost(r, er, &meters);
             out->seg_m[i] = (uint32_t)(meters + 0.5);
@@ -899,7 +899,7 @@ size_t members_of(Router *r, uint64_t ck, uint32_t in_prov, uint32_t in_node,
     size_t nmem = 0;
     int32_t la = coord_key_lat(ck), lo = coord_key_lon(ck);
     int tx, ty;
-    nm_tile_of((double)la / 1e7, (double)lo / 1e7, &tx, &ty);
+    sk_tile_of((double)la / 1e7, (double)lo / 1e7, &tx, &ty);
     SewSlot *sl = sew_get(r, tx, ty);
     if (sl->nprov < 0) sl->nprov = tile_prov_count(r->ms, tx, ty);
 
@@ -992,14 +992,14 @@ static void expand_dir(Router *r, int dir, uint64_t ck, StEnt *e0,
         int check_restr = (p == in_prov && nd == in_node && in_edge != REDGE_SEAM);
 
         if (dir == DIR_FWD) {
-            const uint8_t *nr = s->nodes.data + (uint64_t)nd * NM_NODE_BYTES;
-            uint32_t eb = nm_get_u32(nr + NF_EDGE_BEGIN);
-            uint32_t ec = nm_get_u16(nr + NF_EDGE_COUNT);
+            const uint8_t *nr = s->nodes.data + (uint64_t)nd * SK_NODE_BYTES;
+            uint32_t eb = sk_get_u32(nr + NF_EDGE_BEGIN);
+            uint32_t ec = sk_get_u16(nr + NF_EDGE_COUNT);
             for (uint32_t k = 0; k < ec; k++) {
                 uint64_t ei = (uint64_t)eb + k;
                 if (ei >= ne) break;
-                const uint8_t *er = s->edges.data + ei * NM_EDGE_BYTES;
-                uint16_t fl = nm_get_u16(er + EF_FLAGS);
+                const uint8_t *er = s->edges.data + ei * SK_EDGE_BYTES;
+                uint16_t fl = sk_get_u16(er + EF_FLAGS);
                 if (fl & EF_NO_ACCESS) continue;
                 if (r->opt.avoid_toll && (fl & EF_TOLL)) continue;
                 if (r->opt.avoid_unpaved && (fl & EF_UNPAVED)) continue;
@@ -1020,7 +1020,7 @@ static void expand_dir(Router *r, int dir, uint64_t ck, StEnt *e0,
                 double w = edge_cost(r, er, &meters);
                 if (w <= 0) continue;
 
-                uint32_t to = nm_get_u32(er + EF_TO);
+                uint32_t to = sk_get_u32(er + EF_TO);
                 if ((uint64_t)to >= s->nodes.hdr.rec_count) continue;
                 uint64_t ck2 = node_coord(s, to);
                 if (ck2 == ck) continue;                  /* 自环 */
@@ -1063,17 +1063,17 @@ static void expand_dir(Router *r, int dir, uint64_t ck, StEnt *e0,
                 if (u == nd) continue;
                 /* 反向索引只存 from 节点，边下标要扫 u 的出边找 EF_TO==nd。
                    出度是个位数，比再存 4 字节/边划算。平行边取代价最小的。 */
-                const uint8_t *ur = s->nodes.data + (uint64_t)u * NM_NODE_BYTES;
-                uint32_t eb = nm_get_u32(ur + NF_EDGE_BEGIN);
-                uint32_t ec = nm_get_u16(ur + NF_EDGE_COUNT);
+                const uint8_t *ur = s->nodes.data + (uint64_t)u * SK_NODE_BYTES;
+                uint32_t eb = sk_get_u32(ur + NF_EDGE_BEGIN);
+                uint32_t ec = sk_get_u16(ur + NF_EDGE_COUNT);
                 uint64_t bei = REDGE_SEAM;
                 double bw = INF_G;
                 for (uint32_t q = 0; q < ec; q++) {
                     uint64_t ei = (uint64_t)eb + q;
                     if (ei >= ne) break;
-                    const uint8_t *er = s->edges.data + ei * NM_EDGE_BYTES;
-                    if (nm_get_u32(er + EF_TO) != nd) continue;
-                    uint16_t fl = nm_get_u16(er + EF_FLAGS);
+                    const uint8_t *er = s->edges.data + ei * SK_EDGE_BYTES;
+                    if (sk_get_u32(er + EF_TO) != nd) continue;
+                    uint16_t fl = sk_get_u16(er + EF_FLAGS);
                     if (fl & EF_NO_ACCESS) continue;
                     if (r->opt.avoid_toll && (fl & EF_TOLL)) continue;
                     if (r->opt.avoid_unpaved && (fl & EF_UNPAVED)) continue;
@@ -1156,12 +1156,12 @@ done:
 
 以下五个辅助函数逐字摘自 `src/route/route.c`（行号见各块标题），与源码可编译一致：
 
-**`now_ms`**（毫秒计时，平台层 `nm_now_ms` 封装）：`src/route/route.c:48-51`
+**`now_ms`**（毫秒计时，平台层 `sk_now_ms` 封装）：`src/route/route.c:48-51`
 
 ```c
 static uint64_t now_ms(void)
 {
-    return nm_now_ms();                /* 平台层：clock_gettime / QPC */
+    return sk_now_ms();                /* 平台层：clock_gettime / QPC */
 }
 ```
 
@@ -1462,9 +1462,9 @@ static void road_name_of(const RouteResult *rr, const MapSet *ms,
     mapset_ensure_loaded((MapSet *)ms, (int)prov);   /* 该省可能已被 set_view 卸载 */
     const MapSrc *src = &ms->srcs[prov];
     if ((uint64_t)eidx >= src->edges.hdr.rec_count) return;
-    const uint8_t *er = src->edges.data + (uint64_t)eidx * NM_EDGE_BYTES;
+    const uint8_t *er = src->edges.data + (uint64_t)eidx * SK_EDGE_BYTES;
     if (cls_out) *cls_out = er[EF_CLASS];
-    uint32_t nid = nm_get_u32(er + EF_NAME_ID);
+    uint32_t nid = sk_get_u32(er + EF_NAME_ID);
     const NamePool *np = &src->np;
     if (!nid || !np->ready || nid > np->n) return;
     const char *s2 = np->blob + np->off[nid];
@@ -1533,7 +1533,7 @@ void maneuver_text(const Maneuver *m, char *buf, size_t n)
 ## 五、演示、练习与验收
 
 - **演示**：`./build_rel/skedaddle_route_cli --graph=products/graph/beijing --from=39.90,116.40 --to=39.99,116.30 --geojson=route.json`；`./build_rel/skedaddle_route_cli --from=... --to=... --maneuvers` 看 `maneuver_build` 输出；`./build_rel/skedaddle_heap_selftest --expect-fail`（负向对照）；`./build_rel/skedaddle_revbuild_cli --verify`；`./build_rel/skedaddle_restr_ab`；`./build_rel/skedaddle_lmdist_cli`（一对多 Dijkstra 下界）。
-- **练习**：把 `ROUTE_HEUR_W_DEFAULT`（route.h:137）改成 1.0（纯 Dijkstra）和 2.0，对比 `skedaddle_route_cli` 的 `expanded`/`elapsed_ms`；用 `NAVIMAP_LM=0` 关表后 `--exact` 应保证最优。
+- **练习**：把 `ROUTE_HEUR_W_DEFAULT`（route.h:137）改成 1.0（纯 Dijkstra）和 2.0，对比 `skedaddle_route_cli` 的 `expanded`/`elapsed_ms`；用 `SKEDADDLE_LM=0` 关表后 `--exact` 应保证最优。
 - **验收（读源码 / 跑命令）**：
   1. 能画出"双向 A* 一次展开"的数据流（取堆顶 → `members_of` → 松弛出/入边 → 查转向限制 → `seam_blocked` 相遇判定），并澄清"非 CH、ALT 非严格下界"。
   2. `coord_key_e7`（`coordkey.h:26`）让一个物理路口只展开一次——对比 `(省,节点)` 主键初版的 111 万状态/97 秒问题。

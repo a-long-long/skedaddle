@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_FONT_H
-#define NAVIMAP_FONT_H
+#ifndef SKEDADDLE_FONT_H
+#define SKEDADDLE_FONT_H
 
 #include <stdint.h>
 #include "render/raster.h"

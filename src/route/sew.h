@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_ROUTE_SEW_H
-#define NAVIMAP_ROUTE_SEW_H
+#ifndef SKEDADDLE_ROUTE_SEW_H
+#define SKEDADDLE_ROUTE_SEW_H
 
 /* 瓦片缝合缓存（原 route.c 的"瓦片缝合缓存"段，整体迁到 sew.c）。
  * SewEnt / SewSlot / SEW_SLOTS 仍定义在 route_priv.h（struct Router 要用它们，

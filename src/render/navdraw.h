@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_NAVDRAW_H
-#define NAVIMAP_NAVDRAW_H
+#ifndef SKEDADDLE_NAVDRAW_H
+#define SKEDADDLE_NAVDRAW_H
 
 #include <stdint.h>
 #include "map/map_view.h"

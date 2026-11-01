@@ -22,7 +22,7 @@ gcc -std=c11 -O2 -o tut main.c && ./tut
 2. **加权 A\* 的 w 是旋钮**：默认 `ROUTE_HEUR_W_DEFAULT=1.4`（京→郑 1076→88ms，代价 +2.8%）；有 `lm.bin`
    时兜底 `1.25`；自适应两遍（撞 `adapt_try` 才换更重的 `1.8` 重跑）。**按概率分布调参，而非手挑路线**。
 3. **没有 CH，而是 Landmark(ALT) 加速**：`lm.bin` 提供下界——但它不是严格下界，所以开 `--exact` 不再
-   保证最优；验收对真值用 `NAVIMAP_LM=0`。
+   保证最优；验收对真值用 `SKEDADDLE_LM=0`。
 
 **生产最终形态**：`src/route/route.c`（`router_route_ll`/`plan_search` 双向加权 A* 主循环）、
 `src/route/st.c`（`StateTab`，主键 `coord_key_e7`）、`src/route/lmtable.c`（Landmark 下界）。

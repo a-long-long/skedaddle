@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_RASTER_H
-#define NAVIMAP_RASTER_H
+#ifndef SKEDADDLE_RASTER_H
+#define SKEDADDLE_RASTER_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -315,4 +315,4 @@ void raster_rect(Raster *rs, int x, int y, int w, int h,
 void raster_line_rgba(Raster *rs, int x0, int y0, int x1, int y1,
                       uint8_t r, uint8_t g, uint8_t b, uint8_t a);
 
-#endif /* NAVIMAP_RASTER_H */
+#endif /* SKEDADDLE_RASTER_H */

@@ -113,7 +113,7 @@ static unsigned glyph_hash(uint32_t cp)
 const char *font_default_path(void)
 {
     size_t n = 0;
-    const char *const *cands = nm_font_candidates(&n);
+    const char *const *cands = sk_font_candidates(&n);
     for (size_t i = 0; i < n; i++) {
         FILE *fp = fopen(cands[i], "rb");
         if (fp) { fclose(fp); return cands[i]; }
@@ -171,7 +171,7 @@ Font *font_open(const char *path, int ptsize)
 Font *font_open_default(int ptsize)
 {
     size_t n = 0;
-    const char *const *cands = nm_font_candidates(&n);
+    const char *const *cands = sk_font_candidates(&n);
     if (n == 0) return NULL;
 
     /* 候选个数已知 ⇒ 数组一次分配到位，**不用 realloc**。

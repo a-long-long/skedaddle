@@ -267,7 +267,7 @@ static int bench(size_t size, unsigned long iters, int rounds)
             PQueue c = q_clone(&base);
             unsigned long long sd = seed;
             /* 微秒单调时钟（平台层）：基准要亚毫秒精度，且不能绑死 POSIX */
-            uint64_t t0 = nm_now_us();
+            uint64_t t0 = sk_now_us();
             for (unsigned long it = 0; it < iters; it++) {
                 double f;
                 uint64_t k = which ? pq_pop_swap(&c, &f) : pq_pop(&c, &f);
@@ -275,7 +275,7 @@ static int bench(size_t size, unsigned long iters, int rounds)
                 sd = sd * 6364136223846793005ULL + 1442695040888963407ULL;
                 pq_push(&c, (double)(sd >> 40) * 1e-9, (uint64_t)(it + size));
             }
-            double ms = (double)(nm_now_us() - t0) / 1000.0;
+            double ms = (double)(sk_now_us() - t0) / 1000.0;
             if (which) { if (ms < bs) bs = ms; hv_swap = fnv1a(c.a, c.n * sizeof(PQEnt)); }
             else       { if (ms < bh) bh = ms; hv_hole = fnv1a(c.a, c.n * sizeof(PQEnt)); }
             pq_free(&c);

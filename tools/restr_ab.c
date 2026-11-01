@@ -43,11 +43,11 @@ static double rnd01(void)
 
 static int32_t node_lat(const MapSrc *s, uint32_t nd)
 {
-    return nm_get_i32(s->nodes.data + (uint64_t)nd * NM_NODE_BYTES + NF_LAT);
+    return sk_get_i32(s->nodes.data + (uint64_t)nd * SK_NODE_BYTES + NF_LAT);
 }
 static int32_t node_lon(const MapSrc *s, uint32_t nd)
 {
-    return nm_get_i32(s->nodes.data + (uint64_t)nd * NM_NODE_BYTES + NF_LON);
+    return sk_get_i32(s->nodes.data + (uint64_t)nd * SK_NODE_BYTES + NF_LON);
 }
 
 /* 边下标 → 起点节点。CSR 只存 EF_TO，起点只能这样反查一遍。 */
@@ -58,9 +58,9 @@ static uint32_t *build_efrom(const MapSrc *s)
     if (!efrom) return NULL;
     for (uint64_t i = 0; i < ne; i++) efrom[i] = UINT32_MAX;
     for (uint64_t nd = 0; nd < nn; nd++) {
-        const uint8_t *nr = s->nodes.data + nd * NM_NODE_BYTES;
-        uint32_t b = nm_get_u32(nr + NF_EDGE_BEGIN);
-        uint16_t c = nm_get_u16(nr + NF_EDGE_COUNT);
+        const uint8_t *nr = s->nodes.data + nd * SK_NODE_BYTES;
+        uint32_t b = sk_get_u32(nr + NF_EDGE_BEGIN);
+        uint16_t c = sk_get_u16(nr + NF_EDGE_COUNT);
         for (uint16_t k = 0; k < c; k++)
             if ((uint64_t)b + k < ne) efrom[b + k] = (uint32_t)nd;
     }
@@ -117,17 +117,17 @@ static int probe_restr(MapSet *ms, Router *ra, Router *rb, int maxprobe,
         const uint8_t *d = s->restrictions.data;
         uint64_t nr = s->restrictions.hdr.rec_count;
         for (uint64_t i = 0; i < nr && *n_tried < maxprobe; i++) {
-            const uint8_t *rec = d + i * NM_RESTR_BYTES;
+            const uint8_t *rec = d + i * SK_RESTR_BYTES;
             if (rec[RF_KIND] != 2) continue;
 
-            uint32_t e_from = nm_get_u32(rec + RF_PREV_EDGE);
-            uint32_t e_via  = nm_get_u32(rec + RF_FROM_EDGE);
-            uint32_t e_to   = nm_get_u32(rec + RF_TO_EDGE);
-            uint32_t B      = nm_get_u32(rec + RF_VIA_NODE);
+            uint32_t e_from = sk_get_u32(rec + RF_PREV_EDGE);
+            uint32_t e_via  = sk_get_u32(rec + RF_FROM_EDGE);
+            uint32_t e_to   = sk_get_u32(rec + RF_TO_EDGE);
+            uint32_t B      = sk_get_u32(rec + RF_VIA_NODE);
             if (e_from >= ne || e_via >= ne || e_to >= ne || B >= nn) continue;
             uint32_t P0 = efrom[e_from];
-            uint32_t A  = nm_get_u32(s->edges.data + (uint64_t)e_from * NM_EDGE_BYTES + EF_TO);
-            uint32_t C  = nm_get_u32(s->edges.data + (uint64_t)e_to   * NM_EDGE_BYTES + EF_TO);
+            uint32_t A  = sk_get_u32(s->edges.data + (uint64_t)e_from * SK_EDGE_BYTES + EF_TO);
+            uint32_t C  = sk_get_u32(s->edges.data + (uint64_t)e_to   * SK_EDGE_BYTES + EF_TO);
             if (P0 == UINT32_MAX || A >= nn || C >= nn) continue;
 
             (*n_tried)++;
@@ -209,11 +209,11 @@ static int probe_only(MapSet *ms, Router *ra, Router *rb, int maxprobe,
         size_t nv1 = 0;
         const uint8_t *d = s->restrictions.data;
         for (uint64_t i = 0; i < nrec; i++) {
-            const uint8_t *rec = d + i * NM_RESTR_BYTES;
+            const uint8_t *rec = d + i * SK_RESTR_BYTES;
             if (rec[RF_KIND] != 1) continue;
-            v1[nv1].via  = nm_get_u32(rec + RF_VIA_NODE);
-            v1[nv1].from = nm_get_u32(rec + RF_FROM_EDGE);
-            v1[nv1].to   = nm_get_u32(rec + RF_TO_EDGE);
+            v1[nv1].via  = sk_get_u32(rec + RF_VIA_NODE);
+            v1[nv1].from = sk_get_u32(rec + RF_FROM_EDGE);
+            v1[nv1].to   = sk_get_u32(rec + RF_TO_EDGE);
             nv1++;
         }
 
@@ -228,9 +228,9 @@ static int probe_only(MapSet *ms, Router *ra, Router *rb, int maxprobe,
             if (V >= nn || fe >= ne) continue;
 
             uint32_t forb = UINT32_MAX;
-            const uint8_t *vr = s->nodes.data + (uint64_t)V * NM_NODE_BYTES;
-            uint32_t eb = nm_get_u32(vr + NF_EDGE_BEGIN);
-            uint16_t ec = nm_get_u16(vr + NF_EDGE_COUNT);
+            const uint8_t *vr = s->nodes.data + (uint64_t)V * SK_NODE_BYTES;
+            uint32_t eb = sk_get_u32(vr + NF_EDGE_BEGIN);
+            uint16_t ec = sk_get_u16(vr + NF_EDGE_COUNT);
             for (uint16_t k = 0; k < ec; k++) {
                 uint64_t e = (uint64_t)eb + k;
                 if (e >= ne) break;
@@ -244,7 +244,7 @@ static int probe_only(MapSet *ms, Router *ra, Router *rb, int maxprobe,
             if (forb == UINT32_MAX) { (*n_allallowed)++; continue; }
 
             uint32_t P0 = efrom[fe];
-            uint32_t C  = nm_get_u32(s->edges.data + (uint64_t)forb * NM_EDGE_BYTES + EF_TO);
+            uint32_t C  = sk_get_u32(s->edges.data + (uint64_t)forb * SK_EDGE_BYTES + EF_TO);
             if (P0 == UINT32_MAX || C >= nn) continue;
             /* forb 是"掉头回 P0"的那条边时起终点重合，算出来是空路径——
                这不是违反限制，只是这条用例没有判别力，跳过。

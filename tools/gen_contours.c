@@ -1,7 +1,7 @@
 /* skedaddle_gen_contours —— 从 SRTM .hgt 瓦片生成等高线（自包含，零外部依赖）。
  *
  * 为什么自写：本机没有 GDAL（gdal_contour / gdalwarp 全无），且环境里也没有
- * osmium / python osgeo。等高线不进 OSM 导入管线，直接产出 navimap 专属的三件套
+ * osmium / python osgeo。等高线不进 OSM 导入管线，直接产出 skedaddle 专属的三件套
  * 二进制（见 binfmt.h 的 NMBIN_KIND_CONTOURS / CONTOUR_PTS / CONTOUR_POLYREFS），
  * 由 mapset 直接 mmap、paint_contours 直接绘制。
  *
@@ -163,7 +163,7 @@ static const char *find_downloader(const char *override)
     snprintf(buf, sizeof(buf), "%s/../tools/download_srtm.py", d);
     if (file_exists(buf)) return buf;
     if (file_exists("tools/download_srtm.py")) return "tools/download_srtm.py";
-    const char *root = getenv("NAVIMAP_ROOT");
+    const char *root = getenv("SKEDADDLE_ROOT");
     if (root && *root) {
         snprintf(buf, sizeof(buf), "%s/tools/download_srtm.py", root);
         if (file_exists(buf)) return buf;
@@ -360,9 +360,9 @@ int main(int argc, char **argv)
     snprintf(p_poly, sizeof(p_poly), "%s/%s_contour_polyrefs.bin", out_dir, prefix);
     snprintf(p_pts,  sizeof(p_pts),  "%s/%s_contour_pts.bin", out_dir, prefix);
 
-    NMBinWriter *wc  = nmbin_create(p_cont, NMBIN_KIND_CONTOURS, NM_CONTOUR_BYTES, "skedaddle_gen_contours");
+    NMBinWriter *wc  = nmbin_create(p_cont, NMBIN_KIND_CONTOURS, SK_CONTOUR_BYTES, "skedaddle_gen_contours");
     NMBinWriter *wp  = nmbin_create(p_poly, NMBIN_KIND_CONTOUR_POLYREFS, 4, "skedaddle_gen_contours");
-    NMBinWriter *wpt = nmbin_create(p_pts,  NMBIN_KIND_CONTOUR_PTS, NM_CONTOUR_PT_BYTES, "skedaddle_gen_contours");
+    NMBinWriter *wpt = nmbin_create(p_pts,  NMBIN_KIND_CONTOUR_PTS, SK_CONTOUR_PT_BYTES, "skedaddle_gen_contours");
     if (!wc || !wp || !wpt) {
         fprintf(stderr, "无法创建输出文件（目录存在？）\n");
         if (wc) nmbin_abort(wc);
@@ -577,23 +577,23 @@ int main(int argc, char **argv)
                 /* pts */
                 uint8_t rec8[8];
                 for (int k = 0; k < cn; k++) {
-                    nm_put_i32(rec8 + CP_LAT, cx[k]);
-                    nm_put_i32(rec8 + CP_LON, cy[k]);
+                    sk_put_i32(rec8 + CP_LAT, cx[k]);
+                    sk_put_i32(rec8 + CP_LON, cy[k]);
                     nmbin_write_records(wpt, rec8, 1);
                 }
                 /* polyrefs */
                 uint32_t base = (uint32_t)total_pts;
                 uint8_t rec4[4];
                 for (int k = 0; k < cn; k++) {
-                    nm_put_u32(rec4, base + (uint32_t)k);
+                    sk_put_u32(rec4, base + (uint32_t)k);
                     nmbin_write_records(wp, rec4, 1);
                 }
                 /* contour 记录 */
-                uint8_t rec[NM_CONTOUR_BYTES];
+                uint8_t rec[SK_CONTOUR_BYTES];
                 memset(rec, 0, sizeof(rec));
-                nm_put_u64(rec + CF_ELEV, (uint64_t)L);
-                nm_put_u32(rec + CF_REF_OFF, base);
-                nm_put_u32(rec + CF_REF_CNT, (uint32_t)cn);
+                sk_put_u64(rec + CF_ELEV, (uint64_t)L);
+                sk_put_u32(rec + CF_REF_OFF, base);
+                sk_put_u32(rec + CF_REF_CNT, (uint32_t)cn);
                 rec[CF_CLASS] = (uint8_t)is_index;
                 nmbin_write_records(wc, rec, 1);
 
@@ -607,19 +607,19 @@ int main(int argc, char **argv)
                 int32_t ax = (int32_t)llround64(sy0[s]*1e7), ay = (int32_t)llround64(sx0[s]*1e7);
                 int32_t bx = (int32_t)llround64(sy1[s]*1e7), by = (int32_t)llround64(sx1[s]*1e7);
                 uint8_t rec8[8];
-                nm_put_i32(rec8 + CP_LAT, ax); nm_put_i32(rec8 + CP_LON, ay);
+                sk_put_i32(rec8 + CP_LAT, ax); sk_put_i32(rec8 + CP_LON, ay);
                 nmbin_write_records(wpt, rec8, 1);
-                nm_put_i32(rec8 + CP_LAT, bx); nm_put_i32(rec8 + CP_LON, by);
+                sk_put_i32(rec8 + CP_LAT, bx); sk_put_i32(rec8 + CP_LON, by);
                 nmbin_write_records(wpt, rec8, 1);
                 uint8_t rec4[4];
                 uint32_t base = (uint32_t)total_pts;
-                nm_put_u32(rec4, base);   nmbin_write_records(wp, rec4, 1);
-                nm_put_u32(rec4, base+1); nmbin_write_records(wp, rec4, 1);
-                uint8_t rec[NM_CONTOUR_BYTES];
+                sk_put_u32(rec4, base);   nmbin_write_records(wp, rec4, 1);
+                sk_put_u32(rec4, base+1); nmbin_write_records(wp, rec4, 1);
+                uint8_t rec[SK_CONTOUR_BYTES];
                 memset(rec, 0, sizeof(rec));
-                nm_put_u64(rec + CF_ELEV, (uint64_t)L);
-                nm_put_u32(rec + CF_REF_OFF, base);
-                nm_put_u32(rec + CF_REF_CNT, 2);
+                sk_put_u64(rec + CF_ELEV, (uint64_t)L);
+                sk_put_u32(rec + CF_REF_OFF, base);
+                sk_put_u32(rec + CF_REF_CNT, 2);
                 rec[CF_CLASS] = (uint8_t)is_index;
                 nmbin_write_records(wc, rec, 1);
                 total_contours++; total_pts += 2;

@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_ROUTE_RESTR_H
-#define NAVIMAP_ROUTE_RESTR_H
+#ifndef SKEDADDLE_ROUTE_RESTR_H
+#define SKEDADDLE_ROUTE_RESTR_H
 
 #include "route/route_priv.h"   /* 完整 Router / RestrIdx / MapSrc / st_find */
 
@@ -7,7 +7,7 @@
  * 这些函数仍接收 Router*，但只是惰性查 r->ri / r->ms / r->opt / r->st，
  * 不持有状态，是纯函数式查询；route.c 的搜索核心直接调用它们。 */
 
-/* NAVIMAP_RESTR_DEBUG=1 时打印 Miss 诊断（restr.c 定义，route.c 核心也用）。 */
+/* SKEDADDLE_RESTR_DEBUG=1 时打印 Miss 诊断（restr.c 定义，route.c 核心也用）。 */
 int restr_debug(void);
 
 /* 把某省的限制记录解析成三张排序索引表（kind 0/1/2）。惰性：首次用到才建。 */

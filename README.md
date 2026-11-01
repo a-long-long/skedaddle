@@ -56,13 +56,13 @@ cmake --build build -j8
 
 | 平台差异 | 抽象层提供 |
 |---|---|
-| 路径分隔符 / 盘符 / 拼接 | `nm_sep` / `nm_path_join` / `nm_base_name` / `nm_is_abs` |
-| 临时目录（`/tmp` 在 Windows 不存在） | `nm_temp_dir`（TMPDIR/TEMP/TMP → `/tmp` → `.`） |
-| 字体路径（`/usr/share/fonts` vs `%WINDIR%\Fonts`） | `nm_font_candidates`（宋体优先链，逐平台） |
-| `mmap` / `madvise` | `nm_map_file` / `nm_unmap_file`（Windows: CreateFileMapping） |
-| `opendir` / `mkdir` / `unlink` / `rmdir` / `stat` | `nm_dir_*` / `nm_mkdir_p` / `nm_rmtree` / `nm_unlink` / `nm_stat_file` |
-| `/proc/self/exe` / `fork`+`execv` / `kill` / `usleep` | `nm_exe_path` / `nm_spawn_wait` / `nm_pid_alive` / `nm_sleep_ms` |
-| `clock_gettime` / `getrusage` | `nm_now_ms` / `nm_now_us` / `nm_peak_rss_mb` |
+| 路径分隔符 / 盘符 / 拼接 | `sk_sep` / `sk_path_join` / `sk_base_name` / `sk_is_abs` |
+| 临时目录（`/tmp` 在 Windows 不存在） | `sk_temp_dir`（TMPDIR/TEMP/TMP → `/tmp` → `.`） |
+| 字体路径（`/usr/share/fonts` vs `%WINDIR%\Fonts`） | `sk_font_candidates`（宋体优先链，逐平台） |
+| `mmap` / `madvise` | `sk_map_file` / `sk_unmap_file`（Windows: CreateFileMapping） |
+| `opendir` / `mkdir` / `unlink` / `rmdir` / `stat` | `sk_dir_*` / `sk_mkdir_p` / `sk_rmtree` / `sk_unlink` / `sk_stat_file` |
+| `/proc/self/exe` / `fork`+`execv` / `kill` / `usleep` | `sk_exe_path` / `sk_spawn_wait` / `sk_pid_alive` / `sk_sleep_ms` |
+| `clock_gettime` / `getrusage` | `sk_now_ms` / `sk_now_us` / `sk_peak_rss_mb` |
 
 各平台构建：
 
@@ -76,7 +76,7 @@ cmake -B build -A x64 && cmake --build build --config Release
 
 Windows 注意：入口 `main()` 直接用（CMake 不接管 WinMain，不依赖 SDL 的 main 重定义）；
 数学函数无需显式链 `libm`（仅类 Unix 平台链）；峰值内存走 `psapi`。
-字体优先级：`--font=` 命令行 > `NAVMAP_FONT` 环境变量 > 平台候选链。
+字体优先级：`--font=` 命令行 > `SKEDADDLE_FONT` 环境变量 > 平台候选链。
 
 平台层契约由 `tools/plat_selftest.c` **正反双向**钉住（回归门禁第 46/47 项）：
 正向断言"该成功的必须成功"（含 spawn 自身并原样带回退出码），负向断言"该失败的

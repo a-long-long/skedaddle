@@ -25,7 +25,7 @@ uint8_t fallback_speed(uint8_t cls)
 
 double edge_cost(const Router *r, const uint8_t *er, double *meters)
 {
-    double m = (double)nm_get_u32(er + EF_DIST_CM) / 100.0;
+    double m = (double)sk_get_u32(er + EF_DIST_CM) / 100.0;
     if (meters) *meters = m;
     if (!r->opt.mode_time) return m;
     uint8_t sp = er[EF_SPEED];
@@ -33,7 +33,7 @@ double edge_cost(const Router *r, const uint8_t *er, double *meters)
     return m * 3.6 / (double)sp;
 }
 
-/* 大圆距离：nm_fast_dist_m 是等距投影近似，跨纬度大时会失真，
+/* 大圆距离：sk_fast_dist_m 是等距投影近似，跨纬度大时会失真，
    一旦高估就破坏 admissible（A* 会给出次优解）。
    正向搜索朝终点估，反向搜索朝起点估（两边必须各自 admissible）。
 
@@ -43,7 +43,7 @@ double edge_cost(const Router *r, const uint8_t *er, double *meters)
    ★ 单位必须一致：mode_time=0 时下面两条都是米，mode_time=1 时都是秒。 */
 double heur(const Router *r, int dir, int32_t lat_e7, int32_t lon_e7)
 {
-    double d = nm_haversine_m((double)lat_e7 / 1e7, (double)lon_e7 / 1e7,
+    double d = sk_haversine_m((double)lat_e7 / 1e7, (double)lon_e7 / 1e7,
                               (double)r->tgt_lat[dir] / 1e7,
                               (double)r->tgt_lon[dir] / 1e7);
     if (r->lm.loaded && r->lm_tc[dir] != (size_t)-1) {
@@ -55,17 +55,17 @@ double heur(const Router *r, int dir, int32_t lat_e7, int32_t lon_e7)
 
 uint64_t node_coord(const MapSrc *s, uint32_t node)
 {
-    const uint8_t *nr = s->nodes.data + (uint64_t)node * NM_NODE_BYTES;
-    return coord_key_e7(nm_get_i32(nr + NF_LAT), nm_get_i32(nr + NF_LON));
+    const uint8_t *nr = s->nodes.data + (uint64_t)node * SK_NODE_BYTES;
+    return coord_key_e7(sk_get_i32(nr + NF_LAT), sk_get_i32(nr + NF_LON));
 }
 
-/* 地标表开关：默认开；`NAVIMAP_LM=0` 关掉（A/B 用，也用于现场退回纯直线）。
+/* 地标表开关：默认开；`SKEDADDLE_LM=0` 关掉（A/B 用，也用于现场退回纯直线）。
    ★ 写成"只查一次"的函数：environ 在本机有 178 项，热路径上一次 getenv 135 ns。 */
 int lm_enabled(void)
 {
     static int v = -1;
     if (v < 0) {
-        const char *e = getenv("NAVIMAP_LM");
+        const char *e = getenv("SKEDADDLE_LM");
         v = !(e && e[0] == '0' && e[1] == '\0');
     }
     return v;
@@ -80,7 +80,7 @@ uint32_t lm_penalty_add_m(void)
 {
     static long v = -1;
     if (v < 0) {
-        const char *e = getenv("NAVIMAP_LM_PENALTY_ADD_M");
+        const char *e = getenv("SKEDADDLE_LM_PENALTY_ADD_M");
         v = e ? atol(e) : 0;
         if (v < 0) v = 0;
         if (v > 1000000) v = 1000000;

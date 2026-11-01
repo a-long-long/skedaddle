@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_GPX_H
-#define NAVIMAP_GPX_H
+#ifndef SKEDADDLE_GPX_H
+#define SKEDADDLE_GPX_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -97,4 +97,4 @@ int   gpx_db_default_path(char *out, size_t cap);
 }
 #endif
 
-#endif /* NAVIMAP_GPX_H */
+#endif /* SKEDADDLE_GPX_H */

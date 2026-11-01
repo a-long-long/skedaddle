@@ -112,8 +112,8 @@ int main(void)
 
     /* ---------- 2) 写出 → 再解析：往返一致 ---------- */
     char path[1024], path2[1024];
-    snprintf(path, sizeof(path), "%s/navimap_gpx_rt.gpx", nm_temp_dir());
-    snprintf(path2, sizeof(path2), "%s/navimap_gpx_rt2.gpx", nm_temp_dir());
+    snprintf(path, sizeof(path), "%s/skedaddle_gpx_rt.gpx", sk_temp_dir());
+    snprintf(path2, sizeof(path2), "%s/skedaddle_gpx_rt2.gpx", sk_temp_dir());
     check(gpx_write(&s, path) == 0, "写出 GPX 文件");
     GpxStore s2;
     gpx_store_init(&s2);
@@ -147,7 +147,7 @@ int main(void)
 
     /* ---------- 4) sqlite 存取 ---------- */
     char dbp[1024];
-    snprintf(dbp, sizeof(dbp), "%s/navimap_gpx_test.db", nm_temp_dir());
+    snprintf(dbp, sizeof(dbp), "%s/skedaddle_gpx_test.db", sk_temp_dir());
     remove(dbp);
     void *db = gpx_db_open(dbp);
     check(db != NULL, "打开（新建）tracks 测试库");

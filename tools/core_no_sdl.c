@@ -5,16 +5,16 @@
  *   某次改动里悄悄失效：core 里多加一个 #include <SDL.h> 或一个 SDL 调用，
  *   编译照样过、Qt 照样能跑（只是间接多依赖了 SDL2.dll），直到某天有人在没装
  *   SDL 的机器上构建 Qt 前端才炸。静态链接下更隐蔽：core.a 里引了 SDL 符号，
- *   最终由 navimap_qt 链接进去，依赖就落到 Qt 前端头上了。
+ *   最终由 skedaddle_qt 链接进去，依赖就落到 Qt 前端头上了。
  *
  * 判据（查符号表，不是"看起来没有"）：
  *   正向：目标里不得出现任何 SDL_ 未定义符号；
- *   反向：SDL 适配层（navmap.exe）**必须**含 SDL 符号 —— 证明这个检查器
+ *   反向：SDL 适配层（skedaddle.exe）**必须**含 SDL 符号 —— 证明这个检查器
  *         不是"查不出东西的空壳"。
  *
  * ★ 为什么必须**两个提取器取并集**（踩过的坑）：
  *   - `nm -u <PE exe>`：Windows 的 PE 可执行文件里，导入的 DLL 符号**不进**
- *     未定义符号表（实测 navimap.exe 只有 3 行，全是 CRT 的 __tls_*）。
+ *     未定义符号表（实测 skedaddle.exe 只有 3 行，全是 CRT 的 __tls_*）。
  *     真正的 SDL_CreateWindow 之类在 **objdump -p 的导入表**里。
  *   - `objdump -p <PE exe>`：只对 PE 有用；Linux 的 ELF 走这条只能拿到
  *     .dynamic 段，静态库的导入符号看不到。
@@ -33,10 +33,10 @@
 #include "utils/plat.h"
 
 #if defined(_WIN32)
-#  define NM_EXE      "nm.exe"
+#  define SK_EXE      "nm.exe"
 #  define OBJDUMP_EXE "objdump.exe"
 #else
-#  define NM_EXE      "nm"
+#  define SK_EXE      "nm"
 #  define OBJDUMP_EXE "objdump"
 #endif
 
@@ -47,10 +47,10 @@ static char g_stderr_path[1200];
 static const char *stderr_path(void)
 {
     if (!g_stderr_path[0]) {
-        const char *dir = nm_temp_dir();
-        snprintf(g_stderr_path, sizeof(g_stderr_path), "%s%snm_no_sdl_%ld.err",
+        const char *dir = sk_temp_dir();
+        snprintf(g_stderr_path, sizeof(g_stderr_path), "%s%ssk_no_sdl_%ld.err",
                  dir ? dir : ".", (dir && dir[0] && dir[strlen(dir) - 1] == '/') ? "" : "/",
-                 (long)nm_get_pid());
+                 (long)sk_get_pid());
     }
     return g_stderr_path;
 }
@@ -60,7 +60,7 @@ static const char *stderr_path(void)
  * ★ 为什么必须自己找（踩过的坑）：Windows 上 popen 走的是**原生** CreateProcess，
  *   它继承的是当前进程的 PATH；而 MSYS2 的 PATH（/d/msys64/ucrt64/bin）在
  *   原生进程里未必被翻译过去 —— 实测 popen("nm.exe ...") 报"系统找不到指定的
- *   文件"，可同一个 shell 里 nm.exe 明明能跑。用 plat 的 nm_find_in_path
+ *   文件"，可同一个 shell 里 nm.exe 明明能跑。用 plat 的 sk_find_in_path
  *   （它自己按 Windows 的 ';' 规则切 PATH、并且会补 .exe）就稳了。
  *
  * 找不到就返回 NULL ⇒ 调用方报"无法判定"，绝不静默当成"通过"。 */
@@ -69,7 +69,7 @@ static const char *find_tool(const char *name)
     static char buf[2][1024];
     static int  slot = 0;
     char path[1024];
-    if (nm_find_in_path(name, path, sizeof(path)) == 0) {
+    if (sk_find_in_path(name, path, sizeof(path)) == 0) {
         char *b = buf[slot];
         slot = (slot + 1) % 2;
         snprintf(b, sizeof(buf[0]), "%s", path);
@@ -96,7 +96,7 @@ typedef struct {
  *   ★★ 但 `2>&1` 同样有害：stderr 的错误行会混进 stdout，被当成"符号行"计数。
  *      后果是**假绿**——命令根本没跑起来（"文件不存在"之类），错误行也凑出了
  *      total>0，于是判成"提取成功且无 SDL"。实测就踩到了：把 SDL 版
- *      navimap.exe 传给"期望无 SDL"的判据，它报了 OK。
+ *      skedaddle.exe 传给"期望无 SDL"的判据，它报了 OK。
  *      正确做法：**stderr 单独重定向到临时文件**，stdout 走管道；
  *      再用**退出码**判定这次提取到底成功没有。
  *
@@ -140,7 +140,7 @@ static void scan_file(const char *file, Scan *sc)
     char cmd[2600];
 
     /* ① 未定义符号表：静态库与 Linux ELF 有效 */
-    const char *nm = find_tool(NM_EXE);
+    const char *nm = find_tool(SK_EXE);
     if (nm) {
         make_cmd(cmd, sizeof(cmd), nm, "-u", file);
         run_scan(cmd, sc);
@@ -191,7 +191,7 @@ int main(int argc, char **argv)
 
         /* ★ 判定用"提取器是否成功"（退出码），不是"扫到几行"。
          *   用行数判定会假绿：命令失败时 stderr 混进 stdout 也凑得出行数。
-         *   实测踩到过——把 SDL 版 navimap.exe 传给"期望无 SDL"的判据，
+         *   实测踩到过——把 SDL 版 skedaddle.exe 传给"期望无 SDL"的判据，
          *   因为 nm 在 PE 上不列 DLL 导入符号（只有 3 行 CRT 符号）、
          *   objdump 的输出又被 stderr 噪声污染，结果报了 OK。 */
         if (!sc.ok) {

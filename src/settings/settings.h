@@ -1,5 +1,5 @@
-#ifndef NAVMAP_SETTINGS_H
-#define NAVMAP_SETTINGS_H
+#ifndef SKEDADDLE_SETTINGS_H
+#define SKEDADDLE_SETTINGS_H
 
 #include <stddef.h>
 
@@ -13,9 +13,9 @@ extern "C" {
  * 一个极简的 key=value INI 存读器 + 一份"可编辑设置清单"（SETTINGS_SCHEMA），
  * 供 chrome 设置面板逐项渲染。值以字符串形式存储，按需解析成 int/double/bool。
  *
- * 优先级：命令行参数 / NAVIMAP_* 环境变量 > 配置文件 > 代码默认值。
- *   - 文件默认路径：环境变量 NAVIMAP_SETTINGS（完整路径）>
- *     nm_config_dir()/settings.ini（用户级，不被 products/ 重建清掉）。
+ * 优先级：命令行参数 / SKEDADDLE_* 环境变量 > 配置文件 > 代码默认值。
+ *   - 文件默认路径：环境变量 SKEDADDLE_SETTINGS（完整路径）>
+ *     sk_config_dir()/settings.ini（用户级，不被 products/ 重建清掉）。
  *   - app_init 先把配置文件的值当成"默认值"填进 App；随后既有的 CLI 参数、
  *     环境变量读取逻辑会自然覆盖（谁后写谁赢），从而满足"CLI/env 优先"。
  * ------------------------------------------------------------------------- */
@@ -76,4 +76,4 @@ int  settings_dirty(const Settings *s);
 #ifdef __cplusplus
 }
 #endif
-#endif /* NAVMAP_SETTINGS_H */
+#endif /* SKEDADDLE_SETTINGS_H */

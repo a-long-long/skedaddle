@@ -2,7 +2,7 @@
 #
 # Release 构建 + 发布包部署（Windows / MSYS2）。
 #
-# 产出：dist/navimap-release/  —— 一个自包含、可直接双击 start.bat 运行的目录：
+# 产出：dist/skedaddle-release/  —— 一个自包含、可直接双击 start.bat 运行的目录：
 #   skedaddle.exe (Release)
 #   Qt6 DLL + 平台插件 (qwindows / qoffscreen)
 #   第三方 DLL (protobuf-c / sqlite3 / zlib / libgcc / libstdc++ / winpthread)
@@ -21,7 +21,7 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BUILD="$ROOT/build_rel"
-DIST="$ROOT/dist/navimap-release"
+DIST="$ROOT/dist/skedaddle-release"
 
 MSYS_BIN=/d/msys64/ucrt64/bin
 QT_BIN=/d/Qt/6.11.2/mingw_64/bin

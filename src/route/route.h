@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_ROUTE_H
-#define NAVIMAP_ROUTE_H
+#ifndef SKEDADDLE_ROUTE_H
+#define SKEDADDLE_ROUTE_H
 
 #include <stdint.h>
 #include "map/mapset.h"
@@ -110,7 +110,7 @@ typedef struct {
     /* ★ 最优性的前提是 **h 可采纳**。加载了 lm.bin 之后这个前提不成立
        （§52.8：地标下界只是"加速启发式"，实测 50 条里 2 条给出次优解）
        ⇒ **开表时 --exact 不再保证最优**。无表（h = 直线）时才保证最优。
-       对拍/验收要真值请用 `NAVIMAP_LM=0`。 */
+       对拍/验收要真值请用 `SKEDADDLE_LM=0`。 */
     int      exact;         /* 1 = 双向用"保证最优"的终止条件（慢），0 = 默认快速条件 */
     uint64_t max_expand;    /* 展开上限，防跑飞（0 = 用默认 800 万） */
 

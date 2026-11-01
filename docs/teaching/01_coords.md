@@ -8,8 +8,8 @@
 学完本课，学生应能：
 
 1. 说清"内部几何永远是 WGS84（OSM PBF 原生），坐标系只影响显示读数，不重投影底图"这一条不变量，并能在代码里指出它的落点。
-2. 解释经纬度为何用 `1e-7` 度（`int32`，即 `nm_lat_to_i32`/`nm_i32_to_deg`）做落盘量化单位，以及浮点对齐/字节序问题如何被规避。
-3. 区分"精确数学"与"近似/查表加速"：知道 `nm_haversine_m` 是真实大圆距离、`nm_fast_dist_m` 是等距近似、`nm_mercator_y_fast` 是故意不精确的查表版，以及各自用在哪条路径。
+2. 解释经纬度为何用 `1e-7` 度（`int32`，即 `sk_lat_to_i32`/`sk_i32_to_deg`）做落盘量化单位，以及浮点对齐/字节序问题如何被规避。
+3. 区分"精确数学"与"近似/查表加速"：知道 `sk_haversine_m` 是真实大圆距离、`sk_fast_dist_m` 是等距近似、`sk_mercator_y_fast` 是故意不精确的查表版，以及各自用在哪条路径。
 4. 说清"为什么测距只能用 haversine，不能用 Web Mercator 像素距离"——墨卡托在高纬度会把距离显著拉伸。
 5. 理解大地基准七参数（Bursa-Wolf / Helmert）的"经纬度 ⇄ ECEF ⇄ 七参数变换"链路，并能在 `datum.c` 里找到 `datum_wgs84_to`、`datum_gk_forward`、`datum_solve_seven_param` 等函数。
 
@@ -17,12 +17,12 @@
 
 | 文件 | 关键结构体 / 关键函数 | 行号区间 |
 |---|---|---|
-| `geo.h` | `NM_EARTH_R_M`、`NM_DEG_NANO` 宏；`nm_lat_to_i32`/`nm_lon_to_i32`/`nm_i32_to_deg` 内联量化器 | `geo.h:12-18` |
-| `geo.h` | `nm_haversine_m`、`nm_fast_dist_m`、`nm_mercator`、`nm_mercator_inv`、`nm_mercator_y_fast`、`nm_sun_is_night` 声明 | `geo.h:20-41` |
-| `geo.c` | `nm_haversine_m`（大圆测距） | `geo.c:10-20` |
-| `geo.c` | `nm_fast_dist_m`（等距近似，int32 e7 入参） | `geo.c:22-31` |
-| `geo.c` | `nm_mercator` / `nm_mercator_inv`（精确墨卡托，只用于显示/反算） | `geo.c:33-47` |
-| `geo.c` | `MY_BITS=15` 快查表：`my_table_build` + `nm_mercator_y_fast` | `geo.c:74-109` |
+| `geo.h` | `SK_EARTH_R_M`、`SK_DEG_NANO` 宏；`sk_lat_to_i32`/`sk_lon_to_i32`/`sk_i32_to_deg` 内联量化器 | `geo.h:12-18` |
+| `geo.h` | `sk_haversine_m`、`sk_fast_dist_m`、`sk_mercator`、`sk_mercator_inv`、`sk_mercator_y_fast`、`sk_sun_is_night` 声明 | `geo.h:20-41` |
+| `geo.c` | `sk_haversine_m`（大圆测距） | `geo.c:10-20` |
+| `geo.c` | `sk_fast_dist_m`（等距近似，int32 e7 入参） | `geo.c:22-31` |
+| `geo.c` | `sk_mercator` / `sk_mercator_inv`（精确墨卡托，只用于显示/反算） | `geo.c:33-47` |
+| `geo.c` | `MY_BITS=15` 快查表：`my_table_build` + `sk_mercator_y_fast` | `geo.c:74-109` |
 | `datum.h` | `DatumId` 枚举（`DATUM_WGS84`/`CGCS2000`/`BJ54`/`XA80`） | `datum.h:22-28` |
 | `datum.h` | `GridTypeId` 枚举、`grid_gk_datum` | `datum.h:40-50` |
 | `datum.h` | `DatumSevenParam`、`DatumTie`、`DatumGridDesc` 结构体 | `datum.h:104-151` |
@@ -39,8 +39,8 @@
 ### 3.1 `geo.h`（完整头文件）
 
 ```h
-#ifndef NAVIMAP_GEO_H
-#define NAVIMAP_GEO_H
+#ifndef SKEDADDLE_GEO_H
+#define SKEDADDLE_GEO_H
 
 #include <stdint.h>
 #include <math.h>
@@ -50,36 +50,36 @@
 extern "C" {
 #endif
 
-#define NM_EARTH_R_M 6371008.8
-#define NM_DEG_NANO  1000000000LL   /* PBF 默认 granularity=100 → 单位是 1e-7 度 */
+#define SK_EARTH_R_M 6371008.8
+#define SK_DEG_NANO  1000000000LL   /* PBF 默认 granularity=100 → 单位是 1e-7 度 */
 
 /* 经纬度（度）↔ 量化整数（1e-7 度）。落盘统一用它，避免浮点对齐/字节序问题。 */
-static inline int32_t nm_lat_to_i32(double lat) { return (int32_t)llround(lat * 1e7); }
-static inline int32_t nm_lon_to_i32(double lon) { return (int32_t)llround(lon * 1e7); }
-static inline double  nm_i32_to_deg(int32_t v)  { return (double)v / 1e7; }
+static inline int32_t sk_lat_to_i32(double lat) { return (int32_t)llround(lat * 1e7); }
+static inline int32_t sk_lon_to_i32(double lon) { return (int32_t)llround(lon * 1e7); }
+static inline double  sk_i32_to_deg(int32_t v)  { return (double)v / 1e7; }
 
 /* 大圆距离（米）。真实距离一律用它，不要用 Web Mercator 的像素距离算。 */
-double nm_haversine_m(double lat1, double lon1, double lat2, double lon2);
+double sk_haversine_m(double lat1, double lon1, double lat2, double lon2);
 
 /* 近似距离（米）：小范围（<数公里）用等距投影，比 haversine 快很多，
    建图时算边权用它（误差在几十公里内可忽略）。 */
-double nm_fast_dist_m(int32_t lat1_e7, int32_t lon1_e7, int32_t lat2_e7, int32_t lon2_e7);
+double sk_fast_dist_m(int32_t lat1_e7, int32_t lon1_e7, int32_t lat2_e7, int32_t lon2_e7);
 
 /* Web Mercator：只用于显示，不用于测距。
    返回归一化到 [0,1] 的世界坐标（原点左上）。 */
-void nm_mercator(double lat, double lon, double *wx, double *wy);
-void nm_mercator_inv(double wx, double wy, double *lat, double *lon);
+void sk_mercator(double lat, double lon, double *wx, double *wy);
+void sk_mercator_inv(double wx, double wy, double *lat, double *lon);
 
 /* 同上，但 y 用查表插值算（只依赖纬度）。给**每帧几十万次以上**的热路径
    （渲染投影）用；精度损失见 geo.c 里的误差账（z18 下 <0.02 px）。
-   不在 gdb/验收里期待它与 nm_mercator 逐位相等——它有意为之地差一点点，
+   不在 gdb/验收里期待它与 sk_mercator 逐位相等——它有意为之地差一点点，
    换来的是 5~6 倍的投影速度。 */
-double nm_mercator_y_fast(double lat);
+double sk_mercator_y_fast(double lat);
 
 /* 日出日落：给定 lat/lon（度，北纬/东经为正）与 UTC 秒，返回 1=夜间（太阳在地平线下，
  * 用含折射的日出/日落阈值 90.833°）。本地太阳时算法，不依赖系统时区，对"自动昼夜"足够。
  * 极区恒昼/恒夜也能正确处理（天顶距恒 >90 即判夜间）。 */
-int nm_sun_is_night(double lat, double lon, time_t utc);
+int sk_sun_is_night(double lat, double lon, time_t utc);
 
 #ifdef __cplusplus
 }
@@ -100,7 +100,7 @@ int nm_sun_is_night(double lat, double lon, time_t utc);
 #define M_PI 3.14159265358979323846
 #endif
 
-double nm_haversine_m(double lat1, double lon1, double lat2, double lon2)
+double sk_haversine_m(double lat1, double lon1, double lat2, double lon2)
 {
     double p1 = lat1 * M_PI / 180.0;
     double p2 = lat2 * M_PI / 180.0;
@@ -109,21 +109,21 @@ double nm_haversine_m(double lat1, double lon1, double lat2, double lon2)
     double a = sin(dp / 2) * sin(dp / 2) +
                cos(p1) * cos(p2) * sin(dl / 2) * sin(dl / 2);
     double c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a));
-    return NM_EARTH_R_M * c;
+    return SK_EARTH_R_M * c;
 }
 
-double nm_fast_dist_m(int32_t lat1_e7, int32_t lon1_e7, int32_t lat2_e7, int32_t lon2_e7)
+double sk_fast_dist_m(int32_t lat1_e7, int32_t lon1_e7, int32_t lat2_e7, int32_t lon2_e7)
 {
     double dlat = (double)(lat2_e7 - lat1_e7) / 1e7;
     double dlon = (double)(lon2_e7 - lon1_e7) / 1e7;
     double latm = (double)((lat1_e7 + lat2_e7) / 2) / 1e7;
     double kx = cos(latm * M_PI / 180.0);
-    double dy = dlat * (M_PI / 180.0) * NM_EARTH_R_M;
-    double dx = dlon * (M_PI / 180.0) * NM_EARTH_R_M * kx;
+    double dy = dlat * (M_PI / 180.0) * SK_EARTH_R_M;
+    double dx = dlon * (M_PI / 180.0) * SK_EARTH_R_M * kx;
     return sqrt(dx * dx + dy * dy);
 }
 
-void nm_mercator(double lat, double lon, double *wx, double *wy)
+void sk_mercator(double lat, double lon, double *wx, double *wy)
 {
     double x = (lon + 180.0) / 360.0;
     double s = sin(lat * M_PI / 180.0);
@@ -132,7 +132,7 @@ void nm_mercator(double lat, double lon, double *wx, double *wy)
     *wy = y;
 }
 
-void nm_mercator_inv(double wx, double wy, double *lat, double *lon)
+void sk_mercator_inv(double wx, double wy, double *lat, double *lon)
 {
     *lon = wx * 360.0 - 180.0;
     double n = M_PI * (1.0 - 2.0 * wy);
@@ -140,7 +140,7 @@ void nm_mercator_inv(double wx, double wy, double *lat, double *lon)
 }
 ```
 
-**墨卡托快查表**（`MY_BITS=15`，即 `2^15=32768` 格、约 256 KB）。注意它故意不精确——只给渲染热路径（`mv_project`）用，绝不能指望它与 `nm_mercator` 逐位相等。
+**墨卡托快查表**（`MY_BITS=15`，即 `2^15=32768` 格、约 256 KB）。注意它故意不精确——只给渲染热路径（`mv_project`）用，绝不能指望它与 `sk_mercator` 逐位相等。
 
 ```c
 #define MY_BITS   15
@@ -162,7 +162,7 @@ static void my_table_build(void)
     g_my = t;
 }
 
-double nm_mercator_y_fast(double lat)
+double sk_mercator_y_fast(double lat)
 {
     double *t = g_my;
     if (!t) { my_table_build(); t = g_my; }
@@ -181,7 +181,7 @@ double nm_mercator_y_fast(double lat)
 }
 ```
 
-> 完整源码 · `src/utils/geo.c` (约 L121)（`nm_sun_is_night`：日出日落判夜，含极区恒昼/恒夜）
+> 完整源码 · `src/utils/geo.c` (约 L121)（`sk_sun_is_night`：日出日落判夜，含极区恒昼/恒夜）
 
 ```c
 /* ------------------------------------------------------------------ */
@@ -194,7 +194,7 @@ double nm_mercator_y_fast(double lat)
 /* 公式自然成立，不会除零或越界。                                     */
 /* ------------------------------------------------------------------ */
 
-int nm_sun_is_night(double lat, double lon, time_t utc)
+int sk_sun_is_night(double lat, double lon, time_t utc)
 {
     struct tm t;
 #if defined(_WIN32)
@@ -1149,14 +1149,14 @@ int datum_grid_load(DatumId id, const char *path)
 
 ## 四、与其他功能之间的联系
 
-- **下游 · 第 6 课视口投影**：`nm_mercator_y_fast` 专供渲染热路径 `mv_project`；`nm_mercator_inv` 用于屏幕坐标↝经纬度反查（鼠标拾取、框选）。
-- **下游 · 第 10 课路由**：`nm_haversine_m` 是 A* 的 admissible 启发式（`route/cost.c`，≈ `÷130km/h`）；`nm_fast_dist_m` 是建图边权与吸附距离（注意它不能做 A* 启发式，会被跨纬度高估，破坏 admissible）。
+- **下游 · 第 6 课视口投影**：`sk_mercator_y_fast` 专供渲染热路径 `mv_project`；`sk_mercator_inv` 用于屏幕坐标↝经纬度反查（鼠标拾取、框选）。
+- **下游 · 第 10 课路由**：`sk_haversine_m` 是 A* 的 admissible 启发式（`route/cost.c`，≈ `÷130km/h`）；`sk_fast_dist_m` 是建图边权与吸附距离（注意它不能做 A* 启发式，会被跨纬度高估，破坏 admissible）。
 - **下游 · UI 坐标网（第 12 课 Qt 前端）**：`datum_wgs84_to` + `datum_gk_forward` 驱动 Qt 前端的经纬网/方里格叠加层与右下角读数；`grid_gk_datum` 决定方里格用哪个基准。
-- **上游 · 第 3 课 PBF 解析**：PBF 落盘量化单位 `1e-7` 度（`NM_DEG_NANO`）正是 `nm_lat_to_i32`/`nm_i32_to_deg` 的语义，L3 解出的节点坐标直接以该 int32 落盘。
-- **下游 · 第 11 课导航语音**：`nm_mercator`/`nm_mercator_y_fast` 决定的屏幕定位，与语音播报的"前方多少米转向"提示在视图上一致。
+- **上游 · 第 3 课 PBF 解析**：PBF 落盘量化单位 `1e-7` 度（`SK_DEG_NANO`）正是 `sk_lat_to_i32`/`sk_i32_to_deg` 的语义，L3 解出的节点坐标直接以该 int32 落盘。
+- **下游 · 第 11 课导航语音**：`sk_mercator`/`sk_mercator_y_fast` 决定的屏幕定位，与语音播报的"前方多少米转向"提示在视图上一致。
 
 ## 五、演示、练习与验收
 
 - **演示**：运行 `./build_rel/skedaddle_datum_selftest`。它验证坐标系枚举、WGS84 恒等、BJ54/XA80 往返互逆、与国标公式的等价性，并含负向对照（错误参数应 FAIL）。
-- **练习**：用 `nm_haversine_m` 与 `nm_fast_dist_m` 分别算北京→上海距离，对比误差与速度；再用 `datum_solve_seven_param` 用几组合成重合点解七参数，验证能还原 `DATUMS` 出厂参数。
+- **练习**：用 `sk_haversine_m` 与 `sk_fast_dist_m` 分别算北京→上海距离，对比误差与速度；再用 `datum_solve_seven_param` 用几组合成重合点解七参数，验证能还原 `DATUMS` 出厂参数。
 - **验收**：能说清"为什么内部用 WGS84、为什么投影要分快慢两版、为什么测距不能用 Web Mercator 像素距离、七参数正/逆为何必须严格互逆"，并能在 `geo.c`/`datum.c` 中逐函数指认上述实现。

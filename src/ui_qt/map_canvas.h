@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_QT_MAP_CANVAS_H
-#define NAVIMAP_QT_MAP_CANVAS_H
+#ifndef SKEDADDLE_QT_MAP_CANVAS_H
+#define SKEDADDLE_QT_MAP_CANVAS_H
 
 /* Qt 前端的地图画布。
  *

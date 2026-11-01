@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_VOICE_H
-#define NAVIMAP_VOICE_H
+#ifndef SKEDADDLE_VOICE_H
+#define SKEDADDLE_VOICE_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -34,7 +34,7 @@
  * 慢路上不啰嗦。
  *
  * 本模块是**纯逻辑、零平台依赖**：只决定"该说什么"，不碰发声。
- * 发声在 utils/plat.c（nm_tts_speak）。这样判据能在 CLI 里无头跑。
+ * 发声在 utils/plat.c（sk_tts_speak）。这样判据能在 CLI 里无头跑。
  * ------------------------------------------------------------------------- */
 
 /* ---- 播报层级 ----
@@ -357,4 +357,4 @@ int  voice_tick(VoiceRouter *vr, const RouteResult *rr, const ManeuverList *ml,
                 int man_idx, double to_go_m, double speed_ms, double remain_m,
                 int arrived, uint64_t now_ms, VoiceFrame *out);
 
-#endif /* NAVIMAP_VOICE_H */
+#endif /* SKEDADDLE_VOICE_H */

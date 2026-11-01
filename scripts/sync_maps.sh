@@ -45,7 +45,7 @@ for arg in "$@"; do
 done
 
 # 二进制链接了 ~/.local 里的 protobuf-c / SDL2，不 source 就跑不起来
-NAVMAP_ENV_QUIET=1 . "$ROOT/env.sh"
+SKEDADDLE_ENV_QUIET=1 . "$ROOT/env.sh"
 
 # ---- 跨平台小工具（GNU 与 BSD/macOS 双兼容）--------------------------------
 # stat：GNU 用 -c %s/%Y，BSD/macOS 用 -f %z/%m（macOS 的 stat 没有 -c）。
@@ -425,7 +425,7 @@ if [ "${#ready[@]}" -gt 0 ]; then
             "$n" "$(mani_get nodes "$m")" "$(mani_get edges "$m")" "$OUT_ROOT/$n"
     done
     printf '\n启动（一次只能加载一个，跨省索引还没做）：\n'
-    printf '  ./build/navimap --graph=%s/%s\n' "$OUT_ROOT" "${ready[0]}"
+    printf '  ./build/skedaddle --graph=%s/%s\n' "$OUT_ROOT" "${ready[0]}"
 fi
 
 [ "$n_fail" -eq 0 ] || exit 1

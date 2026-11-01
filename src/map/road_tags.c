@@ -95,7 +95,7 @@ static const HwEnt *find_hw(const char *v)
 
 static int eq_ci(const char *a, const char *b)
 {
-    return nm_strcasecmp(a, b) == 0;   /* 平台层：strcasecmp / _stricmp */
+    return sk_strcasecmp(a, b) == 0;   /* 平台层：strcasecmp / _stricmp */
 }
 
 static int access_denied(const char *v)
@@ -228,7 +228,7 @@ void road_tags_parse(const uint32_t *keys, size_t n_keys,
         out->speed_kmh  = e->speed;
         if (e->cls == RC_PATH) out->show = 1;   /* 步行道：显示但不路由 */
     } else {
-        if (getenv("NAVMAP_DEBUG")) fprintf(stderr, "DBG unknown highway=%s\n", hw);
+        if (getenv("SKEDADDLE_DEBUG")) fprintf(stderr, "DBG unknown highway=%s\n", hw);
         /* 表外取值：按"可能可通行"处理，并标记出来让上层计数报警 */
         out->unknown_value = 1;
         out->drivable      = 1;

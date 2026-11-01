@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_QT_MAIN_WINDOW_H
-#define NAVIMAP_QT_MAIN_WINDOW_H
+#ifndef SKEDADDLE_QT_MAIN_WINDOW_H
+#define SKEDADDLE_QT_MAIN_WINDOW_H
 
 /* Qt 前端主窗口：nav-desktop 同款界面元素，全部用真控件——
  *   取消顶栏菜单栏：全部功能收进右栏「≡主菜单」一个弹出按钮（Qt 弹出菜单）。

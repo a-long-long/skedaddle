@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_GRAPH_BUILD_H
-#define NAVIMAP_GRAPH_BUILD_H
+#ifndef SKEDADDLE_GRAPH_BUILD_H
+#define SKEDADDLE_GRAPH_BUILD_H
 
 #include <stdint.h>
 #include <stddef.h>

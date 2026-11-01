@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_PBF_STREAM_H
-#define NAVIMAP_PBF_STREAM_H
+#ifndef SKEDADDLE_PBF_STREAM_H
+#define SKEDADDLE_PBF_STREAM_H
 
 #include <stddef.h>
 #include <stdint.h>

@@ -25,7 +25,7 @@
 
 static uint64_t now_ms(void)
 {
-    return nm_now_ms();                /* 平台层：clock_gettime / QPC */
+    return sk_now_ms();                /* 平台层：clock_gettime / QPC */
 }
 
 int main(int argc, char **argv)

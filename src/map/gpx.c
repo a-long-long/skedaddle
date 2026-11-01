@@ -405,7 +405,7 @@ int gpx_write(const GpxStore *s, const char *path)
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
     fputs("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n", f);
-    fputs("<gpx version=\"1.1\" creator=\"navimap\" "
+    fputs("<gpx version=\"1.1\" creator=\"skedaddle\" "
           "xmlns=\"http://www.topografix.com/GPX/1/1\">\n", f);
     for (int i = 0; i < s->n_wpt; i++) {
         const GpxWpt *w = &s->wpt[i];
@@ -466,14 +466,14 @@ void gpx_db_close(void *db)
 int gpx_db_default_path(char *out, size_t cap)
 {
     if (!out || cap == 0) return -1;
-    const char *dir = nm_config_dir();
+    const char *dir = sk_config_dir();
     if (!dir || !*dir) return -1;
     /* ★ 配置目录可能还不存在（全新账户 / 刚清过 %APPDATA%）。sqlite3_open
      *   **不会建父目录**，失败只返回 NULL ⇒ 导入照常报"1 条轨迹"（内存侧
      *   成功了），但一条也不落库，且没有任何提示 —— 重启后收藏全丢。
      *   在这儿递归建好再拼路径；建失败（只读/权限）才真的返回 -1。 */
-    if (!nm_is_dir(dir) && nm_mkdir_p(dir) != 0) return -1;
-    if (nm_path_join(out, cap, dir, "tracks.db") != 0) return -1;
+    if (!sk_is_dir(dir) && sk_mkdir_p(dir) != 0) return -1;
+    if (sk_path_join(out, cap, dir, "tracks.db") != 0) return -1;
     return 0;
 }
 

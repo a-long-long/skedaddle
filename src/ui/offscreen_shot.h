@@ -1,5 +1,5 @@
-#ifndef NM_UI_OFFSCREEN_SHOT_H
-#define NM_UI_OFFSCREEN_SHOT_H
+#ifndef SK_UI_OFFSCREEN_SHOT_H
+#define SK_UI_OFFSCREEN_SHOT_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,4 +23,4 @@ int offscreen_shot_main(int argc, char **argv);
 }
 #endif
 
-#endif /* NM_UI_OFFSCREEN_SHOT_H */
+#endif /* SK_UI_OFFSCREEN_SHOT_H */

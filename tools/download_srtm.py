@@ -34,7 +34,7 @@ from math import floor
 DEFAULT_MIRROR = "https://s3.amazonaws.com/elevation-tiles-prod/skadi"
 ALT_MIRROR     = "https://elevation-tiles-prod.s3.amazonaws.com/skadi"
 
-UA = "navimap-srtm/1.0 (+https://github.com/osm/planet)"
+UA = "skedaddle-srtm/1.0 (+https://github.com/osm/planet)"
 HTTP_TIMEOUT = 90  # 秒，单瓦片下载超时
 
 

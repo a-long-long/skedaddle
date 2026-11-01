@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_TRACKDRAW_H
-#define NAVIMAP_TRACKDRAW_H
+#ifndef SKEDADDLE_TRACKDRAW_H
+#define SKEDADDLE_TRACKDRAW_H
 
 #include <stdint.h>
 #include "map/gpx.h"
@@ -22,4 +22,4 @@ int  paint_tracks(Raster *rs, const MapView *v, const GpxStore *g);
  * 返回画出的个数。 */
 int  paint_favorites(Raster *rs, const MapView *v, const GpxStore *g, Font *f);
 
-#endif /* NAVIMAP_TRACKDRAW_H */
+#endif /* SKEDADDLE_TRACKDRAW_H */

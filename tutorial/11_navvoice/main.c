@@ -2,7 +2,7 @@
  *
  * 累加内容：从"一条路线"到"可播报的导航"的最后一公里。
  *   - Maneuver：把路线折线转成"左转/右转/直行"指令序列（算相邻段方位角差）。
- *   - VoiceRouter：★ 只决定"说什么"（纯逻辑），发声在 nm_tts_speak（桩，打印即可）。
+ *   - VoiceRouter：★ 只决定"说什么"（纯逻辑），发声在 sk_tts_speak（桩，打印即可）。
  *   - voice_wire：★ 接线层，唯一裁决点；生产和端到端自测共用，避免判据假绿。
  *
  * 编译： gcc -std=c11 -O2 -o tut main.c && ./tut
@@ -72,14 +72,14 @@ static void voice_decide(Man *ms, int n, char *out[], int *no){
     static char fin[]="到达目的地"; out[*no]=&fin[0]; (*no)++;
 }
 
-/* nm_tts_speak：发声（桩——真实工程走 plat.c，跨平台 TTS） */
-static void nm_tts_speak(const char *text){ printf("  🔊 %s\n", text); }
+/* sk_tts_speak：发声（桩——真实工程走 plat.c，跨平台 TTS） */
+static void sk_tts_speak(const char *text){ printf("  🔊 %s\n", text); }
 
 /* voice_wire：★ 唯一接线点（生产端与 skedaddle_voice_e2e 自测共用） */
 static void voice_wire(Man *ms, int n){
     char *utt[16]; int no;
     voice_decide(ms, n, utt, &no);
-    for(int i=0;i<no;i++) nm_tts_speak(utt[i]);
+    for(int i=0;i<no;i++) sk_tts_speak(utt[i]);
 }
 
 int main(void){

@@ -22,8 +22,8 @@ stdout 打印量化往返误差（≈1e-7 度）和两段 haversine 距离。
    和"投影缓存惰性失效"。
 
 **生产最终形态**（对照）：
-- `src/utils/geo.c`：`nm_lat_to_i32` / `nm_i32_to_deg`（量化）、`nm_haversine_m`（测距）、
-  `nm_mercator` / `nm_mercator_y_fast`（**快版故意不逐位等于精确版**，换 5~6× 速度）。
+- `src/utils/geo.c`：`sk_lat_to_i32` / `sk_i32_to_deg`（量化）、`sk_haversine_m`（测距）、
+  `sk_mercator` / `sk_mercator_y_fast`（**快版故意不逐位等于精确版**，换 5~6× 速度）。
 - `src/utils/datum.c`：`datum_wgs84_to` / `datum_gk_forward`（高斯方里格读数）。
 
 **练习**：把视框 `LON0/LAT0` 改成你所在城市的范围，重画一张本地经纬网。

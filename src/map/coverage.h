@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_COVERAGE_H
-#define NAVIMAP_COVERAGE_H
+#ifndef SKEDADDLE_COVERAGE_H
+#define SKEDADDLE_COVERAGE_H
 
 #include "map/mapset.h"
 

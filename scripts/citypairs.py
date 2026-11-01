@@ -44,7 +44,7 @@ def build_pairs():
 
 def run(p, lm, w, repeat=2):
     env = dict(os.environ)
-    env["NAVIMAP_LM"] = "1" if lm else "0"
+    env["SKEDADDLE_LM"] = "1" if lm else "0"
     cmd = [BIN, "--graph=" + GRAPH,
            "--from=%.2f,%.2f" % (p[0][1], p[0][2]),
            "--to=%.2f,%.2f" % (p[1][1], p[1][2]),

@@ -197,12 +197,12 @@ int offscreen_shot_main(int argc, char **argv)
     const char *pbf_display = NULL;   /* PBF 显示层模式 */
     int pbf_lru = 3;
     /* 默认输出：临时目录 + 固定名（曾经写死 /tmp/...，Windows 上没有 /tmp）。
-     * 本机 TMPDIR 未设置时 nm_temp_dir() 就是 "/tmp"，默认值与旧版一致。 */
+     * 本机 TMPDIR 未设置时 sk_temp_dir() 就是 "/tmp"，默认值与旧版一致。 */
     char outbuf[4096];
     const char *out = outbuf;
-    if (nm_path_join(outbuf, sizeof(outbuf), nm_temp_dir(),
-                     "navimap_shot.bmp") != 0) {
-        fprintf(stderr, "临时目录路径过长：%s\n", nm_temp_dir());
+    if (sk_path_join(outbuf, sizeof(outbuf), sk_temp_dir(),
+                     "skedaddle_shot.bmp") != 0) {
+        fprintf(stderr, "临时目录路径过长：%s\n", sk_temp_dir());
         return 1;
     }
     double lat = 0, lon = 0;
@@ -226,11 +226,11 @@ int offscreen_shot_main(int argc, char **argv)
     int settings_ovl = 0;            /* --settings-ovl：出图前打开浮层透明度子面板 */
     int open_tf = 0;                 /* --panel=tf：出图前打开轨迹/收藏管理面板（QA 验收用） */
     int open_menu = 0;               /* --menu：出图前打开主菜单浮层（QA 验收用） */
-    struct { NmOverlay id; int pct; } ovl_set[OVL_COUNT] = {{OVL_TITLE,0}};
+    struct { SkOverlay id; int pct; } ovl_set[OVL_COUNT] = {{OVL_TITLE,0}};
     int n_ovl = 0;                   /* --ovl-alpha=<key>=<pct>：逐浮层透明度 */
     int n_gpx_in = 0;
 
-    /* 启动自愈（同 navimap）：源 pbf 在、产物没了/坏了就重建。默认开。 */
+    /* 启动自愈（同 skedaddle）：源 pbf 在、产物没了/坏了就重建。默认开。 */
     AutoBuildOpt ab;
     memset(&ab, 0, sizeof(ab));
     ab.enable = 1;
@@ -329,7 +329,7 @@ int offscreen_shot_main(int argc, char **argv)
                 *eq = '\0';
                 int id = ovl_by_key(spec);
                 if (id < 0) { fprintf(stderr, "未知浮层 %s\n", spec); return 2; }
-                ovl_set[n_ovl].id = (NmOverlay)id;
+                ovl_set[n_ovl].id = (SkOverlay)id;
                 ovl_set[n_ovl].pct = atoi(eq + 1);
                 n_ovl++;
             }

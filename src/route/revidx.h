@@ -1,5 +1,5 @@
-#ifndef NAVIMAP_REVIDX_H
-#define NAVIMAP_REVIDX_H
+#ifndef SKEDADDLE_REVIDX_H
+#define SKEDADDLE_REVIDX_H
 
 #include <stdint.h>
 #include <stddef.h>

@@ -47,11 +47,11 @@ static void paint_frame(Raster *rs, App *a, PaintStats *st)
      * 走平台层的单调时钟（clock_gettime / QueryPerformanceCounter），
      * 不在业务代码里直接调 POSIX 时钟。 */
     uint64_t ts0, ts1;
-#define TICK(fld) (ts1 = nm_now_ms(), \
+#define TICK(fld) (ts1 = sk_now_ms(), \
                    st->fld += (double)(ts1 - ts0), \
                    ts0 = ts1)
 
-    ts0 = nm_now_ms();
+    ts0 = sk_now_ms();
     paint_background(rs, a->view.w, a->view.h);
     TICK(ms_bg);
 

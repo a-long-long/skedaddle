@@ -14,33 +14,33 @@ struct NMBinWriter {
     int      failed;
 };
 
-void nm_put_u16(uint8_t *p, uint16_t v)
+void sk_put_u16(uint8_t *p, uint16_t v)
 { p[0] = (uint8_t)(v & 0xff); p[1] = (uint8_t)(v >> 8); }
 
-void nm_put_u32(uint8_t *p, uint32_t v)
+void sk_put_u32(uint8_t *p, uint32_t v)
 {
     p[0] = (uint8_t)(v & 0xff); p[1] = (uint8_t)((v >> 8) & 0xff);
     p[2] = (uint8_t)((v >> 16) & 0xff); p[3] = (uint8_t)((v >> 24) & 0xff);
 }
 
-void nm_put_i32(uint8_t *p, int32_t v) { nm_put_u32(p, (uint32_t)v); }
+void sk_put_i32(uint8_t *p, int32_t v) { sk_put_u32(p, (uint32_t)v); }
 
-void nm_put_u64(uint8_t *p, uint64_t v)
+void sk_put_u64(uint8_t *p, uint64_t v)
 {
     for (int i = 0; i < 8; i++) p[i] = (uint8_t)((v >> (8 * i)) & 0xff);
 }
 
-uint16_t nm_get_u16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
+uint16_t sk_get_u16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
 
-uint32_t nm_get_u32(const uint8_t *p)
+uint32_t sk_get_u32(const uint8_t *p)
 {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
            ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
-int32_t nm_get_i32(const uint8_t *p) { return (int32_t)nm_get_u32(p); }
+int32_t sk_get_i32(const uint8_t *p) { return (int32_t)sk_get_u32(p); }
 
-uint64_t nm_get_u64(const uint8_t *p)
+uint64_t sk_get_u64(const uint8_t *p)
 {
     uint64_t v = 0;
     for (int i = 0; i < 8; i++) v |= (uint64_t)p[i] << (8 * i);
@@ -51,13 +51,13 @@ static void hdr_to_bytes(const NMBinHeader *h, uint8_t *b)
 {
     memset(b, 0, NMBIN_HDR_BYTES);
     memcpy(b, h->magic, 8);
-    nm_put_u32(b + 8,  h->version);
-    nm_put_u32(b + 12, h->kind);
-    nm_put_u32(b + 16, h->rec_size);
-    nm_put_u64(b + 20, h->rec_count);
-    nm_put_u32(b + 28, h->n_fields);
-    nm_put_u32(b + 32, h->flags);
-    nm_put_u64(b + 36, h->payload_bytes);
+    sk_put_u32(b + 8,  h->version);
+    sk_put_u32(b + 12, h->kind);
+    sk_put_u32(b + 16, h->rec_size);
+    sk_put_u64(b + 20, h->rec_count);
+    sk_put_u32(b + 28, h->n_fields);
+    sk_put_u32(b + 32, h->flags);
+    sk_put_u64(b + 36, h->payload_bytes);
     memcpy(b + 44, h->source, 32);
 }
 
@@ -65,13 +65,13 @@ static void bytes_to_hdr(const uint8_t *b, NMBinHeader *h)
 {
     memset(h, 0, sizeof(*h));
     memcpy(h->magic, b, 8);
-    h->version       = nm_get_u32(b + 8);
-    h->kind          = nm_get_u32(b + 12);
-    h->rec_size      = nm_get_u32(b + 16);
-    h->rec_count     = nm_get_u64(b + 20);
-    h->n_fields      = nm_get_u32(b + 28);
-    h->flags         = nm_get_u32(b + 32);
-    h->payload_bytes = nm_get_u64(b + 36);
+    h->version       = sk_get_u32(b + 8);
+    h->kind          = sk_get_u32(b + 12);
+    h->rec_size      = sk_get_u32(b + 16);
+    h->rec_count     = sk_get_u64(b + 20);
+    h->n_fields      = sk_get_u32(b + 28);
+    h->flags         = sk_get_u32(b + 32);
+    h->payload_bytes = sk_get_u64(b + 36);
     memcpy(h->source, b + 44, 32);
     h->source[31] = '\0';
 }
@@ -80,7 +80,7 @@ static void field_to_bytes(const NMBinField *f, uint8_t *b)
 {
     memset(b, 0, NMBIN_FIELD_BYTES);
     memcpy(b, f->name, 16);
-    nm_put_u16(b + 16, f->offset);
+    sk_put_u16(b + 16, f->offset);
     b[18] = f->type;
     b[19] = f->width;
 }
@@ -90,7 +90,7 @@ static void bytes_to_field(const uint8_t *b, NMBinField *f)
     memset(f, 0, sizeof(*f));
     memcpy(f->name, b, 16);
     f->name[15] = '\0';
-    f->offset = nm_get_u16(b + 16);
+    f->offset = sk_get_u16(b + 16);
     f->type   = b[18];
     f->width  = b[19];
 }
@@ -178,11 +178,11 @@ int nmbin_open(const char *path, NMBinFile *out)
 {
     memset(out, 0, sizeof(*out));
     size_t flen = 0;
-    void *p = nm_mmap_file(path, &flen);      /* 平台层：mmap / CreateFileMapping */
+    void *p = sk_mmap_file(path, &flen);      /* 平台层：mmap / CreateFileMapping */
     if (!p) return -1;
 
     bytes_to_hdr((const uint8_t *)p, &out->hdr);
-    if (memcmp(out->hdr.magic, NMBIN_MAGIC, 8) != 0) { nm_munmap(p, flen); return -1; }
+    if (memcmp(out->hdr.magic, NMBIN_MAGIC, 8) != 0) { sk_munmap(p, flen); return -1; }
     const uint8_t *fp = (const uint8_t *)p + NMBIN_HDR_BYTES;
     for (uint32_t i = 0; i < out->hdr.n_fields && i < NMBIN_MAX_FIELDS; i++)
         bytes_to_field(fp + i * NMBIN_FIELD_BYTES, &out->fields[i]);
@@ -196,7 +196,7 @@ int nmbin_open(const char *path, NMBinFile *out)
 
 void nmbin_close(NMBinFile *f)
 {
-    if (f && f->mapped && f->data) nm_munmap(f->data - (NMBIN_HDR_BYTES + NMBIN_FIELD_BYTES * NMBIN_MAX_FIELDS),
+    if (f && f->mapped && f->data) sk_munmap(f->data - (NMBIN_HDR_BYTES + NMBIN_FIELD_BYTES * NMBIN_MAX_FIELDS),
                                              f->mapped_len);
     if (f) { f->data = NULL; f->mapped = 0; }
 }

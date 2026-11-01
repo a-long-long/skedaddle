@@ -1,4 +1,4 @@
-# NavMap 实现计划与风险清单
+# Skedaddle 实现计划与风险清单
 
 > 依据：`arch.md` + 2026-09-21 本机实测（不是推测，每条都跑过命令验证）  
 > 目标：UOS Desktop 20 / aarch64 / Wayland，C 语言从零做离线地图导航，PBF 为主格式，自动识别并加载新下载地图。
@@ -9,15 +9,15 @@
 
 ### 0.1 代码：已不在工作区，需要重建
 
-`/home/along/navimap/` 现在**只有** `arch.md` 和 `data/`，`src/` 和 `build/` 已被删除。  
-从 `/tmp/navimap_*.log` 可以还原出上一版工程的真实结构，**建议原样沿用这些路径**：
+`/home/along/skedaddle/` 现在**只有** `arch.md` 和 `data/`，`src/` 和 `build/` 已被删除。  
+从 `/tmp/skedaddle_*.log` 可以还原出上一版工程的真实结构，**建议原样沿用这些路径**：
 
 ```
 src/app.c  src/main.c
 src/map/map_view.c  src/map/osm_map.c
 src/ui/window.c  src/pbf/pbf_reader.c
 generated/osm.pb-c.c        # 由 protoc-c 从 osmformat.proto 生成
-CMakeLists.txt              # target: navimap
+CMakeLists.txt              # target: skedaddle
 ```
 
 上一版的状态（来自 gdb 日志，很关键）：
@@ -214,7 +214,7 @@ __attribute__((constructor(101))) static void fix_allocator(void) {
   别在数据规模上来之后才发现字段猜错了。
 
 **A-5. GUI 无法无头验证（已实测：`xvfb-run` 不存在）**  
-`/tmp/navimap_run.log`：`/bin/bash: xvfb-run：未找到命令`。没有 `valgrind`（有 `gdb`、`perf`）。  
+`/tmp/skedaddle_run.log`：`/bin/bash: xvfb-run：未找到命令`。没有 `valgrind`（有 `gdb`、`perf`）。  
 ⇒ 所有逻辑必须能在命令行断言，GUI 只做很薄的一层；每个阶段留一个 `--selftest` 入口，把关键不变量（记录数、bbox、路径里程、索引命中）打成文本输出，用脚本比对。
 
 
@@ -300,7 +300,7 @@ typedef struct {
 | 0 骨架      | ✅  | `env.sh` + CMake（SDL2_ttf 改为 REQUIRED，缺失即失败）+ protoc-c 代码生成                                                                                                   |
 | 2 PBF 解析  | ✅  | `skedaddle_pbf_info`：北京 530,968 ways 与旧版 meta.txt 完全对上；`bbbike.pbf` 实为截断文件（当负向样本）                                                                                       |
 | 3 路网落盘    | ✅  | `skedaddle_graph_extract` + `skedaddle_graph_check`：北京 1,451,478 节点 / 2,843,824 边 / 363 转向限制，3.3 秒                                                                                |
-| 1+5 渲染    | ✅  | `navimap`（Wayland 窗口实测跑通）+ `map_shot`（离屏渲染，三档 zoom 人工核验）                                                                                                      |
+| 1+5 渲染    | ✅  | `skedaddle`（Wayland 窗口实测跑通）+ `map_shot`（离屏渲染，三档 zoom 人工核验）                                                                                                      |
 | 4 空间索引    | ✅  | 单省 Z14 tile（北京 10,593 tile）；**多省图集**：`--graph=products/graph`（父目录）自动扫描加载全部 8 省、按视口 bbox 整省裁剪、分阶段渲染（面→路→线→标注）；**跨省渲染去重**；**数据包含检测**（北京/天津 ⊂ 河北，加载时自动识别，路由跳过副本） |
 | 6 中文标注    | ✅  | 字形缓存（glyph cache，按码点哈希）+ 字体可选（`--font=`）、字号运行期可调（`[` `]`，8~32pt）                                                                                              |
 | 7 搜索      | ✅  | 2026-09-22 完成，见 §13：`skedaddle_search_cli` 均值 1.0 ms，边界输入不崩；GUI 顶栏搜索框 + 结果钉子                                                                                            |
@@ -366,8 +366,8 @@ typedef struct {
   节点即判包含），识别出 北京/天津 ⊂ 河北。路由展开时跳过副本省 →  
   北京→天津从 46.8s 降到 **0.62s**（75 倍）。★ 采样必须从 edgelist 取：  
   按节点表采样会把"只有入边"的节点也算进去，命中率掉到 60% 导致漏判。
-- **A***：启发式 = 大圆距离 ÷ 130km/h（用 `nm_haversine_m`，不能用等距近似的  
-  `nm_fast_dist_m`——跨纬度大时会高估、破坏 admissible）。
+- **A***：启发式 = 大圆距离 ÷ 130km/h（用 `sk_haversine_m`，不能用等距近似的  
+  `sk_fast_dist_m`——跨纬度大时会高估、破坏 admissible）。
 - 转向限制：每省懒建 `(via_node,from_edge) → to_edge` 有序表 + 二分；只处理  
   "禁止"型。已知近似：跨省接缝那一跳不查限制（入边属于另一个省）。
 - 瓦片缝合缓存：256 槽哈希 + 线性探测；先只读瓦片目录统计**去重后的有效省数**，  
@@ -543,7 +543,7 @@ zoom 12 全城帧时间 496ms → 210ms（软件渲染，窗口模式实测）�
 
 `--font=<路径|none>` 指定字体，`--font-size=N` 指定字号（默认 14）；  
 不指定时走**宋体优先候选链**：CESI宋体GB18030 → CESI宋体GB2312 → 国标小标宋 →  
-方正仿宋 → 国标黑体（兜底）。环境变量 NAVIMAP_FONT 仍有效，优先级：  
+方正仿宋 → 国标黑体（兜底）。环境变量 SKEDADDLE_FONT 仍有效，优先级：  
 命令行 > 环境变量 > 默认链。`--font=none` 关闭文字标注（纯图形）。  
 `.ttc/.otc` 集合自动走 TTF_OpenFontIndex（font_open_ex 供挑面孔）。
 
@@ -860,7 +860,7 @@ ASSERT-FAIL —— 没有任何自愈。现在启动时先体检，需要就现�
 - 并发锁：`<省>.building` 里写 pid，O_EXCL 抢占；进程死了的孤儿锁会被接管，  
   活着的就等（实测打印"等待中…"）。
 - 开关：默认开，`--no-autobuild` 只诊断不动手；`--sources=` 指定源目录。  
-  接入 navimap / map_shot / skedaddle_route_cli / skedaddle_navsim_cli / skedaddle_restr_ab / skedaddle_tile_xcheck。
+  接入 skedaddle / map_shot / skedaddle_route_cli / skedaddle_navsim_cli / skedaddle_restr_ab / skedaddle_tile_xcheck。
 
 ### 验收（逐个场景实测，不是跑通正常路径就算）
 
@@ -924,8 +924,8 @@ bbox 是矩形、省界不规则，所以"落在某省 bbox 内"不等于真有�
 ### ★ 第三刀：mv_project 每次都在重算常量（src/map/map_view.c）
 
 ```c
-nm_mercator(lat, lon, &wx, &wy);        /* 这个点，必要 */
-nm_mercator(v->lat, v->lon, &cx, &cy);  /* 视口中心 —— 一帧内是常量，却每次都算 */
+sk_mercator(lat, lon, &wx, &wy);        /* 这个点，必要 */
+sk_mercator(v->lat, v->lon, &cx, &cy);  /* 视口中心 —— 一帧内是常量，却每次都算 */
 double s = mv_scale(v);                 /* pow(2,zoom) —— 同样是常量 */
 ```
 
@@ -997,7 +997,7 @@ z9 183→112 ms、z11 126→111、z13 79→70。
 
 ### 判别实验：先把<｜hy_place▁holder▁no▁813｜>成本拆开，再决定动哪里
 
-给 paint.c 临时加位开关 `NAVIMAP_PAINT_DIAG`（bit0 不落笔 / bit1 用线性近似代替  
+给 paint.c 临时加位开关 `SKEDADDLE_PAINT_DIAG`（bit0 不落笔 / bit1 用线性近似代替  
 投影 / bit2 不设色），同一帧跑四种组合差出差值。北京 z9（273770 条边，路网 101 ms）：
 
 | 组分                          | 原始        | 查表后   |
@@ -1012,11 +1012,11 @@ z9 183→112 ms、z11 126→111、z13 79→70。
 - "省调用次数"没有想象的值钱：改成 DrawLines 后逐像素成本一个没少，  
   DrawLines 本身也不比 DrawLine 便宜。
 
-### 采纳：纬度 → 墨卡托 y 走查表插值（`nm_mercator_y_fast`）
+### 采纳：纬度 → 墨卡托 y 走查表插值（`sk_mercator_y_fast`）
 
 y 只依赖纬度且足够光滑 → 首用建 2^15 格的表（256 KB），线性插值。误差账：  
 世界坐标误差 = h²/8·|y''| ≈ 2.3e-10，z18 下折合 **0.016 px**，远小于取整误差。  
-只给 `mv_project` 用；`nm_mercator` 精确版留给逆算等非热路径。
+只给 `mv_project` 用；`sk_mercator` 精确版留给逆算等非热路径。
 
 第二帧帧时间（1280×800，北京 39.90,116.40，地图不动的第二帧）：
 
@@ -1594,7 +1594,7 @@ PLK_ROAD = 13,   /* > labels.c kind_max_for_zoom() 的上限 12 ⇒ 标注查不
 
 ```bash
 gcc -O1 -I src -I build/generated -I $HOME/.local/usr/include \
-    -o /tmp/scan_place /tmp/scan_place.c build/libnavimap_core.a \
+    -o /tmp/scan_place /tmp/scan_place.c build/libskedaddle_core.a \
     -L$HOME/.local/usr/lib/aarch64-linux-gnu -L/usr/local/lib \
     -lz -lsqlite3 -lm -lprotobuf-c
 export LD_LIBRARY_PATH=$HOME/.local/usr/lib/aarch64-linux-gnu:$HOME/.local/lib:/usr/local/lib
@@ -1613,7 +1613,7 @@ export LD_LIBRARY_PATH=$HOME/.local/usr/lib/aarch64-linux-gnu:$HOME/.local/lib:/
 
 ### 26.1 归因（判别实验，见 §2 的做法）
 
-临时位开关 `NAVIMAP_FILL_DIAG`，量完即删：
+临时位开关 `SKEDADDLE_FILL_DIAG`，量完即删：
 
 | 关掉 / 替换掉的东西       | 面耗时    | 归因                                            |
 | ----------------- | ------ | --------------------------------------------- |
@@ -2506,7 +2506,7 @@ nlm=30  lmfp fee5ccb6b3124ebb
 
 | 假设 | 实验 | 结论 |
 |---|---|---|
-| 罚项 4045 m 不够，加大就行 | `NAVIMAP_LM_PENALTY_ADD_M` 扫 0/2k/4k/8k/16k（时间）、0/5k/10k/20k/40k（距离） | ✗ 时间口径**完全不变**；距离口径 895.16→894.30→890.68→890.44→882.73，**+40 km 都没收敛到 878.41** |
+| 罚项 4045 m 不够，加大就行 | `SKEDADDLE_LM_PENALTY_ADD_M` 扫 0/2k/4k/8k/16k（时间）、0/5k/10k/20k/40k（距离） | ✗ 时间口径**完全不变**；距离口径 895.16→894.30→890.68→890.44→882.73，**+40 km 都没收敛到 878.41** |
 | 双向 `lm_tc[dir]`（两端目标格）搞错 | 改单向 `--bidir=0` 重跑 | ✗ 单向同样越界（895.16 vs 878.41），与双向无关 |
 | 地标 Dijkstra **每节点只存一个状态**，而算路用 (节点,入边) 状态 ⇒ 有转向限制时地标距离偏乐观 | 加 `RouteOpts.lm_no_restr`，建一张**不做转向限制**的表（`skedaddle_lmbuild_cli --no-restr`）重测 | ✗ 照样越界（129 vs 128；895.29 vs 878.41）⇒ **转向限制不是原因** |
 
@@ -2547,7 +2547,7 @@ d(u,t) ≥ d(L,t) − d(L,u)
 写进代码的三处：
 - `src/route/lmtable.h` 顶部：结论 + 实测数字 + 三个已证伪假设 + 修法线索。
 - `src/route/route.h` 的 `exact` 字段：★ 最优性前提是 h 可采纳 ⇒
-  **开表时 `--exact` 不再保证最优**，要真值用 `NAVIMAP_LM=0`。
+  **开表时 `--exact` 不再保证最优**，要真值用 `SKEDADDLE_LM=0`。
 - `src/route/route.c` 双向终止条件那段证明旁边：同一条提示。
 
 ### 门禁：不许恶化（regress.sh 第 45 项 `lm_admissible`）
@@ -2572,7 +2572,7 @@ d(u,t) ≥ d(L,t) − d(L,u)
 - 新增 `scripts/lmadmissible.py`（50 条约 25 分钟，太慢 ⇒ 只放了一条进 regress）。
   加了 `--slack=N`：`--slack=1` = 接受当前已知的最多差 1 分（退出码 0）；
   不加就是严格的"必须相等"判据。
-- 诊断旋钮（保留，后续还要用）：`NAVIMAP_LM_PENALTY_ADD_M`（在表自带 penalty 上
+- 诊断旋钮（保留，后续还要用）：`SKEDADDLE_LM_PENALTY_ADD_M`（在表自带 penalty 上
   再加 N 米，默认 0）、`RouteOpts.lm_no_restr` + `skedaddle_lmbuild_cli --no-restr`
   （建表时的全图 Dijkstra 不做转向限制）。两者都只查一次 getenv / 只影响建表。
 - `products/graph/lm.bin` 仍是 30 地标那份（实验中临时换过的都已恢复并 cmp 校验）。
@@ -2592,9 +2592,9 @@ d(u,t) ≥ d(L,t) − d(L,u)
 map 层实际上依赖 render 层、render 层实际上依赖 ui 层。
 
 具体代价：
-1. **map→render**：`navmap_map` 库名义上只依赖 `navmap_pbf` + 叶子库，实际却要 render 的符号才能链接。
+1. **map→render**：`skedaddle_map` 库名义上只依赖 `skedaddle_pbf` + 叶子库，实际却要 render 的符号才能链接。
    任何"只要地图数据、不要渲染"的工具（如 `skedaddle_gen_contours`）都被迫把 render 拖进来。
-2. **render→ui**：`navmap_render` 名义上不依赖 `navmap_ui`，实际 `chrome.c`/`audit.c` 调 `ui/window.c` 的
+2. **render→ui**：`skedaddle_render` 名义上不依赖 `skedaddle_ui`，实际 `chrome.c`/`audit.c` 调 `ui/window.c` 的
    `app_*` ⇒ 迫使 CMake 用 `-Wl,--start-group` 包裹全部模块库来消解符号级环（CMakeLists.txt:430-450）。
    环一旦存在，就**无法用链接器暴露新的错误**，边界形同虚设。
 
@@ -2620,7 +2620,7 @@ utils  ◄ pbf  ◄ map  ◄ route ◄ render ◄ ui ◄ ui_qt
   `name_pool_open/close`；`LabelCache`/`LabelItem`/`label_*`/`paint_place_labels` 在 map 下**零实际引用**
   （只在 `coverage.h` 的注释里被提及）。
 - `NamePool` 的定义现在落在 `src/render/paint.h:88-98`；`name_pool_open/close` 的**实现在
-  `src/render/labels.c:12-50`**，而它们的内部只用 `map/binfmt.h` 的 `nmbin_open` / `nm_get_u32` /
+  `src/render/labels.c:12-50`**，而它们的内部只用 `map/binfmt.h` 的 `nmbin_open` / `sk_get_u32` /
   `nmbin_close`（`labels.c:17-33`）——**零 render 依赖**。
 - ⇒ `NamePool` 是**纯地图数据概念**（每省 names.bin 的解析结果，随 `MapSrc` 走），放在 render 是历史遗留。
 - 附带问题：`name_pool_open/close` 在 `paint.h:100-101` 与 `labels.h:55-56` **重复声明**了一遍。
@@ -2664,7 +2664,7 @@ utils  ◄ pbf  ◄ map  ◄ route ◄ render ◄ ui ◄ ui_qt
 ### 53.6 R2 的额外收益：链接器防线回来了
 
 R2 消除符号级环后，`-Wl,--start-group` **不再需要**，已从 CMake 移除
-（`navmap_core` 与 `nm_link_tool` 的 MSVC/GNU 双分支因此合并为一份）。
+（`skedaddle_core` 与 `sk_link_tool` 的 MSVC/GNU 双分支因此合并为一份）。
 
 为什么坚持去掉而不是"留着无害"：
 
