@@ -8,7 +8,7 @@ static I18nLang g_lang = I18N_ZH;   /* 默认中文 */
 
 static void i18n_load(const char *code);  /* 前向声明，定义见文件末尾 */
 
-typedef struct { const char *zh; const char *en; } TrPair;
+typedef struct { const char *zh; const char *tr; } TrPair;   /* tr = 当前语言的译文 */
 
 /* 运行时语言文件加载的全局状态（i18n_set_lang 切换时释放并重建） */
 static TrPair *g_pairs = NULL;
@@ -17,19 +17,36 @@ static char   *g_lang_dir = NULL;
 
 void i18n_set_lang(I18nLang l)
 {
-    g_lang = (l == I18N_EN) ? I18N_EN : I18N_ZH;
+    if (l < 0 || l >= I18N_COUNT) l = I18N_ZH;
+    g_lang = l;
 
     /* 释放上一次加载的映射（切换语言时） */
     for (size_t i = 0; i < g_n; i++) {
         free((void *)g_pairs[i].zh);
-        free((void *)g_pairs[i].en);
+        free((void *)g_pairs[i].tr);
     }
     free(g_pairs);
     g_pairs = NULL;
     g_n = 0;
 
-    if (g_lang == I18N_EN) i18n_load("en");
+    /* 中文无外部文件（i18n_tr 直接返回原文）；其它语言加载 lang/<code>.xml。 */
+    const char *code = i18n_lang_code(l);
+    if (code && *code) i18n_load(code);
 }
+
+/* 各语言元数据：索引 = I18nLang 枚举值，长度 = I18N_COUNT。
+ * code 为 NULL 表示中文（无外部文件，i18n_tr 直接返回原文）。 */
+static const I18nInfo g_langs[] = {
+    { I18N_ZH, NULL,    "中文" },
+    { I18N_EN, "en",    "English" },
+    { I18N_FR, "fr",    "Français" },
+    { I18N_DE, "de",    "Deutsch" },
+    { I18N_ES, "es",    "Español" },
+    { I18N_PT, "pt",    "Português" },
+    { I18N_IT, "it",    "Italiano" },
+    { I18N_JA, "ja",    "日本語" },
+};
+
 
 I18nLang i18n_lang(void)
 {
@@ -127,6 +144,7 @@ static const TrPair TR[] = {
     { "轨迹 / 收藏（导入 GPX）", "Tracks / Favorites (import GPX)" },
     { "途经点（面板开着时点地图添加）", "Via points (click map when panel open)" },
     { "主菜单",     "Main menu" },
+    { "卫星天顶图（信号强弱 / 定位状态）", "Satellite sky plot (signal / fix status)" },
     { "搜索地点或道路（Ctrl+F）", "Search place or road (Ctrl+F)" },
 
     /* 搜索浮层 */
@@ -568,19 +586,19 @@ static void i18n_load(const char *code)
         const char *cs = find_tag(p, end, "item", &ce);
         if (!cs) break;
         char *zh = extract_tag_text(cs, ce, "zh");
-        char *en = extract_tag_text(cs, ce, "en");
-        if (zh && en) {
+        char *tr = extract_tag_text(cs, ce, code);   /* 该语言对应的翻译标签 */
+        if (zh && tr) {
             TrPair *tmp = (TrPair *)realloc(g_pairs, (g_n + 1) * sizeof(TrPair));
             if (tmp) {
                 g_pairs = tmp;
                 g_pairs[g_n].zh = zh;
-                g_pairs[g_n].en = en;
+                g_pairs[g_n].tr = tr;
                 g_n++;
             } else {
-                free(zh); free(en);
+                free(zh); free(tr);
             }
         } else {
-            free(zh); free(en);
+            free(zh); free(tr);
         }
         p = ce + strlen("</item>");
     }
@@ -590,15 +608,41 @@ static void i18n_load(const char *code)
 static const char *tr_lookup(const char *zh)
 {
     for (size_t i = 0; i < g_n; i++)
-        if (strcmp(g_pairs[i].zh, zh) == 0) return g_pairs[i].en;
+        if (strcmp(g_pairs[i].zh, zh) == 0) return g_pairs[i].tr;
+    /* 文件里缺的：回退内置英文 TR[]（全部条目都有英文），再不行才回退中文。 */
     for (size_t i = 0; i < sizeof(TR) / sizeof(TR[0]); i++)
-        if (strcmp(TR[i].zh, zh) == 0) return TR[i].en;
+        if (strcmp(TR[i].zh, zh) == 0) return TR[i].tr;
     return zh;   /* 缺译：回退中文原文 */
 }
 
 const char *i18n_tr(const char *zh)
 {
     if (!zh) return zh;
-    if (g_lang == I18N_EN) return tr_lookup(zh);
-    return zh;   /* 中文模式：原文返回 */
+    if (g_lang == I18N_ZH) return zh;   /* 中文模式：原文返回 */
+    return tr_lookup(zh);
+}
+
+/* ---------------- 语言元数据查询（Qt 端动态生成语言菜单） ---------------- */
+
+const I18nInfo *i18n_lang_info(I18nLang l)
+{
+    if (l < 0 || l >= I18N_COUNT) return NULL;
+    return &g_langs[l];
+}
+
+const char *i18n_lang_code(I18nLang l)
+{
+    const I18nInfo *i = i18n_lang_info(l);
+    return i ? i->code : NULL;
+}
+
+const char *i18n_lang_name(I18nLang l)
+{
+    const I18nInfo *i = i18n_lang_info(l);
+    return i ? i->name : "?";
+}
+
+int i18n_lang_count(void)
+{
+    return I18N_COUNT;
 }

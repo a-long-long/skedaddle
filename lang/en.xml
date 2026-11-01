@@ -79,6 +79,7 @@
   <item><zh>轨迹 / 收藏（导入 GPX）</zh><en>Tracks / Favorites (import GPX)</en></item>
   <item><zh>途经点（面板开着时点地图添加）</zh><en>Via points (click map when panel open)</en></item>
   <item><zh>主菜单</zh><en>Main menu</en></item>
+  <item><zh>卫星天顶图（信号强弱 / 定位状态）</zh><en>Satellite sky plot (signal / fix status)</en></item>
   <item><zh>搜索地点或道路（Ctrl+F）</zh><en>Search place or road (Ctrl+F)</en></item>
   <item><zh>搜索</zh><en>Search</en></item>
   <item><zh>搜索地点、道路…</zh><en>Search place, road…</en></item>

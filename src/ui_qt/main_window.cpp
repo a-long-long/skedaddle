@@ -104,7 +104,7 @@ MainWindow::MainWindow(App *a, QWidget *parent)
     m_lang = settings_get_int(m_a->cfg, "lang", 0);
     i18n_set_lang((I18nLang)m_lang);
 
-    setWindowTitle(trc("跑路了"));
+    setWindowTitle(QStringLiteral("Skedaddle"));
     m_canvas = new MapCanvas(a, this);
     setCentralWidget(m_canvas);
 
@@ -920,7 +920,6 @@ void MainWindow::clearMenus()
         m_menuMain = nullptr;
     }
     m_setMenu = nullptr;
-    m_langZAct = m_langEAct = nullptr;
 }
 
 void MainWindow::rebuildGridCtx()
@@ -1121,15 +1120,18 @@ void MainWindow::buildMenus()
         });
         m_voiceAct = act;
     }
-    /* 语言：在「设置」菜单里选（持久化到 settings.ini 的 lang 键）。 */
+    /* 语言：在「设置」菜单里选（持久化到 settings.ini 的 lang 键）。
+     * 菜单项显示各语言自称（endonym，恒定不变），勾选当前项；新增语言只改
+     * i18n.c 的 g_langs 表 + lang/<code>.xml，这里自动列出，无需改 UI。 */
     {
         QMenu *mlang = mset->addMenu(trc("语言"));
-        m_langZAct = mlang->addAction(trc("中文"));
-        m_langZAct->setCheckable(true);
-        m_langZAct->setData(0);
-        m_langEAct = mlang->addAction(trc("English"));
-        m_langEAct->setCheckable(true);
-        m_langEAct->setData(1);
+        for (int i = 0; i < i18n_lang_count(); i++) {
+            I18nLang id = static_cast<I18nLang>(i);
+            QAction *a = mlang->addAction(QString::fromUtf8(i18n_lang_name(id)));
+            a->setCheckable(true);
+            a->setData(i);
+            if (i == m_lang) a->setChecked(true);
+        }
         connect(mlang, &QMenu::triggered, this, [this](QAction *a) {
             int v = a->data().toInt();
             settings_set_int(m_a->cfg, "lang", v);
@@ -2429,12 +2431,18 @@ void MainWindow::checkSystemLanguage()
 
     const QLocale sys = QLocale::system();
 
-    /* 本 app 仅支持 中文 / English；其它语言暂无翻译，不弹窗打扰。 */
+    /* 仅对「本 app 已提供翻译」的系统语言弹窗；其它语言暂无翻译，不弹窗打扰。 */
     I18nLang wanted;
     switch (sys.language()) {
-        case QLocale::Chinese: wanted = I18N_ZH; break;
-        case QLocale::English: wanted = I18N_EN; break;
-        default:               return;          /* 不支持的系统语言，跳过 */
+        case QLocale::Chinese:    wanted = I18N_ZH; break;
+        case QLocale::English:    wanted = I18N_EN; break;
+        case QLocale::French:     wanted = I18N_FR; break;
+        case QLocale::German:     wanted = I18N_DE; break;
+        case QLocale::Spanish:    wanted = I18N_ES; break;
+        case QLocale::Portuguese: wanted = I18N_PT; break;
+        case QLocale::Italian:    wanted = I18N_IT; break;
+        case QLocale::Japanese:   wanted = I18N_JA; break;
+        default:                  return;          /* 不支持的系统语言，跳过 */
     }
 
     /* 先记一次"已询问"：无论用户最终选什么，之后都不再弹。 */
@@ -2451,16 +2459,57 @@ void MainWindow::checkSystemLanguage()
     if (sysName.isEmpty()) sysName = sys.name();
 
     QString title, msg, switchTxt, keepTxt;
-    if (wanted == I18N_EN) {
-        title     = QStringLiteral("Language");
-        msg       = QString("Your system language/region is %1. Switch 跑路了 to English?").arg(sysName);
-        switchTxt = QStringLiteral("Switch to English");
-        keepTxt   = QStringLiteral("Keep Chinese");
-    } else {
+    switch (wanted) {
+    case I18N_ZH:
         title     = QStringLiteral("语言");
-        msg       = QString("检测到系统语言/区域为 %1。将 跑路了 切换为中文？").arg(sysName);
+        msg       = QString("检测到系统语言/区域为 %1。切换为中文？").arg(sysName);
         switchTxt = QStringLiteral("切换为中文");
-        keepTxt   = QStringLiteral("保持英文");
+        keepTxt   = QStringLiteral("保持当前语言");
+        break;
+    case I18N_EN:
+        title     = QStringLiteral("Language");
+        msg       = QString("Your system language/region is %1. Switch Skedaddle to English?").arg(sysName);
+        switchTxt = QStringLiteral("Switch to English");
+        keepTxt   = QStringLiteral("Keep current language");
+        break;
+    case I18N_FR:
+        title     = QStringLiteral("Langue");
+        msg       = QString("Votre langue système est %1. Utiliser le français dans Skedaddle ?").arg(sysName);
+        switchTxt = QStringLiteral("Utiliser le français");
+        keepTxt   = QStringLiteral("Garder la langue actuelle");
+        break;
+    case I18N_DE:
+        title     = QStringLiteral("Sprache");
+        msg       = QString("Ihre Systemsprache ist %1. Skedaddle auf Deutsch umstellen?").arg(sysName);
+        switchTxt = QStringLiteral("Auf Deutsch umstellen");
+        keepTxt   = QStringLiteral("Aktuelle Sprache beibehalten");
+        break;
+    case I18N_ES:
+        title     = QStringLiteral("Idioma");
+        msg       = QString("Su idioma de sistema es %1. ¿Usar español en Skedaddle?").arg(sysName);
+        switchTxt = QStringLiteral("Usar español");
+        keepTxt   = QStringLiteral("Mantener el idioma actual");
+        break;
+    case I18N_PT:
+        title     = QStringLiteral("Idioma");
+        msg       = QString("O seu idioma de sistema é %1. Usar português no Skedaddle?").arg(sysName);
+        switchTxt = QStringLiteral("Usar português");
+        keepTxt   = QStringLiteral("Manter o idioma atual");
+        break;
+    case I18N_IT:
+        title     = QStringLiteral("Lingua");
+        msg       = QString("La tua lingua di sistema è %1. Usare l'italiano in Skedaddle?").arg(sysName);
+        switchTxt = QStringLiteral("Usa italiano");
+        keepTxt   = QStringLiteral("Mantieni la lingua attuale");
+        break;
+    case I18N_JA:
+        title     = QStringLiteral("言語");
+        msg       = QString("システムの言語/地域は %1 です。Skedaddle を日本語に切り替えますか？").arg(sysName);
+        switchTxt = QStringLiteral("日本語を使用");
+        keepTxt   = QStringLiteral("現在の言語を維持");
+        break;
+    default:
+        return;
     }
 
     QMessageBox box(this);
@@ -2484,7 +2533,7 @@ void MainWindow::checkSystemLanguage()
 void MainWindow::retranslateUi()
 {
     i18n_set_lang((I18nLang)m_lang);   /* 与 m_lang 对齐（外部改过也以它为准） */
-    setWindowTitle(trc("跑路了"));
+    setWindowTitle(QStringLiteral("Skedaddle"));
 
     /* 主菜单 / 各子菜单全部重建（buildMenus 内已统一走 trc）。
      * clearMenus 会删掉坐标网右键菜单，故下面 rebuildGridCtx 一并重建。 */
@@ -2537,9 +2586,7 @@ void MainWindow::retranslateUi()
     /* 下载对话框若开着，一并刷新 */
     if (m_dlDlg) m_dlDlg->retranslateUi();
 
-    /* 语言勾选态 */
-    if (m_langZAct) m_langZAct->setChecked(m_lang == 0);
-    if (m_langEAct) m_langEAct->setChecked(m_lang == 1);
+    /* 语言勾选态：语言菜单在 buildMenus 里已按当前 m_lang 重建并勾选，无需此处再设。 */
 }
 
 void MainWindow::showDownloadDialog()

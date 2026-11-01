@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Skedaddle 语言包 lang/de.xml (Deutsch) -->
+<!-- 由 scripts/gen_lang.py 从翻译表生成；手改会被覆盖。 -->
+<translations lang="de">
+  <item><zh>跑路了</zh><de>Skedaddle</de></item>
+  <item><zh>语言</zh><de>Sprache</de></item>
+  <item><zh>昼夜模式</zh><de>Tag/Nacht</de></item>
+  <item><zh>导航面板</zh><de>Navigationsbereich</de></item>
+  <item><zh>POI 图标</zh><de>POI-Symbole</de></item>
+  <item><zh>地名标注</zh><de>Ortsnamen</de></item>
+  <item><zh>等高线</zh><de>Höhenlinien</de></item>
+  <item><zh>网格细分刻度</zh><de>Grid-Unterteilung</de></item>
+  <item><zh>语音播报</zh><de>Sprachansagen</de></item>
+  <item><zh>默认页签</zh><de>Standardregister</de></item>
+  <item><zh>字号(pt)</zh><de>Schriftgröße (pt)</de></item>
+  <item><zh>道路细节</zh><de>Straßendetails</de></item>
+  <item><zh>坐标系</zh><de>Geodätisches Datum</de></item>
+  <item><zh>网格类型</zh><de>Gittertyp</de></item>
+  <item><zh>白天</zh><de>Tag</de></item>
+  <item><zh>夜间</zh><de>Nacht</de></item>
+  <item><zh>自动(日出日落)</zh><de>Auto (Sonne)</de></item>
+  <item><zh>浏览</zh><de>Durchsuchen</de></item>
+  <item><zh>导航</zh><de>Navigieren</de></item>
+  <item><zh>经纬网</zh><de>Lat/Lon-Raster</de></item>
+  <item><zh>方里格</zh><de>Gauss-Krüger</de></item>
+  <item><zh>WGS84（默认）</zh><de>WGS84 (Standard)</de></item>
+  <item><zh>CGCS2000（2000国家大地坐标系）</zh><de>CGCS2000 (Staatsdatum 2000)</de></item>
+  <item><zh>设置</zh><de>Einstellungen</de></item>
+  <item><zh>关</zh><de>Aus</de></item>
+  <item><zh>开</zh><de>Ein</de></item>
+  <item><zh>浮层透明度…</zh><de>Deckkraft der Overlays…</de></item>
+  <item><zh>逐个设置</zh><de>Pro Ebene</de></item>
+  <item><zh>重置全部</zh><de>Alle zurücksetzen</de></item>
+  <item><zh>关闭</zh><de>Schließen</de></item>
+  <item><zh>菜单(&amp;M)</zh><de>Menü(&amp;M)</de></item>
+  <item><zh>搜索地点</zh><de>Ort suchen</de></item>
+  <item><zh>清除路线</zh><de>Route löschen</de></item>
+  <item><zh>缩放到路线</zh><de>Auf Route zoomen</de></item>
+  <item><zh>跟随车头</zh><de>Kurs folgen</de></item>
+  <item><zh>下载地图…</zh><de>Karte herunterladen…</de></item>
+  <item><zh>退出</zh><de>Beenden</de></item>
+  <item><zh>模拟导航(&amp;S)</zh><de>Simulieren(&amp;S)</de></item>
+  <item><zh>开始 / 停止</zh><de>Start / Stopp</de></item>
+  <item><zh>注入偏航（触发重算）</zh><de>Abweichung einfügen</de></item>
+  <item><zh>加速</zh><de>Beschleunigen</de></item>
+  <item><zh>减速</zh><de>Verlangsamen</de></item>
+  <item><zh>视图(&amp;V)</zh><de>Ansicht(&amp;V)</de></item>
+  <item><zh>道路细节 LOD %d</zh><de>Straßendetails LOD %d</de></item>
+  <item><zh>字号增大</zh><de>Schrift vergrößern</de></item>
+  <item><zh>字号减小</zh><de>Schrift verkleinern</de></item>
+  <item><zh>坐标系(&amp;C)</zh><de>Datum(&amp;C)</de></item>
+  <item><zh>轨迹(&amp;K)</zh><de>Spuren(&amp;K)</de></item>
+  <item><zh>导入 GPX…</zh><de>GPX importieren…</de></item>
+  <item><zh>导出全部为 GPX…</zh><de>Alles als GPX exportieren…</de></item>
+  <item><zh>收藏视口中心</zh><de>Ansichtszentrum merken</de></item>
+  <item><zh>轨迹 / 收藏面板</zh><de>Panel Spuren / Favoriten</de></item>
+  <item><zh>设置(&amp;P)</zh><de>Einstellungen(&amp;P)</de></item>
+  <item><zh>经纬网（度）</zh><de>Lat/Lon-Raster (Grad)</de></item>
+  <item><zh>方里格（公里）</zh><de>Gauss-Krüger (km)</de></item>
+  <item><zh>夜间模式</zh><de>Nachtmodus</de></item>
+  <item><zh>自动（日出日落）</zh><de>Auto (Sonnenaufgang/-untergang)</de></item>
+  <item><zh>放大</zh><de>Vergrößern</de></item>
+  <item><zh>缩小</zh><de>Verkleinern</de></item>
+  <item><zh>定位到关注点</zh><de>Zum Favoriten</de></item>
+  <item><zh>昼 / 夜 切换</zh><de>Tag / Nacht umschalten</de></item>
+  <item><zh>坐标网</zh><de>Gitter</de></item>
+  <item><zh>显示坐标网</zh><de>Gitter anzeigen</de></item>
+  <item><zh>轨迹 / 收藏（导入 GPX）</zh><de>Spuren / Favoriten (GPX importieren)</de></item>
+  <item><zh>途经点（面板开着时点地图添加）</zh><de>Via-Punkte (Kartenklick bei offenem Panel)</de></item>
+  <item><zh>主菜单</zh><de>Hauptmenü</de></item>
+  <item><zh>卫星天顶图（信号强弱 / 定位状态）</zh><de>Satelliten-Sky-Plot (Signal / Status)</de></item>
+  <item><zh>搜索地点或道路（Ctrl+F）</zh><de>Ort oder Straße suchen (Ctrl+F)</de></item>
+  <item><zh>搜索</zh><de>Suchen</de></item>
+  <item><zh>搜索地点、道路…</zh><de>Ort, Straße…</de></item>
+  <item><zh>左键循环切换 · 右键菜单</zh><de>Links: zyklisch · Rechts: Menü</de></item>
+  <item><zh>浮层透明度</zh><de>Deckkraft der Overlays</de></item>
+  <item><zh>（C 核心）</zh><de>(C-Kern)</de></item>
+  <item><zh>默认</zh><de>Standard</de></item>
+  <item><zh>全部恢复默认（75%）</zh><de>Alle auf Standard (75 %)</de></item>
+  <item><zh>转向指令</zh><de>Anweisungen</de></item>
+  <item><zh>轨迹 / 收藏</zh><de>Spuren / Favoriten</de></item>
+  <item><zh>导出全部…</zh><de>Alles exportieren…</de></item>
+  <item><zh>收藏中心点</zh><de>Ansichtszentrum</de></item>
+  <item><zh>贴合</zh><de>Einrasten</de></item>
+  <item><zh>把这条轨迹吸附到道路网（贴合路线）</zh><de>Diese Spur ans Straßennetz einrasten</de></item>
+  <item><zh>删除这一条</zh><de>Diesen Eintrag löschen</de></item>
+  <item><zh>删除这个途经点</zh><de>Diesen Via-Punkt löschen</de></item>
+  <item><zh>(未命名轨迹)</zh><de>(Spur ohne Namen)</de></item>
+  <item><zh>(未命名)</zh><de>(ohne Namen)</de></item>
+  <item><zh>双击定位到这条轨迹的起点</zh><de>Doppelklick: zum Start</de></item>
+  <item><zh>双击定位到这个收藏点</zh><de>Doppelklick: zum Favoriten</de></item>
+  <item><zh>途经点</zh><de>Via-Punkte</de></item>
+  <item><zh>面板开着时，点地图即可按顺序添加途经点；路线会依次经过它们。</zh><de>Bei geöffnetem Panel fügt ein Kartenklick Via-Punkte nacheinander hinzu; die Route besucht sie der Reihe nach.</de></item>
+  <item><zh>清空</zh><de>Löschen</de></item>
+  <item><zh>途经点 %1：%2, %3</zh><de>Via-Punkt %1: %2, %3</de></item>
+  <item><zh>（还没有途经点：面板开着时点地图即可添加；也可先设好起点和终点）</zh><de>(Noch keine Via-Punkte: Panel offen lassen und Karte klicken, oder Start/Ziel setzen.)</de></item>
+  <item><zh>全程约 %1 km</zh><de>Gesamt ca. %1 km</de></item>
+  <item><zh>下载地图（全球可下载区域 · Geofabrik）</zh><de>Karte herunterladen (Geofabrik)</de></item>
+  <item><zh>可下载区域（✓已下载 ·未下载）</zh><de>Verfügbare Regionen (✓ heruntergeladen · ausstehend)</de></item>
+  <item><zh>选择左侧一个地区，查看下载链接并下载。</zh><de>Wählen Sie links eine Region, um den Link zu sehen und zu laden.</de></item>
+  <item><zh>下载并转换</zh><de>Herunterladen und konvertieren</de></item>
+  <item><zh>复制下载链接</zh><de>Link kopieren</de></item>
+  <item><zh>同时生成 SRTM 等高线</zh><de>Auch SRTM-Höhenlinien erzeugen</de></item>
+  <item><zh>请选择最末级地区（带下载链接的）查看详情。</zh><de>Wählen Sie eine Endregion (mit Link) für Details.</de></item>
+  <item><zh>发现更新</zh><de>Aktualisierung verfügbar</de></item>
+  <item><zh>%1  (%2 点)</zh><de>%1  (%2 Punkte)</de></item>
+  <item><zh>导入 GPX 文件</zh><de>GPX-Datei importieren</de></item>
+  <item><zh>GPX 轨迹</zh><de>GPX-Spuren</de></item>
+  <item><zh>所有文件</zh><de>Alle Dateien</de></item>
+  <item><zh>导出全部为 GPX</zh><de>Alles als GPX exportieren</de></item>
+  <item><zh>  ✓已下载</zh><de>  ✓ heruntergeladen</de></item>
+  <item><zh>  ·未下载</zh><de>  · ausstehend</de></item>
+  <item><zh>  (%1/%2)</zh><de>  (%1/%2 geladen)</de></item>
+  <item><zh>本地已存在 %1。正在比对远端是否有更新…</zh><de>%1 liegt lokal vor. Vergleich mit Server…</de></item>
+  <item><zh>下载失败：%1</zh><de>Download fehlgeschlagen: %1</de></item>
+  <item><zh>下载完成（%1 字节），开始转换…</zh><de>Download fertig (%1 Bytes), Konvertierung…</de></item>
+  <item><zh>运行 sync_maps.sh（转换 + 建地名库 + 地标表）…</zh><de>sync_maps.sh ausführen (Konvertierung + Orts-DB + Orientierungspunkte)…</de></item>
+  <item><zh>转换完成 ✓ 地图已就绪。</zh><de>Konvertierung fertig ✓ Karte bereit.</de></item>
+  <item><zh>转换失败（exit %1）。可在终端手动运行 scripts/sync_maps.sh 查看详情。</zh><de>Konvertierung fehlgeschlagen (exit %1). Führen Sie scripts/sync_maps.sh im Terminal aus.</de></item>
+</translations>

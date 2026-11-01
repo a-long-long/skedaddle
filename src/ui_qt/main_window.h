@@ -235,10 +235,7 @@ private:
     QToolButton  *m_dayBtn = nullptr;
     QToolButton  *m_menuBtn = nullptr;
     QToolButton  *m_satBtn = nullptr;   /* 右栏「卫星」按钮（可勾选，亮起=天顶图开） */
-    /* 语言子菜单动作（retranslateUi 同步勾选态） */
-    QAction      *m_langZAct = nullptr;
-    QAction      *m_langEAct = nullptr;
-    int           m_lang = 0;            /* 当前语言（0=中文 1=English），tick 监测变化 */
+    int           m_lang = 0;            /* 当前语言（I18nLang 枚举值；持久化到 settings 的 lang 键） */
 };
 
 #endif
