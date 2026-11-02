@@ -7,7 +7,8 @@
 > **编号约定（与 `tutorial/` 对齐）**：本目录讲义与 `tutorial/NN_xxx` 小程序**同号对应**——
 > `00_overview` ↔ `tutorial/00_minimal`（前者讲"概念总览"、后者是"最小框架动手热身"），
 > `01_coords` ↔ `tutorial/01_coords`，……，`13_gates` ↔ `tutorial/13_gates`，
-> `14_capstone` ↔ `tutorial/14_capstone`。读源码式讲义看"为什么这么写"，配套小程序看"怎么跑起来"。
+> `14_capstone` ↔ `tutorial/14_capstone`，`15_datum` ↔ `tutorial/15_datum`。
+> 读源码式讲义看"为什么这么写"，配套小程序看"怎么跑起来"。
 
 **课程总览与程序运行流程图见 [`00_overview.md`](00_overview.md)（第 0 课）——建议从这里开始读。**
 
@@ -30,6 +31,7 @@
 | [12_qt.md](12_qt.md) | 12 | Qt 前端与边界 | `12_qt` |
 | [13_gates.md](13_gates.md) | 13 | 架构纪律与验收门禁 | `13_gates` |
 | [14_capstone.md](14_capstone.md) | 14 | 综合项目（改一个点 + 加一条判据） | `14_capstone` |
+| [15_datum.md](15_datum.md) | 15 | 坐标系基准（datum）：为什么只换椭球等于没转换 | `15_datum` |
 
 ## 阅读建议
 

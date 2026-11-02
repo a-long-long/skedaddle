@@ -53,10 +53,21 @@ bool SkNmeaSource::connectTo(Proto p, const QString &host, int port,
         connect(m_tcp, &QTcpSocket::disconnected, this, [this]() {
             m_active = false;
         });
+        /* errorOccurred 是 Qt 5.15+ 的信号；Qt 6 也只保留它。
+         * 本机构建环境是 Qt 5.11.3（Windows 副机是 Qt 6），故按版本守卫：
+         * 5.15+ 用 errorOccurred，更早版本用旧的 error 信号（用 QOverload 消歧义，
+         * 因为 error 同时是方法名）。这样同一份代码在两端都能编译。 */
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
         connect(m_tcp, &QAbstractSocket::errorOccurred, this,
                 [this](QAbstractSocket::SocketError) {
                     if (m_tcp) m_err = m_tcp->errorString();
                 });
+#else
+        connect(m_tcp, QOverload<QAbstractSocket::SocketError>::of(&QAbstractSocket::error),
+                this, [this](QAbstractSocket::SocketError) {
+                    if (m_tcp) m_err = m_tcp->errorString();
+                });
+#endif
         m_tcp->connectToHost(host, (quint16)port);   /* 异步；connected 后再 active */
     } else if (p == PROTO_UDP) {
         m_udp = new QUdpSocket(this);

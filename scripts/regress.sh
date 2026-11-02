@@ -726,7 +726,7 @@ if [ -x "$BUILD/skedaddle.exe" ] || [ -x "$BUILD/skedaddle" ]; then
     done
     if python3 "$ROOT/scripts/ovl_px.py" "$SHOTS/ovl_qt_100.bmp" \
             "$SHOTS/ovl_qt_75.bmp" "$SHOTS/ovl_qt_0.bmp" \
-            --rect=740,0,60,420 --pct=75 > "$SHOTS/ovl_qt.log" 2>&1; then
+            --rect=740,0,60,430 --pct=75 > "$SHOTS/ovl_qt.log" 2>&1; then
         pass=$((pass + 1)); printf '%-28s OK   (Qt 右栏 75%%：底板 75%% + 图标清晰)\n' "qt_ovl_alpha"
     else
         fail=$((fail + 1)); printf '%-28s FAIL Qt 右栏 75%% 不成立（见 ovl_qt.log）\n' "qt_ovl_alpha"

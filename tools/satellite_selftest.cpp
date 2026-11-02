@@ -1,6 +1,9 @@
 /* 卫星天顶图单元自检：验证模拟星座数据合理 + 天顶图确实渲染出内容。
  *
- * 不依赖 QApplication（只往 QImage 上画，raster 引擎脱屏即可用）。
+ * ★ 需要一个 QGuiApplication：drawText 走 QFontDatabase，字体数据库只有在
+ *   QGuiApplication（或更重的 QApplication）构造后才初始化；没有它，脱屏下
+ *   drawText 会段错误（findFont 读未初始化数据）。QGuiApplication 不依赖
+ *   QtWidgets，仍属"轻量脱屏"，满足本工具"只往 QImage 上画"的意图。
  * 退出码 0 = 全过；非 0 = 有失败（stderr 打印细节）。regress 看标记 SAT-OK。
  *
  * ★ 为什么单独一个可执行：模型推进 + 像素级渲染判据与整 App 的 --ui-test 正交——
@@ -14,9 +17,13 @@
 #include <QImage>
 #include <QPainter>
 #include <QDir>
+#include <QGuiApplication>
 
-int main()
+int main(int argc, char *argv[])
 {
+    /* 初始化字体数据库 / 平台插件（脱屏即可，无需 Widgets、无需显示器）。 */
+    QGuiApplication app(argc, argv);
+
     int fail = 0;
     auto chk = [&](bool ok, const char *what) {
         printf("  %-46s %s\n", what, ok ? "OK" : "FAIL");
