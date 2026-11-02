@@ -39,15 +39,13 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    /* ★ 本自检专测 PBF 后台解码这一条路，必须先把 disp tile 路径关掉：
-     *   mapset_load 阶段 pbf_display_mode 还是 0，src_open_files 已经调过
-     *   disp_open 把 has_disp_tiles 置 1；随后 enable_pbf_display 只清 nmbin
-     *   显示层、没清 disp，而 set_view 的 tile 加载不看 pbf_display_mode
-     *   ⇒ 两条路同时跑，tile 同步加载在第一轮就把 has_features 置 1，循环
-     *   随即 break，与后台解码赛跑。实测（2026-11-02）：同一份 8 省数据连跑
-     *   两次，一次「进度爬升=1」DMAP-OK、一次「=0」DMAP-FAIL —— 判据 flaky。
-     *   只影响本进程，不动产品行为。 */
-    for (int i = 0; i < ms.n; i++) ms.srcs[i].has_disp_tiles = 0;
+    /* 本自检专测 PBF 后台解码这一条路。历史上需在此手动把 has_disp_tiles 清 0
+     * 才能关掉 disp tile 路径：enable_pbf_display 只清 nmbin 显示层、set_view 的
+     * tile 加载不看 pbf_display_mode，导致双路赛跑、判据 flaky（2026-11-02，连跑
+     * 两次一次「进度爬升=1」一次「=0」）。该 bug 已在 mapset.c:set_view 修复——
+     * pbf_display_mode=1 时 tile 加载被 !pbf_display_mode 互斥抑制——故此处不再
+     * 需要手动清。保留注释以便追溯；若进度爬升又变 flaky，先查 set_view 的互斥
+     * 条件是否被改坏。 */
 
     /* 放大视口边距，确保该省被判定为"视口内"并触发异步派发 */
     int32_t m  = (s->bbox[2] - s->bbox[0]) / 2;

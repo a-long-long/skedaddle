@@ -806,8 +806,9 @@ void mapset_set_view(MapSet *ms, const int32_t vb[4])
          * 不再在主线程同步解码（旧逻辑会阻塞渲染 0.6~4.4s）。解码完成前
          * 该省 has_features=0，渲染自然跳过（空白），就绪后下一帧经 publish
          * 挂上、立即显示——也就是"渐进式加载"，零卡顿。
-         * ★ 仅 pbf_display_mode 的省走这条；显示层分 tile 的省（has_disp_tiles）
-         * pbf_display_mode=0，走下面的同步按需加载。 */
+         * ★ pbf_display_mode=1 的省走这条（含原本有 disp tile 的省——PBF
+         * 显示层启用时一律由 PBF 提供显示层，不走下方 tile 同步加载；
+         * 见 823 处对 !pbf_display_mode 的互斥条件）。 */
         if (ov && ms->pbf_dir[0] && s->pbf_display_mode) {
             if (!s->dmap_from_pbf) {
                 mapset_dispatch_display(ms, i);   /* 无任务在途才派发，异步 */
@@ -819,8 +820,12 @@ void mapset_set_view(MapSet *ms, const int32_t vb[4])
         /* 显示层分 tile：视口进省 ⇒ 按视口只加载相交 tile 并拼接进
          * areas/lines/polyrefs（同步、仅 mmap 视口内少量 tile，轻量不卡）。
          * 不进省（!ov）已由 src_unload 释放拼接缓冲。失败不致命：
-         * 该省 has_features=0，本帧自然不画显示层。 */
-        if (ov && s->has_disp_tiles) {
+         * 该省 has_features=0，本帧自然不画显示层。
+         * ★ 互斥：pbf_display_mode=1（PBF 显示层启用）时不走 tile——否则同一省
+         * 既异步解码 PBF 又同步加载 tile，双路写 s->areas/lines/has_features 会
+         * 赛跑（实测 dmap_selftest 偶发 FAIL）。--pbf-display 语义即"用 PBF 不用
+         * 预建显示层"，故 tile 路径在此被抑制。 */
+        if (ov && s->has_disp_tiles && !s->pbf_display_mode) {
             src_load_disp_tiles(s, eb);
         }
     }
