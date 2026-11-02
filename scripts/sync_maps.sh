@@ -128,7 +128,7 @@ while IFS= read -r f; do
             reason="新地图，尚未转换"
         fi
     else
-        for need in nodes.bin edges.bin osmid.bin; do
+        for need in nodes.bin edges.bin; do
             if [ ! -f "$dir/$need" ]; then reason="缺少 $need（上次转换被中断）"; break; fi
         done
     fi

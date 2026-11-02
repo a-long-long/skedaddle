@@ -15,7 +15,7 @@
  * 判据刻意与 scripts/sync_maps.sh 完全一致（同一套 manifest 指纹），
  * 避免出现"脚本说该转、程序说不转"的分歧。五条：
  *   1. 产物目录不存在
- *   2. 缺必需文件（manifest.txt / nodes.bin / edges.bin / osmid.bin）
+ *   2. 缺必需文件（manifest.txt / nodes.bin / edges.bin）
  *   3. nodes.bin 或 edges.bin 打不开、或 nmbin_check 不过（截断/损坏）
  *   4. manifest 里的 binfmt_version 与当前二进制格式版本不符
  *   5. manifest 里的 src_bytes / src_mtime 与源 pbf 实际值不符（源被换过了）

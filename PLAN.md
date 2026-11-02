@@ -420,7 +420,6 @@ typedef struct {
 products/graph/beijing/          # 自描述二进制（NAVMBIN v1）
   nodes.bin   40.6 MB  28 B/节点 lat_e7/lon_e7/edge_begin/edge_count/flags/osm_id/class_mask
   edges.bin   51.2 MB  18 B/边   to/dist_cm/name_id/flags/class/speed/lanes
-  osmid.bin   11.6 MB  8 B/节点
   names.bin   164 KB   变长字符串池
   restrictions.bin 363 条  from_edge/to_edge/via_node/kind/dirmask
   manifest.txt
@@ -843,7 +842,7 @@ ASSERT-FAIL —— 没有任何自愈。现在启动时先体检，需要就现�
 | 触发                              | 说明                                               |
 | ------------------------------- | ------------------------------------------------ |
 | 产物目录不存在                         | 整个省被删了                                           |
-| 缺必需文件                           | manifest.txt / nodes.bin / edges.bin / osmid.bin |
+| 缺必需文件                           | manifest.txt / nodes.bin / edges.bin |
 | nodes/edges 打不开或 nmbin_check 不过 | 截断、半截文件                                          |
 | binfmt_version 与当前不符            | 格式升级                                             |
 | src_bytes / src_mtime 与源 pbf 不符 | 源被换过了                                            |
@@ -854,7 +853,7 @@ ASSERT-FAIL —— 没有任何自愈。现在启动时先体检，需要就现�
 - 重建走 **fork + execv**（不走 shell、不经 system），只执行项目自带的  
   skedaddle_graph_extract（与本程序同目录 → PATH 依次探测），参数固定；省名过白名单  
   （禁 `/`、`.`、`..`），所以没有命令注入与路径逃逸。
-- 旧产物先清掉再转：混着写会产出"新 nodes.bin 配旧 osmid.bin"这种自相矛盾的  
+- 旧产物先清掉再转：混着写会产出"新 nodes.bin 配旧 edges.bin"这种自相矛盾的  
   图。清理用自己的 unlink/rmdir 递归（**不能**用 rm 命令——本机 rm 是只搬回收站  
   的安全壳）；删不掉就改名 `<省>.old.<pid>` 让位（mapset_load 会跳过 .old./.tmp.）。
 - 并发锁：`<省>.building` 里写 pid，O_EXCL 抢占；进程死了的孤儿锁会被接管，  

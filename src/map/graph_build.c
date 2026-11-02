@@ -866,26 +866,6 @@ static int write_edges(Graph *g, const char *path, const char *src)
     return nmbin_finalize(w);
 }
 
-static int write_osmid(Graph *g, const char *path, const char *src)
-{
-    NMBinWriter *w = nmbin_create(path, NMBIN_KIND_OSMID, SK_OSMID_BYTES, src);
-    if (!w) return -1;
-    nmbin_add_field(w, "osm_id", 0, NMT_I64, 8);
-    /* 已经是 int64 数组，但落盘统一走小端助手，避免直接 fwrite 结构体 */
-    const size_t CHUNK = 8192;
-    uint8_t *bulk = malloc(CHUNK * SK_OSMID_BYTES);
-    if (!bulk) { nmbin_abort(w); return -1; }
-    size_t i = 0;
-    while (i < g->n_ids) {
-        size_t n = g->n_ids - i < CHUNK ? g->n_ids - i : CHUNK;
-        for (size_t k = 0; k < n; k++) sk_put_u64(bulk + k * 8, (uint64_t)g->osm_id[i + k]);
-        if (nmbin_write_records(w, bulk, n) != 0) { free(bulk); nmbin_abort(w); return -1; }
-        i += n;
-    }
-    free(bulk);
-    return nmbin_finalize(w);
-}
-
 static int write_names(Graph *g, const char *path, const char *src)
 {
     uint8_t *blob; size_t blob_len;
@@ -1519,7 +1499,6 @@ int graph_build(const char *pbf_path, const char *out_dir, GraphBuildStats *st)
 #define OUTF(p, name) (snprintf(p, sizeof(p), "%s/%s", out_dir, name), (const char *)(p))
     if (write_nodes(&g, OUTF(path, "nodes.bin"), src) != 0) { rc = -1; goto done; }
     if (write_edges(&g, OUTF(path, "edges.bin"), src) != 0) { rc = -1; goto done; }
-    if (write_osmid(&g, OUTF(path, "osmid.bin"), src) != 0) { rc = -1; goto done; }
     if (write_names(&g, OUTF(path, "names.bin"), src) != 0) { rc = -1; goto done; }
     /* 车道指示是可选的：写不出来（比如磁盘满）不该让整省建图失败 */
     if (write_lanes(&g, OUTF(path, "lanes.bin"), src) != 0 ||

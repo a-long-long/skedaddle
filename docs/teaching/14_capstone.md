@@ -162,7 +162,7 @@ while IFS= read -r f; do
             reason="新地图，尚未转换"
         fi
     else
-        for need in nodes.bin edges.bin osmid.bin; do
+        for need in nodes.bin edges.bin; do
             if [ ! -f "$dir/$need" ]; then reason="缺少 $need（上次转换被中断）"; break; fi
         done
     fi
@@ -467,7 +467,7 @@ fi
 
 ### 3.2 建图核心：`tools/graph_extract.c`（完整体）
 
-PBF → 自描述路网二进制（`nodes.bin`/`edges.bin`/`osmid.bin`/`names.bin`/`restrictions.bin`/`manifest.txt`），并顺手写派生索引 `rev.bin`。**闸门没过就不写 manifest**（`skedaddle_graph_extract.c:89-107`），让“有 manifest”严格等价于“产物可用”。
+PBF → 自描述路网二进制（`nodes.bin`/`edges.bin`/`names.bin`/`restrictions.bin`/`manifest.txt`），并顺手写派生索引 `rev.bin`。**闸门没过就不写 manifest**（`skedaddle_graph_extract.c:89-107`），让“有 manifest”严格等价于“产物可用”。
 
 ```c
 /* skedaddle_graph_extract —— PBF → 自描述路网二进制
@@ -477,7 +477,7 @@ PBF → 自描述路网二进制（`nodes.bin`/`edges.bin`/`osmid.bin`/`names.bi
  *   ./skedaddle_graph_extract --fmt-version          # 只打印当前 NMBIN 版本号后退出
  *
  * 产出（全部带 NAVMBIN 自描述头，字段名/偏移/类型写在文件里）：
- *   nodes.bin  edges.bin  osmid.bin  names.bin  restrictions.bin  manifest.txt
+ *   nodes.bin  edges.bin  names.bin  restrictions.bin  manifest.txt
  *
  * 退出码非 0 = 有断言失败（闸门见下）。
  *
@@ -785,7 +785,7 @@ int main(int argc, char **argv)
 # ① 数据生产（L3 解析 / L4 二进制 / L5 建图）：把 PBF 变成可加载路网
 cp  ~/Downloads/beijing.osm.pbf  sources/beijing.osm.pbf
 ./scripts/sync_maps.sh                       # 内部调 skedaddle_graph_extract + skedaddle_graph_check + skedaddle_places_build + skedaddle_lmbuild_cli
-#   产物：products/graph/beijing/{nodes,edges,osmid,names,restrictions}.bin + manifest.txt + rev.bin
+#   产物：products/graph/beijing/{nodes,edges,names,restrictions}.bin + manifest.txt + rev.bin
 #         products/places_auto.db（L9 搜索库）、products/graph/lm.bin（L10 地标表）
 
 # ② 算一条路 + 转向指令（L10 路由 / L11 导航层）

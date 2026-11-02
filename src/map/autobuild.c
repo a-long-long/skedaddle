@@ -187,7 +187,7 @@ static int prov_check(const char *dir, const char *pbf, char *why, size_t cap)
         snprintf(why, cap, "%s（缺 manifest.txt，上次转换没走完）", PV_INCOMPLETE_TXT);
         return PV_INCOMPLETE;
     }
-    static const char *need[] = { "nodes.bin", "edges.bin", "osmid.bin" };
+    static const char *need[] = { "nodes.bin", "edges.bin" };
     for (size_t i = 0; i < sizeof(need) / sizeof(need[0]); i++) {
         if (sk_path_join(p, sizeof(p), dir, need[i]) != 0) {
             snprintf(why, cap, "%s（路径过长）", PV_INCOMPLETE_TXT);
@@ -319,7 +319,7 @@ static int rebuild_one(const char *graph_parent, const char *prov_dir,
         return -1;
     }
 
-    /* 旧产物先清掉：留着会和转换器新写的文件混在一起（比如更大的 osmid.bin
+    /* 旧产物先清掉：留着会和转换器新写的文件混在一起（比如更大的 edges.bin
        配上新的 nodes.bin），出来的图是自相矛盾的。删不掉就改名让位 ——
        名字带 .old. 是因为 mapset_load 会跳过 .old.* / .tmp.*，不会被当成
        一个省加载进来（同一份数据装两遍）。 */

@@ -33,7 +33,7 @@ int main(int argc, char **argv)
     if (argc < 2) { fprintf(stderr, "用法: %s <目录>\n", argv[0]); return 2; }
     const char *dir = argv[1];
     char p[4096];
-    NMBinFile nf, ef, mf, rf;
+    NMBinFile nf, ef, rf;
 
 #define OPEN(f, name) do { \
         snprintf(p, sizeof(p), "%s/%s", dir, name); \
@@ -43,7 +43,6 @@ int main(int argc, char **argv)
 
     OPEN(nf, "nodes.bin");
     OPEN(ef, "edges.bin");
-    OPEN(mf, "osmid.bin");
     OPEN(rf, "restrictions.bin");
 
     char err[256];
@@ -51,16 +50,13 @@ int main(int argc, char **argv)
         if (nmbin_check(&f, err, sizeof(err)) != 0) { \
             printf("ASSERT-FAIL  %s: %s\n", name, err); fail = 1; } \
     } while (0)
-    SELFTEST(nf, "nodes.bin"); SELFTEST(ef, "edges.bin");
-    SELFTEST(mf, "osmid.bin"); SELFTEST(rf, "restrictions.bin");
+    SELFTEST(nf, "nodes.bin"); SELFTEST(ef, "edges.bin"); SELFTEST(rf, "restrictions.bin");
 
-    uint64_t nn = nf.hdr.rec_count, ne = ef.hdr.rec_count, nm = mf.hdr.rec_count;
+    uint64_t nn = nf.hdr.rec_count, ne = ef.hdr.rec_count;
     CHECK(nf.hdr.rec_size == SK_NODE_BYTES, "nodes rec_size=%u 应为 %d",
           nf.hdr.rec_size, SK_NODE_BYTES);
     CHECK(ef.hdr.rec_size == SK_EDGE_BYTES, "edges rec_size=%u 应为 %d",
           ef.hdr.rec_size, SK_EDGE_BYTES);
-    CHECK(nm == nn, "osmid 条数 %llu != 节点数 %llu",
-          (unsigned long long)nm, (unsigned long long)nn);
 
     /* CSR：edge_begin 单调、最后一项等于总边数、每段与 edge_count 一致 */
     if (nn && ne) {
@@ -203,7 +199,7 @@ int main(int argc, char **argv)
         }
     }
 
-    nmbin_close(&nf); nmbin_close(&ef); nmbin_close(&mf); nmbin_close(&rf);
+    nmbin_close(&nf); nmbin_close(&ef); nmbin_close(&rf);
 
     if (fail) return 1;
     printf("ASSERT-OK\n");

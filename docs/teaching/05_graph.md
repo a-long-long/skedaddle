@@ -38,7 +38,7 @@
 | `static int resolve_restrictions(Graph *g)` | `639-773` | 把 (from,via,to) 定位到具体有向边 |
 | `static int write_nodes(Graph *g, const char *path, const char *src)` | `778-813` | 落盘 nodes.bin |
 | `static int write_edges(Graph *g, const char *path, const char *src)` | `815-867` | 落盘 edges.bin（按 CSR 序） |
-| `static int write_osmid(Graph *g, const char *path, const char *src)` | `869-887` | 落盘 osmid.bin |
+| ~~`static int write_osmid(...)`~~ | — | **已删除**：osmid.bin 与 nodes.bin 的 `NF_OSM_ID` 字段 100% 重复（8 省合计 398.8 MB 纯冗余），不再单独落盘；`osm_id` 仍写入 nodes.bin `NF_OSM_ID` / lanes.bin `LF_OSM_ID` / areas.bin `AF_OSM_ID` |
 | `static int write_names(Graph *g, const char *path, const char *src)` | `889-902` | 落盘 names.bin |
 | `static int write_lanes(Graph *g, const char *path, const char *src)` | `907-934` | 落盘 lanes.bin（按 CSR 序） |
 | `static int write_lane_names(Graph *g, const char *path, const char *src)` | `938-951` | 落盘 lane_names.bin |
@@ -670,7 +670,6 @@ int graph_build(const char *pbf_path, const char *out_dir, GraphBuildStats *st)
 #define OUTF(p, name) (snprintf(p, sizeof(p), "%s/%s", out_dir, name), (const char *)(p))
     if (write_nodes(&g, OUTF(path, "nodes.bin"), src) != 0) { rc = -1; goto done; }
     if (write_edges(&g, OUTF(path, "edges.bin"), src) != 0) { rc = -1; goto done; }
-    if (write_osmid(&g, OUTF(path, "osmid.bin"), src) != 0) { rc = -1; goto done; }
     if (write_names(&g, OUTF(path, "names.bin"), src) != 0) { rc = -1; goto done; }
     /* 车道指示是可选的：写不出来（比如磁盘满）不该让整省建图失败 */
     if (write_lanes(&g, OUTF(path, "lanes.bin"), src) != 0 ||

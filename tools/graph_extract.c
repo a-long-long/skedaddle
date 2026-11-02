@@ -5,7 +5,7 @@
  *   ./skedaddle_graph_extract --fmt-version          # 只打印当前 NMBIN 版本号后退出
  *
  * 产出（全部带 NAVMBIN 自描述头，字段名/偏移/类型写在文件里）：
- *   nodes.bin  edges.bin  osmid.bin  names.bin  restrictions.bin  manifest.txt
+ *   nodes.bin  edges.bin  names.bin  restrictions.bin  manifest.txt
  *
  * 退出码非 0 = 有断言失败（闸门见下）。
  *
