@@ -16,9 +16,9 @@
 
 | 工具/脚本 | 职责 | 路径与行号区间 |
 |---|---|---|
-| `scripts/check_layers.sh` | 解析真实 `#include`（剥块注释与行注释）算模块依赖图，与方向表比对，违规打印文件行号并 `exit 1` | `scripts/check_layers.sh:1-179`（完整体见第三节） |
-| `scripts/regress.sh` | 全量回归；`ASSERT-OK/ASSERT-FAIL` 双判据（退出码 + 标记）；覆盖渲染/路由/语音/平台/门禁等几十个用例 | `scripts/regress.sh:1-802`（关键判据函数见第三节；完整源码已内嵌于 3.6 节，全文 802 行） |
-| `CMakeLists.txt`（分层段） | 分层链接：模块库按 DAG 顺序定义，`skedaddle_core` 聚合；已移除 `-Wl,--start-group`，链接器单趟解析即第二道防线 | `CMakeLists.txt:142-365` |
+| `scripts/check_layers.sh` | 解析真实 `#include`（剥块注释与行注释）算模块依赖图，与方向表比对，违规打印文件行号并 `exit 1` | `scripts/check_layers.sh:1-178`（完整体见第三节） |
+| `scripts/regress.sh` | 全量回归；`ASSERT-OK/ASSERT-FAIL` 双判据（退出码 + 标记）；覆盖渲染/路由/语音/平台/门禁等几十个用例 | `scripts/regress.sh:1-834`（关键判据函数见第三节；完整源码已内嵌于 3.6 节，全文 834 行） |
+| `CMakeLists.txt`（分层段） | 分层链接：模块库按 DAG 顺序定义，`skedaddle_core` 聚合；已移除 `-Wl,--start-group`，链接器单趟解析即第二道防线 | `CMakeLists.txt:266-391` |
 | `tools/core_no_sdl.c` | 架构边界门禁：核心与 Qt 前端零 SDL 符号；对照体必须含 SDL（负向对照，证明检查器非空壳） | `tools/core_no_sdl.c:1-230`（完整体见第三节） |
 | `tools/blend_equiv.c` | alpha 混色与 SDL 软渲染器逐像素等价对照（去 SDL 化合法链 SDL2） | `tools/blend_equiv.c:1-160`（完整体见第三节） |
 | `tools/clip_equiv.c` | 线段裁剪与 `SDL_IntersectRectAndLine` 等价对照（20 万随机线段） | `tools/clip_equiv.c:1-77`（完整体见第三节） |
@@ -228,7 +228,7 @@ exit 0
 
 ### 3.2 分层链接：`CMakeLists.txt`（关键段，完整体）
 
-`CMakeLists.txt:142-365` 是分层链接的核心。要点：模块库按 DAG 顺序定义；`render` 因 `chrome.c/audit.c` 已移到 `ui/`，退化为纯光栅层（零 ui 依赖），符号级环消除；因此**不再需要 `-Wl,--start-group`**，链接器单趟即可按拓扑序解析全部符号（实测去掉后零 `undefined reference`，出图逐字节一致）。保留 `start-group` 反而会让链接器多轮扫描**悄悄补上**新引入的环——边界形同虚设。
+`CMakeLists.txt:266-391` 是分层链接的核心。要点：模块库按 DAG 顺序定义；`render` 因 `chrome.c/audit.c` 已移到 `ui/`，退化为纯光栅层（零 ui 依赖），符号级环消除；因此**不再需要 `-Wl,--start-group`**，链接器单趟即可按拓扑序解析全部符号（实测去掉后零 `undefined reference`，出图逐字节一致）。保留 `start-group` 反而会让链接器多轮扫描**悄悄补上**新引入的环——边界形同虚设。
 
 ```cmake
 # 阶段 2：把核心剩余模块提升为独立 STATIC 库（ARCH_ASSESSMENT.md §4 DAG）。
@@ -390,7 +390,7 @@ target_link_libraries(skedaddle_core PUBLIC
     ${ZLIB_LIBRARIES} ${SQLITE3_LIBRARIES} ${PROTOC_LIB} ${SKEDADDLE_CORE_SYS_LIBS})
 ```
 
-`skedaddle` 只链 `skedaddle_core + Qt Widgets`，离屏出图走 `src/ui/offscreen_shot.c`（零 SDL），见 `CMakeLists.txt:496-512` 与 `CMakeLists.txt:529-531`（门禁工具 `skedaddle_core_no_sdl` 只链 `sk_link_tool`，不碰 SDL）。
+`skedaddle` 只链 `skedaddle_core + Qt Widgets`，离屏出图走 `src/ui/offscreen_shot.c`（零 SDL），见 `CMakeLists.txt:530-595` 与 `CMakeLists.txt:637`（门禁工具 `skedaddle_core_no_sdl` 只链 `sk_link_tool`，不碰 SDL）。
 
 ### 3.3 架构边界门禁：`tools/core_no_sdl.c`（完整体）
 
@@ -404,7 +404,7 @@ target_link_libraries(skedaddle_core PUBLIC
  *   某次改动里悄悄失效：core 里多加一个 #include <SDL.h> 或一个 SDL 调用，
  *   编译照样过、Qt 照样能跑（只是间接多依赖了 SDL2.dll），直到某天有人在没装
  *   SDL 的机器上构建 Qt 前端才炸。静态链接下更隐蔽：core.a 里引了 SDL 符号，
- *   最终由 skedaddle_qt 链接进去，依赖就落到 Qt 前端头上了。
+ *   最终由 skedaddle 链接进去，依赖就落到 Qt 前端头上了。
  *
  * 判据（查符号表，不是"看起来没有"）：
  *   正向：目标里不得出现任何 SDL_ 未定义符号；
@@ -877,9 +877,9 @@ int main(void)
 }
 ```
 
-### 3.6 回归门禁：`scripts/regress.sh`（关键判据函数，完整体；完整源码内嵌于本节末尾，全文 802 行）
+### 3.6 回归门禁：`scripts/regress.sh`（关键判据函数，完整体；完整源码内嵌于本节末尾，全文 834 行）
 
-`regress.sh` 共 802 行，逐用例串起全量回归。其核心是**双判据**：命令必须出现期望标记且不得出现 `ASSERT-FAIL` 且退出码为 0。下列是承载判据逻辑的完整函数与关键调用点。注意 `layer_dirs`（`regress.sh:316`）与 `skedaddle_core_no_sdl`/`core_no_sdl_sdl`（`regress.sh:300-306`）正是把分层门禁与 SDL 边界门禁接进回归；`area_lod_tier` 用**确定性量** `areas_dotted` 而非时间。
+`regress.sh` 共 834 行，逐用例串起全量回归。其核心是**双判据**：命令必须出现期望标记且不得出现 `ASSERT-FAIL` 且退出码为 0。下列是承载判据逻辑的完整函数与关键调用点。注意 `layer_dirs`（`regress.sh:325`）与 `skedaddle_core_no_sdl`/`core_no_sdl_sdl`（`regress.sh:311-313`）正是把分层门禁与 SDL 边界门禁接进回归；`area_lod_tier` 用**确定性量** `areas_dotted` 而非时间。
 
 ```sh
 # run <名字> <必须出现的标记> <命令...>
@@ -952,7 +952,7 @@ run_neg() {
 }
 ```
 
-回归脚本把分层门禁与 SDL 边界门禁接进来的关键调用（来自 `regress.sh:300-317`，完整体）：
+回归脚本把分层门禁与 SDL 边界门禁接进来的关键调用（来自 `regress.sh:311-325`，完整体）：
 
 ```sh
 # ③ 架构边界：核心与 Qt 前端零 SDL 符号；对照体**必须**链 SDL（负向对照，
@@ -971,7 +971,7 @@ if [ -x "$ROOT/scripts/check_layers.sh" ]; then
 fi
 ```
 
-> 完整源码 · `scripts/regress.sh` (全文 802 行)
+> 完整源码 · `scripts/regress.sh` (全文 834 行)
 
 ```bash
 > 完整源码 · `scripts/regress.sh`（逐字内嵌，全文 811 行）

@@ -30,7 +30,7 @@
 | `strpool.h` | `StrPool` 不透明类型与接口声明 | `strpool.h:9-23` |
 | `strpool.c` | `struct StrPool`、`fnv1a`、`sp_intern` / `sp_get` / `sp_serialize` | `strpool.c:7-17,19-24,72-110,117-121,126-137` |
 
-> 注：`sk_proc_spawn`、`sk_tts_speak` 的**声明**见 3.1；其完整实现（常驻子进程 + 管道、离线 TTS 队列与后台朗读线程，对应 `plat.c:587-1185`）见 3.2 节末尾的完整源码。
+> 注：`sk_proc_spawn`、`sk_tts_speak` 的**声明**见 3.1；其完整实现（常驻子进程 + 管道、离线 TTS 队列与后台朗读线程，对应 `plat.c:587-1154`，其中 TTS 队列/后台线程在 `plat.c:829-1154`、`sk_tts_speak` 在 `plat.c:1127`）见 3.2 节末尾的完整源码。
 
 ## 三、完整实现代码
 
@@ -454,7 +454,7 @@ const char *const *sk_font_candidates(size_t *n)
 }
 ```
 
-> 完整源码 · `src/utils/plat.c:587-1185`（常驻子进程 + 管道、离线 TTS 队列与后台朗读线程）
+> 完整源码 · `src/utils/plat.c:587-1154`（常驻子进程 + 管道、离线 TTS 队列与后台朗读线程；其中 TTS 队列/后台线程在 `plat.c:829-1154`、`sk_tts_speak` 在 `plat.c:1127`）
 
 ```c
 SkProc *sk_proc_spawn(const char *exe, char *const argv[])
