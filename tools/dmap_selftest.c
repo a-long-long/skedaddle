@@ -39,6 +39,16 @@ int main(int argc, char **argv)
         return 2;
     }
 
+    /* ★ 本自检专测 PBF 后台解码这一条路，必须先把 disp tile 路径关掉：
+     *   mapset_load 阶段 pbf_display_mode 还是 0，src_open_files 已经调过
+     *   disp_open 把 has_disp_tiles 置 1；随后 enable_pbf_display 只清 nmbin
+     *   显示层、没清 disp，而 set_view 的 tile 加载不看 pbf_display_mode
+     *   ⇒ 两条路同时跑，tile 同步加载在第一轮就把 has_features 置 1，循环
+     *   随即 break，与后台解码赛跑。实测（2026-11-02）：同一份 8 省数据连跑
+     *   两次，一次「进度爬升=1」DMAP-OK、一次「=0」DMAP-FAIL —— 判据 flaky。
+     *   只影响本进程，不动产品行为。 */
+    for (int i = 0; i < ms.n; i++) ms.srcs[i].has_disp_tiles = 0;
+
     /* 放大视口边距，确保该省被判定为"视口内"并触发异步派发 */
     int32_t m  = (s->bbox[2] - s->bbox[0]) / 2;
     int32_t mn = (s->bbox[3] - s->bbox[1]) / 2;
@@ -61,6 +71,12 @@ int main(int argc, char **argv)
         if (dt > max_dt) max_dt = dt;
 
         int p = mapset_dmap_progress(&ms, prov);
+        if (getenv("DMAP_TRACE")) {
+            fprintf(stderr, "  [trace] t=%llums p=%d has_features=%d loaded=%d "
+                    "disp_tiles=%d pbf_mode=%d\n",
+                    (unsigned long long)(sk_now_ms() - t0), p, s->has_features,
+                    s->loaded, s->has_disp_tiles, s->pbf_display_mode);
+        }
         if (p > 0 && p < 100) saw_prog = 1;
         if (p >= 100) reached_100 = 1;
         if (s->has_features) { done = 1; break; }

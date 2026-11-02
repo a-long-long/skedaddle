@@ -134,18 +134,22 @@ shot r_all_z11  "$GRAPH"          39.90 116.40 11
 shot r_all_z13  "$GRAPH"          39.90 116.40 13
 shot r_nomap    "$GRAPH"          30.00 110.00 11   # 图集外：必须出下载提示横幅
 
-echo "=== 面要素 LOD 档位（AREA_DOT_PX=4，2026-10-29 定档）"
+echo "=== 面要素 LOD 档位（AREA_DOT_PX=4，2026-11-02 按 8 省 10-27 抽取版重定档）"
 # 主判据是确定性量 areas_dotted（走小面路径的面数），不是时间。
 # 实测基线（AREA_DOT_PX=4，8 省图 / 北京中心 / 1280×800）：
-#   z9  dotted=104379（档位 2 时是 76007）  drawn=113933
-#   z11 dotted=20938                         drawn=36568
-#   z13 dotted=22471                         drawn=37661
-# 区间留了余量（z9 用 ±8%），数据微调不会假 FAIL；而档位被改动就会报出来。
-# 区间要能区分相邻档位（负向对照实测：档位 2 ⇒ dotted=76007、
-# 档位 4 ⇒ 104379、档位 8 ⇒ 111916）—— 上限卡在 108000，档位 8 就被抓到。
-area_lod_tier area_lod_z9  9  98000 108000 113933
-area_lod_tier area_lod_z11 11 19500  22500  36568
-area_lod_tier area_lod_z13 13 21000  24000  37661
+#   z9  dotted=106428                        drawn=117212
+#   z11 dotted=21076                         drawn=37304
+#   z13 dotted=22507                         drawn=37781
+# ★ drawn 是**绝对量，随数据版本走**——换 products 数据必须重测。
+#   2026-11-02 把 products/graph/<省> 从 09-22 陈旧抽取版换成 10-27 版后，
+#   drawn 由 113933/36568/37661 变成上面的值；已用「同一 pbf 现场重抽，12 个
+#   文件 md5 全同」证明数据可复现，属数据升级而非抽错。
+# ★ dotted 的区间才是**档位守护者**（它随档位大幅跳变，随数据只微动）：
+#   区间要能区分相邻档位（负向对照实测：档位 2 ⇒ z9 dotted=76007、
+#   档位 4 ⇒ 106428、档位 8 ⇒ 111916）—— 上限卡在 108000，档位 8 就被抓到。
+area_lod_tier area_lod_z9  9  98000 108000 117212
+area_lod_tier area_lod_z11 11 19500  22500  37304
+area_lod_tier area_lod_z13 13 21000  24000  37781
 
 echo "=== 路网 / 导航 / 限制 / 索引"
 run route_cross "ROUTE-OK"  "$BUILD/skedaddle_route_cli"  --graph="$GRAPH" --from=39.90,116.40 --to=34.75,113.62
