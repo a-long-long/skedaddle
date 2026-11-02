@@ -17,10 +17,10 @@
 
 | 文件 | 关键结构体 / 关键函数（声明） | 行号区间 |
 |---|---|---|
-| `plat.h` | 不透明 typedef：`SkMutex`/`SkCond`/`SkProc`/`SkDir` | `plat.h:72,81,90,132` |
+| `plat.h` | 不透明 typedef：`SkDir`/`SkMutex`/`SkCond`/`SkProc`（按行序：72=`SkDir`、81=`SkMutex`、90=`SkCond`、132=`SkProc`） | `plat.h:72,81,90,132` |
 | `plat.h` | `sk_thread_spawn` / `sk_proc_spawn` / `sk_now_ms` / `sk_tts_speak` / `sk_font_candidates` 声明 | `plat.h:99,135,145,156,196` |
 | `plat.h` | `sk_map_file` / `sk_unmap_file` 声明 | `plat.h:66-67` |
-| `plat.c` | `struct SkMutex` / `struct SkCond` / `struct SkProc` / `struct SkDir`（真实结构在 `#ifdef` 内） | `plat.c:351-360,1407,1454,571,1539,1568,1579` |
+| `plat.c` | `struct SkDir` / `struct SkProc` / `struct SkMutex` / `struct SkCond`（真实结构在 `#ifdef` 内，Win/POSIX 各一份） | `plat.c:351-360,571,579,1407,1454,1539,1568` |
 | `plat.c` | `sk_thread_spawn`（pthread / CreateThread 收口） | `plat.c:1526-1535,1623-1632` |
 | `plat.c` | `sk_now_ms`（单调时钟） | `plat.c:733-748` |
 | `plat.c` | `sk_map_file`（只读映射，POSIX mmap / Win CreateFileMapping） | `plat.c:296-328` |
@@ -30,7 +30,7 @@
 | `strpool.h` | `StrPool` 不透明类型与接口声明 | `strpool.h:9-23` |
 | `strpool.c` | `struct StrPool`、`fnv1a`、`sp_intern` / `sp_get` / `sp_serialize` | `strpool.c:7-17,19-24,72-110,117-121,126-137` |
 
-> 注：`sk_proc_spawn`、`sk_tts_speak` 的**声明**见 3.1；其完整实现（常驻子进程 + 管道、离线 TTS 队列与后台朗读线程，对应 `plat.c:587-1154`，其中 TTS 队列/后台线程在 `plat.c:829-1154`、`sk_tts_speak` 在 `plat.c:1127`）见 3.2 节末尾的完整源码。
+> 注：`sk_proc_spawn`、`sk_tts_speak` 的**声明**见 3.1；其完整实现（常驻子进程 + 管道、离线 TTS 队列与后台朗读线程，对应 `plat.c:587-1185`，其中 TTS 队列/后台线程在 `plat.c:829-1154`、`sk_tts_speak` 在 `plat.c:1127`）见 3.2 节末尾的完整源码。
 
 ## 三、完整实现代码
 
@@ -454,7 +454,7 @@ const char *const *sk_font_candidates(size_t *n)
 }
 ```
 
-> 完整源码 · `src/utils/plat.c:587-1154`（常驻子进程 + 管道、离线 TTS 队列与后台朗读线程；其中 TTS 队列/后台线程在 `plat.c:829-1154`、`sk_tts_speak` 在 `plat.c:1127`）
+> 完整源码 · `src/utils/plat.c:587-1185`（常驻子进程 + 管道、离线 TTS 队列与后台朗读线程；其中 TTS 队列/后台线程在 `plat.c:829-1154`、`sk_tts_speak` 在 `plat.c:1127`）
 
 ```c
 SkProc *sk_proc_spawn(const char *exe, char *const argv[])
