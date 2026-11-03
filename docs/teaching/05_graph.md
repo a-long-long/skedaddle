@@ -44,15 +44,16 @@
 | `static int write_lane_names(Graph *g, const char *path, const char *src)` | `938-951` | 落盘 lane_names.bin |
 | `static int write_restrictions(Graph *g, const char *path, const char *src)` | `953-965` | 落盘 restrictions.bin |
 | `static int disp_append(...)` | `975-990` | 显示层分 tile 的 polyrefs 重基写入 |
-| `static int write_disp_tiles(Graph *g, const char *dir, const char *src, const Buf *pr)` | `997-1179` | 显示层切规则网格 tile（见 `graph_build.c:997-1179`） |
-| `static int write_lines_areas(Graph *g, const char *dir, const char *src)` | `1181-1300` | 落盘 lines/areas/polyrefs（见 `graph_build.c:1181-1300`） |
+| `static int write_disp_tiles(Graph *g, const char *dir, const char *src, const Buf *pr)` | `978-~1179` | 显示层切规则网格 tile；**失败致命**（由 `build_display` 上抛，见 `graph_build.c:978`） |
+| `static int build_display(Graph *g, const char *dir, const char *src)` | `1169-1225` | 解析线/面引用点为 polyrefs 缓冲 `pr`，再调 `write_disp_tiles`；**不再落盘整省 areas/lines/polyrefs.bin**（见 `graph_build.c:1169`） |
+| ~~`static int write_lines_areas(...)`~~ | — | **已删除**：原"落盘整省三件套 + 调 write_disp_tiles"。整省三件套（areas/lines/polyrefs.bin）是 195 MB 冗余，已证实可安全省去；运行时显示一律走 disp tile（或 PBF 解码）。`build_display` 仅保留 polyrefs 缓冲构建 + 调 `write_disp_tiles`，tile 化失败改为**致命**（不再有整省兜底，静默失败会留下面/线全无的省）。 |
 | `static int write_spatial_index(Graph *g, const char *dir, const char *src)` | `1305-1475` | 生成 tile→(from,edge) 空间索引（见 `graph_build.c:1305-1475`） |
 | `static void graph_free(Graph *g)` | `1480-1492` | 释放全部缓冲 |
 
 以下是上述三行的完整实现（逐字摘自源文件）：
 
 ```c
-/* graph_build.c:997-1179 —— write_disp_tiles：显示层切规则网格 tile */
+/* graph_build.c:978（节选）—— write_disp_tiles：显示层切规则网格 tile；失败返回 -1 由 build_display 上抛为致命 */
 static int write_disp_tiles(Graph *g, const char *dir, const char *src,
                             const Buf *pr)
 {
@@ -234,13 +235,13 @@ static int write_disp_tiles(Graph *g, const char *dir, const char *src,
 fail:
     for (uint64_t t = 0; t < nt; t++) { buf_free(&dtA[t]); buf_free(&dtL[t]); buf_free(&dtP[t]); }
     free(dtA); free(dtL); free(dtP); free(used);
-    return -1;   /* 非致命：调用方忽略，整省产物仍有效 */
+    return -1;   /* 致命：由 build_display 上抛为整省建图失败；不再有整省三件套兜底 */
 }
 ```
 
 ```c
-/* graph_build.c:1181-1300 —— write_lines_areas：落盘 lines/areas/polyrefs */
-static int write_lines_areas(Graph *g, const char *dir, const char *src)
+/* graph_build.c:1169-1225 —— build_display：构建 polyrefs 缓冲 pr，再切 disp tile（不再写整省三件套） */
+static int build_display(Graph *g, const char *dir, const char *src)
 {
     size_t nlines = g->lines.n / sizeof(LineRec);
     size_t nareas = g->areas.n / sizeof(AreaRec);
@@ -292,73 +293,15 @@ static int write_lines_areas(Graph *g, const char *dir, const char *src)
         ar[i].ref_off = off;
     }
 
-    /* ---- polyrefs.bin ---- */
-    char path[4096];
-    NMBinWriter *w = nmbin_create(OUTF2(path, dir, "polyrefs.bin"),
-                                  NMBIN_KIND_POLYREFS, 4, src);
-    if (!w) { buf_free(&pr); return -1; }
-    nmbin_add_field(w, "node_idx", 0, NMT_U32, 4);
-    size_t np = pr.n / 4;
-    if (np && nmbin_write_records(w, pr.p, np) != 0) {
-        nmbin_abort(w); buf_free(&pr); return -1;
-    }
-    if (nmbin_finalize(w) != 0) { buf_free(&pr); return -1; }
+    /* ★ 省版变更（2026-11-03）：不再落盘整省 areas/lines/polyrefs.bin。
+     *   这些"整省三件套"是 195 MB 冗余（与 disp tile 内容重复），已证实可安全省去；
+     *   运行时显示一律走 disp tile（或 PBF 解码），见 mapset.c 的 tile 拼接路径。
+     *   因此本函数只构建 polyrefs 缓冲 pr，随后直接交给 write_disp_tiles。 */
 
-    /* ---- lines.bin（跳过 ref_cnt=0 的丢弃条目）----
-       丢弃条目在中间的话，剩余条目的 ref_off 已经各自正确，
-       只是记录之间有洞，直接顺序写有效条目即可。 */
-    w = nmbin_create(OUTF2(path, dir, "lines.bin"), NMBIN_KIND_LINES,
-                     SK_LINE_BYTES, src);
-    if (!w) { buf_free(&pr); return -1; }
-    nmbin_add_field(w, "osm_id",  LF_OSM_ID,  NMT_U64, 8);
-    nmbin_add_field(w, "ref_off", LF_REF_OFF, NMT_U32, 4);
-    nmbin_add_field(w, "ref_cnt", LF_REF_CNT, NMT_U32, 4);
-    nmbin_add_field(w, "class",   LF_CLASS,   NMT_U8,  1);
-    nmbin_add_field(w, "flags",   LF_FLAGS,   NMT_U8,  1);
-    nmbin_add_field(w, "name_id", LF_NAME_ID, NMT_U32, 4);
-    for (size_t i = 0; i < nlines; i++) {
-        if (lr[i].ref_cnt == 0) continue;
-        uint8_t rec[SK_LINE_BYTES];
-        memset(rec, 0, sizeof(rec));
-        sk_put_u64(rec + LF_OSM_ID,  (uint64_t)lr[i].osm_id);
-        sk_put_u32(rec + LF_REF_OFF, lr[i].ref_off);
-        sk_put_u32(rec + LF_REF_CNT, lr[i].ref_cnt);
-        rec[LF_CLASS]  = lr[i].cls;
-        rec[LF_FLAGS]  = lr[i].flags;
-        sk_put_u32(rec + LF_NAME_ID, lr[i].name_id);
-        if (nmbin_write_records(w, rec, 1) != 0) {
-            nmbin_abort(w); buf_free(&pr); return -1;
-        }
-    }
-    if (nmbin_finalize(w) != 0) { buf_free(&pr); return -1; }
-
-    /* ---- areas.bin ---- */
-    w = nmbin_create(OUTF2(path, dir, "areas.bin"), NMBIN_KIND_AREAS,
-                     SK_AREA_BYTES, src);
-    if (!w) { buf_free(&pr); return -1; }
-    nmbin_add_field(w, "osm_id",  AF_OSM_ID,  NMT_U64, 8);
-    nmbin_add_field(w, "ref_off", AF_REF_OFF, NMT_U32, 4);
-    nmbin_add_field(w, "ref_cnt", AF_REF_CNT, NMT_U32, 4);
-    nmbin_add_field(w, "kind",    AF_KIND,    NMT_U8,  1);
-    for (size_t i = 0; i < nareas; i++) {
-        if (ar[i].ref_cnt == 0) continue;
-        uint8_t rec[SK_AREA_BYTES];
-        memset(rec, 0, sizeof(rec));
-        sk_put_u64(rec + AF_OSM_ID,  (uint64_t)ar[i].osm_id);
-        sk_put_u32(rec + AF_REF_OFF, ar[i].ref_off);
-        sk_put_u32(rec + AF_REF_CNT, ar[i].ref_cnt);
-        rec[AF_KIND] = ar[i].kind;
-        if (nmbin_write_records(w, rec, 1) != 0) {
-            nmbin_abort(w); buf_free(&pr); return -1;
-        }
-    }
-    if (nmbin_finalize(w) != 0) { buf_free(&pr); return -1; }
-
-    /* 显示层分 tile（抽取期一次性切好；失败非致命，整省产物仍有效）*/
-    write_disp_tiles(g, dir, src, &pr);
-
+    /* 显示层分 tile（抽取期一次性切好；失败致命 —— 不再有整省三件套兜底）*/
+    int rc = write_disp_tiles(g, dir, src, &pr);
     buf_free(&pr);
-    return 0;
+    return rc;
 }
 ```
 
@@ -676,7 +619,7 @@ int graph_build(const char *pbf_path, const char *out_dir, GraphBuildStats *st)
         write_lane_names(&g, OUTF(path, "lane_names.bin"), src) != 0)
         fprintf(stderr, "警告: 车道指示（lanes.bin）生成失败，该省无车道箭头\n");
     if (write_restrictions(&g, OUTF(path, "restrictions.bin"), src) != 0) { rc = -1; goto done; }
-    if (write_lines_areas(&g, out_dir, src) != 0) { rc = -1; goto done; }
+    if (build_display(&g, out_dir, src) != 0) { rc = -1; goto done; }
     /* 空间索引失败不致命：渲染回退全量扫描 */
     if (write_spatial_index(&g, out_dir, src) != 0)
         fprintf(stderr, "警告: 空间索引生成失败，渲染将全量扫描\n");

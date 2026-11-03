@@ -90,7 +90,7 @@ cmake --build build_rel -j$(nproc)
 ### 1.4 验收门禁（先把这套跑通，后面每课都用）
 
 ```bash
-./scripts/regress.sh        # 全量回归；基线 82 通过 / 3 失败（3 项为环境缺失非回归）
+./scripts/regress.sh        # 全量回归；基线 87 通过 / 0 失败（数据齐全；2026-11-02 起原「3 项环境缺失」已消除）
 ./scripts/check_layers.sh   # 分层门禁：任何反向 #include 都会打印文件行号并退出非 0
 ```
 
@@ -180,7 +180,7 @@ cmake --build build_rel -j$(nproc)
 
 **必读代码**
 - `src/map/binfmt.h` / `binfmt.c`：`NMBinFile`（`data/hdr/mapped`）、`NMBinHeader`/`NMBinField`——**字段名/偏移/类型/宽度写进文件头**；落盘统一小端、定长整型（避免 aarch64 跨编译器布局漂移）。`NMBIN_MAGIC="NAVMBIN\x01"`，`NMBIN_VERSION=3`。
-- `src/map/mapset.h` / `mapset.c`：`MapSrc`/`MapSet`，每省一组 `nodes/edges/restrictions/lines/areas/polyrefs/tiles/...`；含 `bbox`、`dup_of`（被完全包含的副本省，如北京⊂河北 100%）、后台解码线程（`dmap_mtx`/`job_prov`/`job_done`）。
+- `src/map/mapset.h` / `mapset.c`：`MapSrc`/`MapSet`，每省一组 `nodes/edges/restrictions/lanes/disp(tiles)/edgelist/contours/...`；`lines/areas/polyrefs` 为**旧版整省三件套**，**自 2026-11-03 起构建不再生成**（运行时显示从 disp tile 拼接；`mapset.c` 仅在文件存在时打开，作 `disp_tile_selftest` 的 PBF 解码对照基准）。含 `bbox`、`dup_of`、后台解码线程。
 - `src/map/namepool.h` / `namepool.c`：每省 `names.bin` 解析结果。
 
 **核心讲解**

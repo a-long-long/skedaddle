@@ -20,7 +20,7 @@
 
 **自描述头**（`binfmt.h:18-68`）：`NMBIN_MAGIC = "NAVMBIN\x01"`、`NMBIN_VERSION = 3u`（注意：旧文档曾误写成 `\x2`/4u，以源码为准）。`NMBinHeader`（128 字节）与 `NMBinField`（24 字节）完整定义见第三节。
 
-**图集句柄**（`mapset.h:22-104`）：`MapSrc` 含 `nodes/edges/restrictions/lines/areas/polyrefs/tiles/edgelist/lanes/contours` 各一份 `NMBinFile`，及 `bbox[4]`、`dup_of`、`NamePool np`、`SkMutex *dmap_mtx / job_prov / job_done`（后台解码线程字段）等，完整定义见第三节。
+**图集句柄**（`mapset.h:22-104`）：`MapSrc` 含 `nodes/edges/restrictions/lines/areas/polyrefs/tiles/edgelist/lanes/contours` 各一份 `NMBinFile`，及 `bbox[4]`、`dup_of`、`NamePool np`、`SkMutex *dmap_mtx / job_prov / job_done`（后台解码线程字段）等，完整定义见第三节。注意：`lines/areas/polyrefs` 为旧版"整省三件套"，自 2026-11-03 起构建不再产出，运行时显示改由 disp tile 拼接（`mapset.c` 的 tile 加载路径）；`mapset.c` 仍尝试打开它们仅为兼容历史产物，新数据目录里这些文件不存在。
 
 ## 三、完整实现代码
 
@@ -388,7 +388,7 @@ typedef struct {
     NMBinFile nodes, edges;
     NMBinFile restrictions;             /* 转向限制（可选，阶段 8 路由用） */
     int       has_restr;
-    NMBinFile lines, areas, polyrefs;   /* 线/面要素（旧目录可没有） */
+    NMBinFile lines, areas, polyrefs;   /* 线/面要素：旧版整省三件套，自 2026-11-03 起构建不再生成；运行时显示从 disp tile 拼接，此字段仅兼容历史产物 */
     int       has_features;             /* 三者齐备才为 1 */
     /* ---- 等高线（SRTM 生成，可选）---- */
     NMBinFile contours, contour_polyrefs, contour_pts;
@@ -488,7 +488,10 @@ static int src_open_files(MapSrc *s)
         s->has_restr = 0;
     }
 
-    /* 线/面要素可选：三者齐备才算有。PBF 模式下不从 nmbin 打开这三个文件。 */
+    /* 线/面要素：自 2026-11-03 起构建不再生成整省 areas/lines/polyrefs.bin，
+       运行时显示一律从 disp tile 拼接（disp_open 路径，set_view 时按视口加载）。
+       下面"三件套齐备才算有"的 else 分支仅为兼容历史产物保留，对新数据不会进入；
+       PBF 模式同样不走 nmbin 打开。 */
     if (s->pbf_display_mode) {
         s->has_features = 0;      /* 等解码后再置 1 */
     } else if (disp_open(s) == 0) {
