@@ -23,10 +23,10 @@
 3. **依赖是纯 DAG**——`utils ← pbf ← map ← route ← render ← ui ← ui_qt`，反向依赖会立刻 `undefined-reference`。`scripts/check_layers.sh` 是守护门禁。
 4. **核心零 SDL**——`skedaddle_core` 连 SDL 的 include 都不给；SDL 仅残留在两个去 SDL 化对照体（`skedaddle_blend_equiv`/`skedaddle_clip_equiv`）里做"逐像素等价"验证。
 
-### 0.3 课程表（建议 15 篇：第 0 课总览 → 第 14 课综合项目，编号与 `tutorial/00–14` 一一对应）
+### 0.3 课程表（共 17 篇：第 0 课总览 → 第 14 课综合项目 → 第 15 课基准 → 第 16 课多语言，编号与 `tutorial/00–16` 一一对应）
 
-> 自本版起课程统一编号为 **00–14**：第 0 课是总览（读源码讲义 `docs/teaching/00_overview.md`，与可运行小程序 `tutorial/00_minimal` 配套）；
-> 01–13 为主题课；14 为综合项目。每课都有两份**同号**资料——「读真实源码讲义 `docs/teaching/NN_*.md`」与「可独立编译运行的小程序 `tutorial/NN_*/`」。
+> 课程统一编号为 **00–16**：第 0 课是总览（读源码讲义 `docs/teaching/00_overview.md`，与可运行小程序 `tutorial/00_minimal` 配套）；
+> 01–13 为主题课；14 为综合项目；15（坐标系基准 datum）、16（极简多语言 i18n）为两节进阶专题。每课都有两份**同号**资料——「读真实源码讲义 `docs/teaching/NN_*.md`」与「可独立编译运行的小程序 `tutorial/NN_*/`」。
 
 | 课次 | 主题 | 对应模块 | 关键产出 | 配套资料 |
 |---|---|---|---|---|
@@ -45,12 +45,14 @@
 | 12 | Qt 前端与边界 | `ui_qt/*` | 渐进式 Qt 化 | `docs/teaching/12_qt.md` + `tutorial/12_qt` |
 | 13 | 架构纪律与验收门禁 | `scripts/*` | 防回归 | `docs/teaching/13_gates.md` + `tutorial/13_gates` |
 | 14 | 综合项目 | 全程 | 改一个点 + 加一条判据 | `docs/teaching/14_capstone.md` + `tutorial/14_capstone` |
+| 15 | 坐标系基准（datum） | `utils/datum` | 三参数赫尔默特 + 交叉验证 | `docs/teaching/15_datum.md` + `tutorial/15_datum` |
+| 16 | 极简多语言（i18n） | `src/i18n`, `lang/*.xml` | zh 为 msgid + 缺译回退链 | `docs/teaching/16_i18n.md` + `tutorial/16_i18n` |
 
-> **对账补记（2026-11-03 完整对账）**：
-> - 上面 00–14 课已逐课对照当前代码。已修正的过时项集中在第 4/5 课与建图/显示层：
+> **对账补记（2026-11-03 完整对账，当日补齐 i18n 课次）**：
+> - 上面 **00–16 课**已逐课对照当前代码。已修正的过时项集中在第 4/5 课与建图/显示层：
 >   整省三件套（areas/lines/polyrefs.bin）的 **nmbin 读取路径已彻底断根**（`mapset.c` 不再打开、构建不再生成、`disp_tile_selftest` 改为统一以 PBF 解码作基准）；`osmid.bin` 已删；SDL 已从核心彻底移除（仅剩两个去 SDL 化对照体 `skedaddle_blend_equiv`/`skedaddle_clip_equiv` 做逐像素等价验证）。回归基线现为 **87 通过 / 0 失败**。
-> - **已知缺口**：`src/i18n/`（多语言系统，配 `lang/*.xml` 英文/法/意/西/日/葡/德 7 套语言包）目前**没有对应课次**。若需要，可补一节「i18n 与语言包」或在第 12 课 Qt 前端里加一段。
-> - 个别行号锚点（如 `paint_frame` 的 `dup_of` 跳过）已按当前源码校正；其余函数级锚点经核对仍然有效。
+> - **i18n 缺口已补齐**：`src/i18n/`（多语言系统，配 7 套非中文语言包）现已有第 16 课 [`16_i18n.md`](docs/teaching/16_i18n.md) + `tutorial/16_i18n` 配套小程序；第 15 课 datum（`15_datum.md`）此前漏列于本表，已补入。
+> - 个别行号锚点（如 `paint_frame` 的 `dup_of` 跳过、`i18n.c` 的各函数区间）已按当前源码校正；其余函数级锚点经核对仍然有效。
 
 ---
 

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 英文语言包样例（lang/en.xml）：覆盖内置英文 TR[] 中的若干条。
+     运行本目录的 tut 时，main.c 会从相对路径 lang/en.xml 读取本文件，
+     其中 <zh>设置</zh><en>Preferences</en> 会覆盖内置的 "Settings"，
+     演示"手改 lang 文件即时生效"这一真实行为。 -->
+<translations lang="en">
+  <item><zh>设置</zh><en>Preferences</en></item>
+  <item><zh>昼夜模式</zh><en>Day / Night</en></item>
+</translations>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 法语语言包样例（lang/fr.xml）：只译了"搜索"，其余缺译会回退内置英文。
+     演示"加一门语言"只需三步：枚举加一项 + 元数据表加一行 + 提供此文件。 -->
+<translations lang="fr">
+  <item><zh>搜索</zh><fr>Rechercher</fr></item>
+</translations>
