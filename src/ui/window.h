@@ -69,6 +69,7 @@ typedef struct {
     int            font_size;             /* 字号（pt） */
     char           font_used[512];        /* 实际使用的字体文件（日志/排查用） */
     char           font_path[512];        /* 生效的字体文件路径（改字号时重开） */
+    int            font_missing;          /* 字体加载彻底失败（!=0）：地图不画任何文字 */
     LabelCache    places;                 /* 地名库（可选，全局一份，跨省通用） */
     int           has_places;
     DedupSet      dd;                     /* 跨省去重（多个省同时盖住视口才启用） */

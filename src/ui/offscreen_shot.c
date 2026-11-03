@@ -632,6 +632,8 @@ int offscreen_shot_main(int argc, char **argv)
     printf("place_labels   %llu\n", (unsigned long long)st.labels_drawn);
     printf("poi_icons      %llu\n", (unsigned long long)st.poi_icons);
     printf("road_labels    %llu\n", (unsigned long long)st.road_labels_drawn);
+    printf("font           %s  (%s)\n", a.font_used,
+           a.font_missing ? "★ 加载失败：文字未绘制" : "已加载");
 
     /* 像素计数 + 断言 + 日志：交给共享审计模块（render/audit.c）。
        skedaddle --shot-offscreen 也走同一份逻辑，保证两前端判据逐位一致。 */

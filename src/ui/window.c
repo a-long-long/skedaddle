@@ -121,6 +121,7 @@ int app_init(App *a, const char *graph_dir, int w, int h,
     a->font_size = font_size > 0 ? font_size
                                   : settings_get_int(a->cfg, "font_size", 14);
 
+    a->font_missing = 0;
     if (want_font) {
         if (font_path && *font_path) {
             a->font = font_open(font_path, a->font_size);
@@ -137,8 +138,24 @@ int app_init(App *a, const char *graph_dir, int w, int h,
                          dp ? dp : "?");
             }
         }
-        if (!a->font)
-            fprintf(stderr, "提示: 没有任何可用字体，本帧不画文字标注\n");
+        if (!a->font) {
+            /* ★ 字体彻底加载失败：以往这里只打一行"提示"、然后静默丢光所有文字，
+             *   用户看到的是"地图有图无线无字"，极难联想到是字体挂了。改成
+             *   响亮告警 + 置位 font_missing，让根因一眼可见。 */
+            a->font_missing = 1;
+            fprintf(stderr,
+                "\n"
+                "!!! 字体加载失败：地图将不显示任何地名 / 路名（仅几何可见）。\n"
+                "    已尝试的字体来源：%s\n"
+                "    排查：① 确认随程序发布的 fonts/ 目录存在（内含 DroidSansFallback.ttf）；\n"
+                "          ② 或系统已装中文字体 —— Linux: /usr/share/fonts 下 GB/Noto 系列；\n"
+                "            Windows: %%WINDIR%%\\Fonts\\simsun.ttc 等；macOS: 宋体 / PingFang。\n"
+                "    也可用 SKEDADDLE_FONT_DIR 指向含 .ttf 的目录，或 --font=<路径> 显式指定。\n"
+                "\n",
+                (font_path && *font_path)
+                    ? font_path
+                    : "默认候选链（内置 DroidSansFallback + 系统字体）");
+        }
     } else {
         snprintf(a->font_used, sizeof(a->font_used), "(已关闭)");
     }

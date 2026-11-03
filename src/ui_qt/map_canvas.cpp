@@ -67,6 +67,13 @@ void MapCanvas::renderNow()
     if (app_render_to_buf(m_a, m_px, w, h, (size_t)w,
                           0x00FF0000u, 0x0000FF00u, 0x000000FFu, 0x00000000u,
                           &m_st) == 0) {
+        /* ★ Wayland 专修：光栅器只写 R/G/B、从不写 alpha 字节 ⇒ 缓冲恒为
+         * 0x00RRGGBB。Deepin Wayland 平台把 backing store 按 ARGB8888 上传，
+         * alpha=0 即全透明 ⇒ 合成器把桌面乱色透进窗口（实测：同一份二进制
+         * xcb/XWayland 渲染完美、wayland 一片花）。渲染后把 alpha 统一置
+         * 0xFF（显式不透明），对 xcb / 离屏 BMP 无副作用。 */
+        for (size_t i = 0; i < (size_t)w * (size_t)h; ++i)
+            m_px[i] |= 0xFF000000u;
         m_valid = true;
         m_frame_ms = m_st.ms_bg + m_st.ms_areas + m_st.ms_roads +
                      m_st.ms_lines + m_st.ms_labels;
