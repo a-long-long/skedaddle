@@ -290,7 +290,7 @@ int pbfmap_decode(const char *pbf_path, const NMBinFile *nodes_index,
     }
 
     /* ---- polyrefs：refs 里的 osm id → nmbin nodes.bin 的内部下标 ----
-     * graph_build 的 write_lines_areas 逻辑：逐个查 id，查不到就把整条
+     * graph_build 的 build_display 逻辑：逐个查 id，查不到就把整条
      * 要素丢弃（ref_cnt=0），并回退已写入的下标。 */
     Buf pr; memset(&pr, 0, sizeof(pr)); pr.esz = 4;
     LineRec *lr = (LineRec *)lines.p;

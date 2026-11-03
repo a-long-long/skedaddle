@@ -5,7 +5,7 @@
 ## 固定动作
 - `sources/` 只放原始 `*.osm.pbf`；`products/` 全可删、`./scripts/sync_maps.sh` 重建。
 - ★★★ **`skedaddle_graph_extract --out=` 必须与脚本 `OUT_ROOT`（=`products/graph`）逐字一致**。手工传错会留下脚本**永远抓不到**的孤副本：`--out=products/graph/graph`（套两层）、`--out=products/graph/shijiazhuang`（市名当省名）。脚本自带的清理只认 `.tmp.$$` / `.old.*`（`mapset.c:376` 跳过这些名字），不认这些人造目录名 ⇒ 一份 pbf 被抽 4 遍、17G 里 12.5G 是纯重复（2026-11-02 实测，`edges.bin` md5 四处全同）。删重复前先 `md5sum` 确认字节相同 + 确认无脚本依赖。
-- 产物终态：`products/graph/<省>/` 应各带 `disp.idx + lanes.bin + t_*`（8 省合计 23193 tile）。缺 `disp.idx` ⇒ 运行时回落整省 nmbin、`lane/disp_*` 三个用例必 FAIL。
+- 产物终态：`products/graph/<省>/` 应各带 `disp.idx + lanes.bin + t_*`（8 省合计 23193 tile）。**整省显示层三件套（areas/lines/polyrefs.bin）自 2026-11-03 起不再生成**（`graph_build.c` 的 `build_display` 只构建 polyrefs 缓冲 + 调 `write_disp_tiles`，原 `write_lines_areas` 的双写整段删除）；运行时唯一显示源是 disp tile（无 `disp.idx` 的省建图会直接失败，因为 tile 化失败现在是**致命**的、没有整省兜底）。`disp_tile_selftest` 的整省真值基准改从 PBF 运行时解码（`--pbf`，落盘缺失时自动走），故删三件套不破回归。
 - 验收 `./scripts/regress.sh`：Linux 主机（数据齐全）**87 通过 / 0 失败**（2026-11-02 起：把陈旧 `products/graph/` 换成带 lanes/disp/t_* 的最全抽取后，原「3 项环境缺失」消失）。Windows/MSYS2 副机 products 仅 beijing 1 省 ⇒ 多省 graph / places_auto.db / liaoning/rev.bin / lm.bin 缺失，相关用例必 FAIL、**非代码回归**。编译零警告（-Werror）。改渲染补 `python3 scripts/bmpdiff.py 旧 新`（要素色→背景色=丢要素）。
 - `skedaddle --ui-test`（33 项）已进 regress.sh。完成即 commit + push origin main。**前端只有 skedaddle**（原 skedaddle/map_shot 已删）。
 - ★★ **删文件前必须 grep 它提供的符号在别处的声明**（删 `window_sdl.c` ⇒ `window.h` 的 `app_run` 成悬空声明，链接不报错但是假 API）。★ 同理**删 include 前必须 grep 该头的全部符号**（只 grep `label_` 漏掉 `NamePool`，差点把承重依赖当死代码删掉）。

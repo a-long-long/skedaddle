@@ -971,9 +971,10 @@ static int disp_append(Buf *tbuf, Buf *tpoly, const uint8_t *rec, int recsz,
 
 /* 抽取期把整省显示层切成规则网格 tile（一次性，离线）。运行时只 mmap 视口内
  * tile，省掉"为屏外一条边解整省"的浪费（见 mapset.c）。每条 tile 拥有独立
- * polyrefs 段。整省 areas/lines/polyrefs.bin 仍照常写（旧省无 disp.idx 时
- * 回退整省）。大要素跨 tile 重复写入保证边界不丢；复制面过大则只落中心 tile。
- * 失败（OOM/IO）非致命：只跳过 tile 化，整省产物照常有效。 */
+ * polyrefs 段。大要素跨 tile 重复写入保证边界不丢；复制面过大则只落中心 tile。
+ *
+ * 调用方（build_display）不再写整省 areas/lines/polyrefs.bin，故本函数失败即
+ * 致命（返回 -1 由调用方上抛）；不再有整省三件套兜底，静默失败会留下面/线全无的省。 */
 static int write_disp_tiles(Graph *g, const char *dir, const char *src,
                             const Buf *pr)
 {
@@ -1155,10 +1156,17 @@ static int write_disp_tiles(Graph *g, const char *dir, const char *src,
 fail:
     for (uint64_t t = 0; t < nt; t++) { buf_free(&dtA[t]); buf_free(&dtL[t]); buf_free(&dtP[t]); }
     free(dtA); free(dtL); free(dtP); free(used);
-    return -1;   /* 非致命：调用方忽略，整省产物仍有效 */
+    return -1;   /* 失败返回 -1，由调用方 build_display 上抛为致命 */
 }
 
-static int write_lines_areas(Graph *g, const char *dir, const char *src)
+/* 抽取期构建显示层：先把每条线/面要素的引用点解析成节点内下标（polyrefs 缓冲
+ * pr），再把整省显示层切成规则网格 tile（见 write_disp_tiles）。
+ *
+ * 不再落盘整省 areas/lines/polyrefs.bin —— 运行时一律走 disp tile（或 PBF 解码），
+ * 整省三件套是 195MB 冗余，已证实可安全省去（disp_tile_selftest 改用 PBF 基准）。
+ * 因此 tile 化失败改为**致命**：不再有整省兜底，静默失败会留下面/线全无的省，
+ * 必须让整省建图失败以暴露问题。 */
+static int build_display(Graph *g, const char *dir, const char *src)
 {
     size_t nlines = g->lines.n / sizeof(LineRec);
     size_t nareas = g->areas.n / sizeof(AreaRec);
@@ -1210,73 +1218,10 @@ static int write_lines_areas(Graph *g, const char *dir, const char *src)
         ar[i].ref_off = off;
     }
 
-    /* ---- polyrefs.bin ---- */
-    char path[4096];
-    NMBinWriter *w = nmbin_create(OUTF2(path, dir, "polyrefs.bin"),
-                                  NMBIN_KIND_POLYREFS, 4, src);
-    if (!w) { buf_free(&pr); return -1; }
-    nmbin_add_field(w, "node_idx", 0, NMT_U32, 4);
-    size_t np = pr.n / 4;
-    if (np && nmbin_write_records(w, pr.p, np) != 0) {
-        nmbin_abort(w); buf_free(&pr); return -1;
-    }
-    if (nmbin_finalize(w) != 0) { buf_free(&pr); return -1; }
-
-    /* ---- lines.bin（跳过 ref_cnt=0 的丢弃条目）----
-       丢弃条目在中间的话，剩余条目的 ref_off 已经各自正确，
-       只是记录之间有洞，直接顺序写有效条目即可。 */
-    w = nmbin_create(OUTF2(path, dir, "lines.bin"), NMBIN_KIND_LINES,
-                     SK_LINE_BYTES, src);
-    if (!w) { buf_free(&pr); return -1; }
-    nmbin_add_field(w, "osm_id",  LF_OSM_ID,  NMT_U64, 8);
-    nmbin_add_field(w, "ref_off", LF_REF_OFF, NMT_U32, 4);
-    nmbin_add_field(w, "ref_cnt", LF_REF_CNT, NMT_U32, 4);
-    nmbin_add_field(w, "class",   LF_CLASS,   NMT_U8,  1);
-    nmbin_add_field(w, "flags",   LF_FLAGS,   NMT_U8,  1);
-    nmbin_add_field(w, "name_id", LF_NAME_ID, NMT_U32, 4);
-    for (size_t i = 0; i < nlines; i++) {
-        if (lr[i].ref_cnt == 0) continue;
-        uint8_t rec[SK_LINE_BYTES];
-        memset(rec, 0, sizeof(rec));
-        sk_put_u64(rec + LF_OSM_ID,  (uint64_t)lr[i].osm_id);
-        sk_put_u32(rec + LF_REF_OFF, lr[i].ref_off);
-        sk_put_u32(rec + LF_REF_CNT, lr[i].ref_cnt);
-        rec[LF_CLASS]  = lr[i].cls;
-        rec[LF_FLAGS]  = lr[i].flags;
-        sk_put_u32(rec + LF_NAME_ID, lr[i].name_id);
-        if (nmbin_write_records(w, rec, 1) != 0) {
-            nmbin_abort(w); buf_free(&pr); return -1;
-        }
-    }
-    if (nmbin_finalize(w) != 0) { buf_free(&pr); return -1; }
-
-    /* ---- areas.bin ---- */
-    w = nmbin_create(OUTF2(path, dir, "areas.bin"), NMBIN_KIND_AREAS,
-                     SK_AREA_BYTES, src);
-    if (!w) { buf_free(&pr); return -1; }
-    nmbin_add_field(w, "osm_id",  AF_OSM_ID,  NMT_U64, 8);
-    nmbin_add_field(w, "ref_off", AF_REF_OFF, NMT_U32, 4);
-    nmbin_add_field(w, "ref_cnt", AF_REF_CNT, NMT_U32, 4);
-    nmbin_add_field(w, "kind",    AF_KIND,    NMT_U8,  1);
-    for (size_t i = 0; i < nareas; i++) {
-        if (ar[i].ref_cnt == 0) continue;
-        uint8_t rec[SK_AREA_BYTES];
-        memset(rec, 0, sizeof(rec));
-        sk_put_u64(rec + AF_OSM_ID,  (uint64_t)ar[i].osm_id);
-        sk_put_u32(rec + AF_REF_OFF, ar[i].ref_off);
-        sk_put_u32(rec + AF_REF_CNT, ar[i].ref_cnt);
-        rec[AF_KIND] = ar[i].kind;
-        if (nmbin_write_records(w, rec, 1) != 0) {
-            nmbin_abort(w); buf_free(&pr); return -1;
-        }
-    }
-    if (nmbin_finalize(w) != 0) { buf_free(&pr); return -1; }
-
-    /* 显示层分 tile（抽取期一次性切好；失败非致命，整省产物仍有效）*/
-    write_disp_tiles(g, dir, src, &pr);
-
+    /* 显示层分 tile（抽取期一次性切好；失败致命 —— 不再有整省三件套兜底）*/
+    int rc = write_disp_tiles(g, dir, src, &pr);
     buf_free(&pr);
-    return 0;
+    return rc;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1505,7 +1450,7 @@ int graph_build(const char *pbf_path, const char *out_dir, GraphBuildStats *st)
         write_lane_names(&g, OUTF(path, "lane_names.bin"), src) != 0)
         fprintf(stderr, "警告: 车道指示（lanes.bin）生成失败，该省无车道箭头\n");
     if (write_restrictions(&g, OUTF(path, "restrictions.bin"), src) != 0) { rc = -1; goto done; }
-    if (write_lines_areas(&g, out_dir, src) != 0) { rc = -1; goto done; }
+    if (build_display(&g, out_dir, src) != 0) { rc = -1; goto done; }
     /* 空间索引失败不致命：渲染回退全量扫描 */
     if (write_spatial_index(&g, out_dir, src) != 0)
         fprintf(stderr, "警告: 空间索引生成失败，渲染将全量扫描\n");
