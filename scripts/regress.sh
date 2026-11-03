@@ -277,7 +277,7 @@ run skedaddle_lane_selftest "LANE-OK" "$BUILD/skedaddle_lane_selftest" --graph="
 run skedaddle_dmap_selftest "DMAP-OK" "$BUILD/skedaddle_dmap_selftest" "$GRAPH" "$ROOT/sources"
 
 # ---- 显示层分 tile（抽取期切好，运行时按需加载；覆盖性：整省要素无丢失）----
-run skedaddle_disp_tile_selftest "DISP-TILE-OK" "$BUILD/skedaddle_disp_tile_selftest" --graph="$GRAPH/beijing"
+run skedaddle_disp_tile_selftest "DISP-TILE-OK" "$BUILD/skedaddle_disp_tile_selftest" --graph="$GRAPH/beijing" --pbf="$ROOT/sources/beijing.osm.pbf"
 run skedaddle_disp_runtime_selftest "DISP-RUNTIME-OK" "$BUILD/skedaddle_disp_runtime_selftest" --graph="$GRAPH/beijing"
 run skedaddle_gpx_selftest "GPX-OK" "$BUILD/skedaddle_gpx_selftest"
 

@@ -5,11 +5,19 @@
  * 出现在一个 tile 中**——即分 tile 不丢要素。跨 tile 重复（大要素边界保护）
  * 是允许的，故只断言"全覆盖"，并报告 tile 要素总数 >= 整省。
  *
- * 用法：skedaddle_disp_tile_selftest --graph=<省目录> */
+ * 整省基准的取源（按优先级）：
+ *   1. 落盘整省三件套（areas/lines/polyrefs.bin）存在时直接用（零成本）；
+ *   2. 否则从原始 PBF 运行时解码（pbfmap_decode，与落盘逐字节相同）作为基准，
+ *      需 --pbf=<省>.osm.pbf（nodes.bin 取自 --graph 目录本身）。
+ * 这样删掉落盘整省三件套后，覆盖性验收仍可用 PBF 真值跑，不破回归。
+ *
+ * 用法：skedaddle_disp_tile_selftest --graph=<省目录> [--pbf=<省>.osm.pbf]
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "map/binfmt.h"
+#include "map/pbfmap.h"
 
 static int g_fail = 0;
 #define CHECK(c, ...) do { if (!(c)) { fprintf(stderr, "  ✗ " __VA_ARGS__); g_fail++; } } while (0)
@@ -42,23 +50,17 @@ static int seq_match(const uint8_t *mpoly, uint64_t moff, uint32_t mcnt,
     return 1;
 }
 
-/* 校验一层（areas 或 lines）覆盖。 */
-static int check_layer(const char *dir, const char *disp, const char *mono_name,
-                       const char *tile_ext, int off_field, int cnt_field,
-                       uint64_t *out_mono, uint64_t *out_tile)
+/* 校验一层（areas 或 lines）覆盖。mono/monop 为已就绪的整省基准
+ *（落盘 NMBinFile 或 pbfmap_decode 产出的内存 NMBinFile，两者布局逐字节一致）。 */
+static int check_layer(const NMBinFile *mono, const NMBinFile *monop, const char *dir,
+                       const char *disp, const char *tile_ext, int off_field, int cnt_field,
+                       const char *mono_name, uint64_t *out_mono, uint64_t *out_tile)
 {
-    char path[4096];
-    NMBinFile mono, monop;
-    snprintf(path, sizeof(path), "%s/%s", dir, mono_name);
-    if (nmbin_open(path, &mono) != 0) { fprintf(stderr, "  无法打开 %s\n", path); return 1; }
-    snprintf(path, sizeof(path), "%s/polyrefs.bin", dir);
-    if (nmbin_open(path, &monop) != 0) { fprintf(stderr, "  无法打开 %s/polyrefs.bin\n", dir); nmbin_close(&mono); return 1; }
-
-    uint64_t n = mono.hdr.rec_count;
+    uint64_t n = mono->hdr.rec_count;
     Key *keys = malloc((size_t)n * sizeof(Key));
-    if (!keys) { nmbin_close(&mono); nmbin_close(&monop); return 1; }
+    if (!keys) return 1;
     for (uint64_t i = 0; i < n; i++) {
-        const uint8_t *r = mono.data + i * mono.hdr.rec_size;
+        const uint8_t *r = mono->data + i * mono->hdr.rec_size;
         keys[i].osm = sk_get_u64(r + 0);
         keys[i].idx = (int)i;
     }
@@ -68,12 +70,13 @@ static int check_layer(const char *dir, const char *disp, const char *mono_name,
     uint64_t tile_total = 0;
 
     FILE *idx = fopen(disp, "rb");
-    if (!idx) { fprintf(stderr, "  无法打开 %s\n", disp); free(keys); free(found); nmbin_close(&mono); nmbin_close(&monop); return 1; }
+    if (!idx) { fprintf(stderr, "  无法打开 %s\n", disp); free(keys); free(found); return 1; }
     char line[256]; int in_list = 0; long c, r;
     while (fgets(line, sizeof(line), idx)) {
         if (strncmp(line, "ntiles", 6) == 0) { in_list = 1; continue; }
         if (!in_list) continue;
         if (sscanf(line, "%ld %ld", &c, &r) != 2) continue;
+        char path[4096];
         snprintf(path, sizeof(path), "%s/t_%ld_%ld.%s", dir, c, r, tile_ext);
         NMBinFile ta, tp;
         if (nmbin_open(path, &ta) != 0) continue;
@@ -89,10 +92,10 @@ static int check_layer(const char *dir, const char *disp, const char *mono_name,
             int mi = find_osm(keys, (int)n, tosm);
             if (mi < 0) continue;
             if (found[mi]) continue;
-            const uint8_t *mr = mono.data + (uint64_t)mi * mono.hdr.rec_size;
+            const uint8_t *mr = mono->data + (uint64_t)mi * mono->hdr.rec_size;
             uint32_t moff = sk_get_u32(mr + off_field);
             uint32_t mcnt = sk_get_u32(mr + cnt_field);
-            if (seq_match(monop.data, moff, mcnt, tp.data, toff, tcnt))
+            if (seq_match(monop->data, moff, mcnt, tp.data, toff, tcnt))
                 found[mi] = 1;
         }
         nmbin_close(&ta); nmbin_close(&tp);
@@ -118,7 +121,6 @@ static int check_layer(const char *dir, const char *disp, const char *mono_name,
            (unsigned long long)missing);
 
     free(keys); free(found);
-    nmbin_close(&mono); nmbin_close(&monop);
     *out_mono = n; *out_tile = tile_total;
     return (missing == 0) ? 0 : 1;
 }
@@ -126,10 +128,15 @@ static int check_layer(const char *dir, const char *disp, const char *mono_name,
 int main(int argc, char **argv)
 {
     const char *dir = NULL;
+    const char *pbf = NULL;
     for (int i = 1; i < argc; i++) {
         if (strncmp(argv[i], "--graph=", 8) == 0) dir = argv[i] + 8;
+        else if (strncmp(argv[i], "--pbf=", 6) == 0) pbf = argv[i] + 6;
     }
-    if (!dir) { fprintf(stderr, "用法: %s --graph=<省目录>\n", argv[0]); return 2; }
+    if (!dir) {
+        fprintf(stderr, "用法: %s --graph=<省目录> [--pbf=<省>.osm.pbf]\n", argv[0]);
+        return 2;
+    }
 
     char disp[4096];
     snprintf(disp, sizeof(disp), "%s/disp.idx", dir);
@@ -143,10 +150,56 @@ int main(int argc, char **argv)
     }
 
     printf("disp tile 覆盖自测: %s\n", dir);
+
+    /* 整省基准：优先落盘三件套；缺失则从 PBF 解码（与落盘逐字节相同）。 */
+    NMBinFile areas_f, lines_f, polyrefs_f;
+    PbfMap pm = {0};
+    int use_pbf = 0;
+    {
+        char pa[4096], pl[4096], pp[4096];
+        snprintf(pa, sizeof(pa), "%s/areas.bin", dir);
+        snprintf(pl, sizeof(pl), "%s/lines.bin", dir);
+        snprintf(pp, sizeof(pp), "%s/polyrefs.bin", dir);
+        int ha = (nmbin_open(pa, &areas_f) == 0);
+        int hl = (nmbin_open(pl, &lines_f) == 0);
+        int hp = (nmbin_open(pp, &polyrefs_f) == 0);
+        if (ha && hl && hp) {
+            /* 落盘基准就绪 */
+        } else {
+            if (ha) nmbin_close(&areas_f);
+            if (hl) nmbin_close(&lines_f);
+            if (hp) nmbin_close(&polyrefs_f);
+            if (!pbf) {
+                fprintf(stderr, "  ✗ 整省三件套缺失，需 --pbf=<省>.osm.pbf 提供 PBF 基准\n");
+                return 1;
+            }
+            char pn[4096];
+            snprintf(pn, sizeof(pn), "%s/nodes.bin", dir);
+            NMBinFile nodes;
+            if (nmbin_open(pn, &nodes) != 0) {
+                fprintf(stderr, "  ✗ 无法打开 %s/nodes.bin\n", dir);
+                return 1;
+            }
+            if (pbfmap_decode(pbf, &nodes, &pm, NULL, NULL) != 0) {
+                fprintf(stderr, "  ✗ pbfmap_decode 失败: %s\n", pbf);
+                nmbin_close(&nodes);
+                return 1;
+            }
+            nmbin_close(&nodes);
+            areas_f = pm.areas; lines_f = pm.lines; polyrefs_f = pm.polyrefs;
+            use_pbf = 1;
+        }
+    }
+
     uint64_t ma, ta, ml, tl;
     int rc = 0;
-    rc |= check_layer(dir, disp, "areas.bin",  "areas",  AF_REF_OFF, AF_REF_CNT, &ma, &ta);
-    rc |= check_layer(dir, disp, "lines.bin",  "lines",  LF_REF_OFF, LF_REF_CNT, &ml, &tl);
+    rc |= check_layer(&areas_f, &polyrefs_f, dir, disp, "areas",
+                      AF_REF_OFF, AF_REF_CNT, "areas", &ma, &ta);
+    rc |= check_layer(&lines_f, &polyrefs_f, dir, disp, "lines",
+                      LF_REF_OFF, LF_REF_CNT, "lines", &ml, &tl);
+
+    if (use_pbf) pbfmap_free(&pm);
+    else { nmbin_close(&areas_f); nmbin_close(&lines_f); nmbin_close(&polyrefs_f); }
 
     if (rc == 0) {
         printf("DISP-TILE-OK  面 %llu / 线 %llu 全部覆盖，无丢失\n",
