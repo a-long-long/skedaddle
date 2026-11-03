@@ -78,7 +78,7 @@ for arg in "$@"; do
     esac
 done
 
-# 二进制链接了 ~/.local 里的 protobuf-c / SDL2，不 source 就跑不起来
+# 二进制依赖 ~/.local 里的 protobuf-c（编译期链入），不 source 就跑不起来
 SKEDADDLE_ENV_QUIET=1 . "$ROOT/env.sh"
 
 # ---- 跨平台小工具（GNU 与 BSD/macOS 双兼容）--------------------------------

@@ -151,45 +151,28 @@ int main(int argc, char **argv)
 
     printf("disp tile 覆盖自测: %s\n", dir);
 
-    /* 整省基准：优先落盘三件套；缺失则从 PBF 解码（与落盘逐字节相同）。 */
-    NMBinFile areas_f, lines_f, polyrefs_f;
-    PbfMap pm = {0};
-    int use_pbf = 0;
-    {
-        char pa[4096], pl[4096], pp[4096];
-        snprintf(pa, sizeof(pa), "%s/areas.bin", dir);
-        snprintf(pl, sizeof(pl), "%s/lines.bin", dir);
-        snprintf(pp, sizeof(pp), "%s/polyrefs.bin", dir);
-        int ha = (nmbin_open(pa, &areas_f) == 0);
-        int hl = (nmbin_open(pl, &lines_f) == 0);
-        int hp = (nmbin_open(pp, &polyrefs_f) == 0);
-        if (ha && hl && hp) {
-            /* 落盘基准就绪 */
-        } else {
-            if (ha) nmbin_close(&areas_f);
-            if (hl) nmbin_close(&lines_f);
-            if (hp) nmbin_close(&polyrefs_f);
-            if (!pbf) {
-                fprintf(stderr, "  ✗ 整省三件套缺失，需 --pbf=<省>.osm.pbf 提供 PBF 基准\n");
-                return 1;
-            }
-            char pn[4096];
-            snprintf(pn, sizeof(pn), "%s/nodes.bin", dir);
-            NMBinFile nodes;
-            if (nmbin_open(pn, &nodes) != 0) {
-                fprintf(stderr, "  ✗ 无法打开 %s/nodes.bin\n", dir);
-                return 1;
-            }
-            if (pbfmap_decode(pbf, &nodes, &pm, NULL, NULL) != 0) {
-                fprintf(stderr, "  ✗ pbfmap_decode 失败: %s\n", pbf);
-                nmbin_close(&nodes);
-                return 1;
-            }
-            nmbin_close(&nodes);
-            areas_f = pm.areas; lines_f = pm.lines; polyrefs_f = pm.polyrefs;
-            use_pbf = 1;
-        }
+    /* 整省基准：整省三件套（areas/lines/polyrefs.bin）自 2026-11-03 起不再生成，
+     * 故统一以 PBF 运行时解码结果作基准（与 disp tile 逐字节相同）。
+     * 必须传 --pbf=<省>.osm.pbf。 */
+    if (!pbf) {
+        fprintf(stderr, "  ✗ 需 --pbf=<省>.osm.pbf 提供整省基准\n");
+        return 1;
     }
+    char pn[4096];
+    snprintf(pn, sizeof(pn), "%s/nodes.bin", dir);
+    NMBinFile nodes;
+    if (nmbin_open(pn, &nodes) != 0) {
+        fprintf(stderr, "  ✗ 无法打开 %s/nodes.bin\n", dir);
+        return 1;
+    }
+    PbfMap pm = {0};
+    if (pbfmap_decode(pbf, &nodes, &pm, NULL, NULL) != 0) {
+        fprintf(stderr, "  ✗ pbfmap_decode 失败: %s\n", pbf);
+        nmbin_close(&nodes);
+        return 1;
+    }
+    nmbin_close(&nodes);
+    NMBinFile areas_f = pm.areas, lines_f = pm.lines, polyrefs_f = pm.polyrefs;
 
     uint64_t ma, ta, ml, tl;
     int rc = 0;
@@ -198,8 +181,7 @@ int main(int argc, char **argv)
     rc |= check_layer(&lines_f, &polyrefs_f, dir, disp, "lines",
                       LF_REF_OFF, LF_REF_CNT, "lines", &ml, &tl);
 
-    if (use_pbf) pbfmap_free(&pm);
-    else { nmbin_close(&areas_f); nmbin_close(&lines_f); nmbin_close(&polyrefs_f); }
+    pbfmap_free(&pm);
 
     if (rc == 0) {
         printf("DISP-TILE-OK  面 %llu / 线 %llu 全部覆盖，无丢失\n",

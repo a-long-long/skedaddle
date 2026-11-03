@@ -20,7 +20,7 @@
 
 **自描述头**（`binfmt.h:18-68`）：`NMBIN_MAGIC = "NAVMBIN\x01"`、`NMBIN_VERSION = 3u`（注意：旧文档曾误写成 `\x2`/4u，以源码为准）。`NMBinHeader`（128 字节）与 `NMBinField`（24 字节）完整定义见第三节。
 
-**图集句柄**（`mapset.h:22-104`）：`MapSrc` 含 `nodes/edges/restrictions/lines/areas/polyrefs/tiles/edgelist/lanes/contours` 各一份 `NMBinFile`，及 `bbox[4]`、`dup_of`、`NamePool np`、`SkMutex *dmap_mtx / job_prov / job_done`（后台解码线程字段）等，完整定义见第三节。注意：`lines/areas/polyrefs` 为旧版"整省三件套"，自 2026-11-03 起构建不再产出，运行时显示改由 disp tile 拼接（`mapset.c` 的 tile 加载路径）；`mapset.c` 仍尝试打开它们仅为兼容历史产物，新数据目录里这些文件不存在。
+**图集句柄**（`mapset.h:22-104`）：`MapSrc` 含 `nodes/edges/restrictions/lines/areas/polyrefs/tiles/edgelist/lanes/contours` 各一份 `NMBinFile`，及 `bbox[4]`、`dup_of`、`NamePool np`、`SkMutex *dmap_mtx / job_prov / job_done`（后台解码线程字段）等，完整定义见第三节。注意：`lines/areas/polyrefs` 为旧版"整省三件套"的缓冲，自 2026-11-03 起构建不再产出、也不再从此 nmbin 打开（整省 nmbin 读取路径已彻底断根，products 可整体重建）；该字段现由 disp tile 拼接或 PBF 解码的手 malloc 缓冲填充，运行时显示改由 disp tile 拼接（`mapset.c` 的 tile 加载路径）。新数据目录里整省三件套文件不存在。
 
 ## 三、完整实现代码
 
@@ -388,7 +388,10 @@ typedef struct {
     NMBinFile nodes, edges;
     NMBinFile restrictions;             /* 转向限制（可选，阶段 8 路由用） */
     int       has_restr;
-    NMBinFile lines, areas, polyrefs;   /* 线/面要素：旧版整省三件套，自 2026-11-03 起构建不再生成；运行时显示从 disp tile 拼接，此字段仅兼容历史产物 */
+    NMBinFile lines, areas, polyrefs;   /* 显示层三要素缓冲：disp tile 拼接或 PBF
+                                         * 解码的手 malloc 缓冲（mapped=0），
+                                         * 不再从整省 nmbin 打开；整省三件套
+                                         * 的 nmbin 读取路径已断根 */
     int       has_features;             /* 三者齐备才为 1 */
     /* ---- 等高线（SRTM 生成，可选）---- */
     NMBinFile contours, contour_polyrefs, contour_pts;
@@ -488,28 +491,22 @@ static int src_open_files(MapSrc *s)
         s->has_restr = 0;
     }
 
-    /* 线/面要素：自 2026-11-03 起构建不再生成整省 areas/lines/polyrefs.bin，
-       运行时显示一律从 disp tile 拼接（disp_open 路径，set_view 时按视口加载）。
-       下面"三件套齐备才算有"的 else 分支仅为兼容历史产物保留，对新数据不会进入；
-       PBF 模式同样不走 nmbin 打开。 */
+    /* 显示要素来源（has_features 的填充）：
+       ★ PBF 模式：不从 nmbin 打开任何整省文件，等解码后再置 1。
+       ★ 有 disp.idx 的省：不从 nmbin 打开整省三件套，等 set_view 按视口
+         拼接 tile 后再置 1。
+       ★ 整省三件套（areas/lines/polyrefs.bin）自 2026-11-03 起不再生成，
+         也不再从此处 nmbin 打开——其整省 nmbin 读取路径已彻底断根。
+         既无 disp.idx 又非 pbf 模式的省属历史/异常产物，无显示要素。 */
     if (s->pbf_display_mode) {
         s->has_features = 0;      /* 等解码后再置 1 */
     } else if (disp_open(s) == 0) {
         s->has_features = 0;      /* 等 set_view 按视口加载 tile 后再置 1 */
     } else {
-        s->has_features = 1;
-        snprintf(p, sizeof(p), "%s/lines.bin", s->dir);
-        if (nmbin_open(p, &s->lines) != 0) s->has_features = 0;
-        if (s->has_features) {
-            snprintf(p, sizeof(p), "%s/areas.bin", s->dir);
-            if (nmbin_open(p, &s->areas) != 0) s->has_features = 0;
-        }
-        if (s->has_features) {
-            snprintf(p, sizeof(p), "%s/polyrefs.bin", s->dir);
-            if (nmbin_open(p, &s->polyrefs) != 0) s->has_features = 0;
-        }
-        if (!s->has_features)
-            fprintf(stderr, "图集: %s 无 lines/areas/polyrefs，只显示路网\n", s->name);
+        /* 无 disp.idx、非 pbf 模式：该省没有任何显示要素（整省三件套已断根，
+           不能从这里兜底）。属历史/异常产物，提示重建，但不致命。 */
+        s->has_features = 0;
+        fprintf(stderr, "图集: %s 无 disp.idx 且非 pbf 模式，无显示要素（需重建该省）\n", s->name);
     }
 
     /* 等高线（SRTM 生成）可选：三件套齐备才算有。 */

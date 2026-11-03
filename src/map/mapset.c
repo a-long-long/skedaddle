@@ -46,11 +46,6 @@ static void src_close(MapSrc *s)
     nmbin_close(&s->nodes);
     nmbin_close(&s->edges);
     if (s->has_restr) nmbin_close(&s->restrictions);
-    if (s->has_features) {
-        nmbin_close(&s->lines);
-        nmbin_close(&s->areas);
-        nmbin_close(&s->polyrefs);
-    }
     if (s->has_contours) {
         nmbin_close(&s->contours);
         nmbin_close(&s->contour_polyrefs);
@@ -107,8 +102,8 @@ static int disp_open(MapSrc *s)
 }
 
 /* 释放拼接缓冲（手 malloc 的 dareas/dlines/dpoly，nmbin_close 不会 free）。
- * 对无 tile 的省是空操作（dareas==NULL 且 has_disp_tiles==0），不动 has_features，
- * 以免误清普通省由 nmbin 管理的整省显示层。 */
+ * 对无 tile 的省是空操作（dareas==NULL 且 has_disp_tiles==0），不动 has_features。
+ * 整省三件套的 nmbin 读取路径已断根，无需再顾虑"误清 nmbin 管理的整省显示层"。 */
 static void src_free_disp(MapSrc *s)
 {
     free(s->dareas); s->dareas = NULL; s->dea = 0;
@@ -329,30 +324,24 @@ static int src_open_files(MapSrc *s)
         s->has_restr = 0;
     }
 
-    /* 线/面要素可选：三者齐备才算有。
-     * ★ PBF 模式下**不从 nmbin 打开**这三个文件（它们可能根本没落盘），
-     *   改由 mapset_ensure_display 从 PBF 运行时解码。
-     * ★ 有显示层分 tile（disp.idx）的省也**不从 nmbin 打开整省**这三个文件，
-     *   改为 mapset_set_view 按视口只加载相交 tile 并拼接（见 src_load_disp_tiles），
-     *   避免为屏外一条边解码/映射整省。 */
+    /* 显示要素来源（has_features 的填充）：
+     * ★ PBF 模式（--pbf-display）：不从 nmbin 打开任何整省文件，
+     *   改由 mapset_ensure_display 从 PBF 运行时解码后再置 has_features。
+     * ★ 有显示层分 tile（disp.idx）的省：不从 nmbin 打开整省三件套，
+     *   改为 mapset_set_view 按视口只加载相交 tile 并拼接（见 src_load_disp_tiles）。
+     * ★ 整省三件套（lines/areas/polyrefs.bin）自 2026-11-03 起**不再生成**，
+     *   也不再从此处 nmbin 打开——其整省 nmbin 读取路径已彻底断根
+     *   （products 可整体重建，无需为历史/异常产物保留该分支）。
+     *   既无 disp.idx 又非 pbf 模式的省属历史/异常产物，无显示要素。 */
     if (s->pbf_display_mode) {
         s->has_features = 0;      /* 等解码后再置 1 */
     } else if (disp_open(s) == 0) {
         s->has_features = 0;      /* 等 set_view 按视口加载 tile 后再置 1 */
     } else {
-        s->has_features = 1;
-        snprintf(p, sizeof(p), "%s/lines.bin", s->dir);
-        if (nmbin_open(p, &s->lines) != 0) s->has_features = 0;
-        if (s->has_features) {
-            snprintf(p, sizeof(p), "%s/areas.bin", s->dir);
-            if (nmbin_open(p, &s->areas) != 0) s->has_features = 0;
-        }
-        if (s->has_features) {
-            snprintf(p, sizeof(p), "%s/polyrefs.bin", s->dir);
-            if (nmbin_open(p, &s->polyrefs) != 0) s->has_features = 0;
-        }
-        if (!s->has_features)
-            fprintf(stderr, "图集: %s 无 lines/areas/polyrefs，只显示路网\n", s->name);
+        /* 无 disp.idx、非 pbf 模式：该省没有任何显示要素（整省三件套已断根，
+         * 不能从这里兜底）。属历史/异常产物，提示重建，但不致命。 */
+        s->has_features = 0;
+        fprintf(stderr, "图集: %s 无 disp.idx 且非 pbf 模式，无显示要素（需重建该省）\n", s->name);
     }
 
     /* 等高线（SRTM 生成）可选：三件套齐备才算有。与 features 平级，不依赖 disp tile。
@@ -419,9 +408,6 @@ fail:
     nmbin_close(&s->nodes);
     nmbin_close(&s->edges);
     nmbin_close(&s->restrictions);
-    nmbin_close(&s->lines);
-    nmbin_close(&s->areas);
-    nmbin_close(&s->polyrefs);
     nmbin_close(&s->tiles);
     nmbin_close(&s->edgelist);
     name_pool_close(&s->np);
@@ -458,11 +444,6 @@ static void src_unload(MapSrc *s)
     /* ★ 显示层分 tile 的拼接缓冲也是手 malloc（mapped=0），nmbin_close 不会释放，
      * 这里先回收；普通省 has_disp_tiles=0，src_free_disp 是空操作。 */
     src_free_disp(s);
-    if (s->has_features) {
-        nmbin_close(&s->lines);
-        nmbin_close(&s->areas);
-        nmbin_close(&s->polyrefs);
-    }
     if (s->has_contours) {
         nmbin_close(&s->contours);
         nmbin_close(&s->contour_polyrefs);
@@ -883,12 +864,8 @@ int mapset_enable_pbf_display(MapSet *ms, const char *pbf_dir, int lru_cap)
         MapSrc *s = &ms->srcs[i];
         s->pbf_display_mode = 1;
         if (s->loaded) {
-            /* 释放 nmbin 的显示层（若有），改由 PBF 提供 */
-            if (!s->dmap_from_pbf && s->has_features) {
-                nmbin_close(&s->lines);
-                nmbin_close(&s->areas);
-                nmbin_close(&s->polyrefs);
-            }
+            /* 显示层（若有）是 disp tile 拼接或 PBF 解码的 hand-malloc 缓冲
+             * （mapped=0），不由 nmbin_close 释放；置 0 等 PBF 解码接管。 */
             s->has_features = 0;
         }
     }

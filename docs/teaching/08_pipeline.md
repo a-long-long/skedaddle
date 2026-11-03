@@ -321,7 +321,7 @@ int app_render_to_buf(App *a, void *px, int w, int h, size_t stride,
 }
 ```
 
-> 关键纪律：按"跨省统一层级"遍历（先所有省的面、再所有省的路），否则层级会乱；`dup_of>=0` 整省包含的省直接跳过（见 `paint_frame` 第 1229 行）。
+> 关键纪律：按"跨省统一层级"遍历（先所有省的面、再所有省的路），否则层级会乱；`dup_of>=0` 整省包含的省直接跳过（见 `paint_frame` 第 1232 行）。
 
 ### 3. `navdraw` 路线绘制（`navdraw.c`）
 

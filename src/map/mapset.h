@@ -25,8 +25,11 @@ typedef struct {
     NMBinFile nodes, edges;
     NMBinFile restrictions;             /* 转向限制（可选，阶段 8 路由用） */
     int       has_restr;
-    NMBinFile lines, areas, polyrefs;   /* 线/面要素（旧目录可没有） */
-    int       has_features;             /* 三者齐备才为 1 */
+    NMBinFile lines, areas, polyrefs;   /* 显示层三要素缓冲：disp tile 拼接或 PBF
+                                         * 解码的手 malloc 缓冲（mapped=0），
+                                         * 不再从整省 nmbin 打开 */
+    int       has_features;             /* 显示层已就绪（disp tile 拼接或 PBF
+                                         * 解码完毕）才为 1 */
     /* ---- 等高线（SRTM 生成，可选）----
      * 三件套与 lines/areas 平级：contours.bin（记录，类 lines）+ contour_polyrefs.bin
      * （u32 顶点下标序列）+ contour_pts.bin（独立顶点池 lat/lon e7）。
@@ -34,12 +37,11 @@ typedef struct {
     NMBinFile contours, contour_polyrefs, contour_pts;
     int       has_contours;             /* 三者齐备才为 1 */
     int32_t  *contour_bbox;            /* 等高线缓存（paint_contours 懒填，nc*4 个 i32） */
-    /* ★ 显示层的"来源"：0 = 从 nmbin 打开（默认）；1 = 从 PBF 运行时解码。
+    /* ★ 显示层的"来源"：0 = 从 disp tile 拼接（默认）；1 = 从 PBF 运行时解码。
      * 两种模式下 lines/areas/polyrefs 的内容**逐字节相同**（8 省实测），
-     * 所以渲染端不区分，只看 has_features。 */
+     * 所以渲染端不区分，只看 has_features。整省三件套的 nmbin 读取已断根。 */
     int       dmap_from_pbf;
-    int       pbf_display_mode;  /* 1 = 本省走 PBF 显示层（不打开 nmbin 的
-                                   * lines/areas/polyrefs） */
+    int       pbf_display_mode;  /* 1 = 本省走 PBF 显示层（默认走 disp tile 拼接） */
     PbfMap    dmap;                     /* 从 PBF 解码出的显示层（内存缓冲） */
     uint64_t  dmap_used;                /* LRU 时间戳（越大越新） */
     int       dmap_inflight;  /* 后台解码进行中：src_unload 不得卸 nodes 映射 */
@@ -67,7 +69,8 @@ typedef struct {
 
     /* ---- 显示层分 tile（运行时按需加载，只 mmap 视口内 tile）----
      * has_disp_tiles：本省有 disp.idx（抽取期已切好）。有则**不走**整省
-     * nmbin/pbf 解码，改为按视口把相交 tile 拼接进 areas/lines/polyrefs。
+     * nmbin 解码（该读取路径已断根）/pbf 解码，改为按视口把相交 tile
+     * 拼接进 areas/lines/polyrefs。
      * 拼接缓冲 dareas/dlines/dpoly 是手 malloc 的（NMBinFile.mapped=0，
      * nmbin_close 只置空不释放），卸载时由 src_unload/close 负责 free。 */
     int       has_disp_tiles;
@@ -84,7 +87,7 @@ typedef struct {
     int32_t bbox[4];       /* 全体省份的并集（e7） */
     /* ---- PBF 显示层按需解码 + LRU ----
      * pbf_dir：各省原始 PBF 所在目录（形如 sources/，内含 <省名>.osm.pbf）。
-     * 为空则禁用 PBF 模式（退回从 nmbin 打开显示层）。 */
+     * 为空则禁用 PBF 模式（显示层改由 disp tile 拼接提供）。 */
     char    pbf_dir[4096];
     int     dmap_lru_cap;  /* 同时驻留几个省的解码结果（默认 3） */
     uint64_t dmap_clock;   /* LRU 时钟（单调递增） */
@@ -115,7 +118,7 @@ void mapset_free(MapSet *ms);
  *
  * 若 ms->pbf_dir 非空，则**显示层**（lines/areas/polyrefs）改为从 PBF
  * 运行时解码：视口进省才解码，滚出则按 LRU 淘汰（驻留上限 ms->dmap_lru_cap）。
- * 解码结果与 nmbin 落盘文件**逐字节相同**（8 省实测）⇒ 渲染结果一致。
+ * 解码结果与 disp tile 拼接**逐字节相同**（8 省实测）⇒ 渲染结果一致。
  * ⚠️ 解码在**后台线程**异步进行（dmap_worker），主线程不阻塞；解码完成前
  * 该省 has_features=0、渲染自然跳过（空白），就绪后下一帧经 publish 挂上。
  * 实时进度见 mapset_dmap_progress / 渲染端的"解码中 NN%"占位。 */
@@ -125,7 +128,7 @@ void mapset_set_view(MapSet *ms, const int32_t vb[4]);
 void mapset_ensure_loaded(MapSet *ms, int prov);
 
 /* 设置 PBF 显示层模式：pbf_dir 形如 "sources"（内含 <省名>.osm.pbf）。
- * 返回 0 = 成功；-1 = 目录不可用（调用方应继续用 nmbin 模式）。 */
+ * 返回 0 = 成功；-1 = 目录不可用（调用方应继续用 disp tile 模式）。 */
 int  mapset_enable_pbf_display(MapSet *ms, const char *pbf_dir, int lru_cap);
 
 /* 确保某省的显示层已从 PBF 解码（供后台线程调用）。
