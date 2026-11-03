@@ -9,6 +9,7 @@
 - 验收 `./scripts/regress.sh`：Linux 主机 **87 通过 / 0 失败**。Windows/MSYS2 副机 products 仅 beijing 1 省 ⇒ 多省/places_auto.db/rev.bin/lm.bin 缺失，相关用例 FAIL、**非代码回归**。编译零警告（-Werror）。改渲染补 `python3 scripts/bmpdiff.py 旧 新`。
 - `skedaddle --ui-test`(33 项) 已进 regress。完成即 commit + push origin main。**前端只有 skedaddle**（SDL 已彻底移除，原 navmap/map_shot 删）。
 - ★★ **删文件/删 include 前必须 grep 该符号/该头全部引用**（删 `window_sdl.c` 让 `app_run` 成悬空声明；只 grep `label_` 漏 `NamePool` 差点误删承重依赖）。
+- ★★★ **已清理两项纯冗余（均落地，2026-11-02）**：① `osmid.bin`（与 `nodes.bin NF_OSM_ID` 100% 相同，~399 MB/8 省，运行时零引用）于 `b53511f` 停生成+停校验（`graph_build.c` 删 `write_osmid`，`autobuild`/`graph_check`/`sync_maps.sh` 一并去 osmid，验证 `graph_check` 对 beijing 输出 ASSERT-OK）；② 本机 `products/graph/` 的 7 个嵌套 `beijing/` 孤副本（旧版抽取器遗留、md5 异于当前）于 2026-11-02 整棵删除，体积 **2.4 GB → 337 MB**。**回归/重建：Linux 主机 `git pull` 后删 8 省 `osmid.bin`，跑 regress 确认 87/0；真实 7 省数据缺失须 `scripts/sync_maps.sh` 从 `sources/` 重建。**
 
 ## 构建环境
 - ★ 本机 Linux(UOS aarch64/Wayland) Release：`source env.sh && cmake -S . -B build_rel -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/home/along/.local/qt5-dev/usr -DQt5_DIR=/home/along/.local/qt5-dev/usr/lib/aarch64-linux-gnu/cmake/Qt5 && cmake --build build_rel -j$(nproc)`。`scripts/build_release.sh` 是 Windows 专用，本机跑不了。protoc-c 缺 lib 时先 `export LD_LIBRARY_PATH=/home/along/.local/usr/lib/aarch64-linux-gnu`。
