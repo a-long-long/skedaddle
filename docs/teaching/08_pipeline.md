@@ -15,8 +15,8 @@
 
 | 关键函数 / 结构体 | 文件:行号区间 | 职责 |
 |---|---|---|
-| `paint_frame` | `window.c:1169-1433` | 一帧的 9 步编排（底图→要素→标注→覆盖层→夜间→chrome） |
-| `app_render_to_buf` | `window.c:1435-1452` | 绑定像素缓冲后调 `paint_frame`，Qt 与离屏共用唯一入口 |
+| `paint_frame` | `window.c:1189-1453` | 一帧的 9 步编排（底图→要素→标注→覆盖层→夜间→chrome） |
+| `app_render_to_buf` | `window.c:1455-1472` | 绑定像素缓冲后调 `paint_frame`，Qt 与离屏共用唯一入口 |
 | `PaintStats` | `paint.h:51-67` | 分阶段计时/计数（含 `areas_dotted` 等确定性量） |
 | `paint_route` / `RSeg` | `navdraw.c:49-123` / `navdraw.c:15` | 路线折线：白描边 + 蓝芯/(已走灰) 两遍 |
 | `paint_nav_car` / `fill_triangle` | `navdraw.c:151-178` / `navdraw.c:127-149` | 车头三角箭头（蓝芯白边），按航向旋转 |
@@ -28,7 +28,7 @@
 
 ## 三、完整实现代码
 
-### 1. `paint_frame` 的 9 步流程（`window.c:1169-1433`）
+### 1. `paint_frame` 的 9 步流程（`window.c:1189-1453`）
 
 ```c
 static void paint_frame(Raster *rs, App *a, PaintStats *st)
@@ -150,6 +150,12 @@ static void paint_frame(Raster *rs, App *a, PaintStats *st)
                            a->show_poi, a->show_labels);
         paint_road_labels(rs, &a->view, a->font, st);
     }
+    /* ★ 这道 `if(a->font)` 门控是"文字全丢"的总开关：一旦 `font_open_default`
+     *   返回 NULL（fonts/ 没随包、系统字体路径解析不到等），地名/路名被**静默**
+     *   丢弃，而线/面/色块照常画——用户看到"有图无线无字"，极难联想到是字体挂了。
+     *   修复见第 12 课：`app_init`（`window.c:141-158`）在字体彻底失败时置位
+     *   `a->font_missing` 并打**响亮 stderr 告警**，让根因一眼可见。
+     *   离线可用 `skedaddle_font_probe` 或离屏诊断的 `font (已加载|★加载失败)` 确认。 */
     TICK(ms_labels);
 #undef TICK
 
@@ -298,7 +304,7 @@ static void paint_frame(Raster *rs, App *a, PaintStats *st)
 }
 ```
 
-### 2. `app_render_to_buf` —— 唯一共享渲染入口（`window.c:1435-1452`）
+### 2. `app_render_to_buf` —— 唯一共享渲染入口（`window.c:1455-1472`）
 
 ```c
 int app_render_to_buf(App *a, void *px, int w, int h, size_t stride,

@@ -54,6 +54,12 @@
 > - **i18n 缺口已补齐**：`src/i18n/`（多语言系统，配 7 套非中文语言包）现已有第 16 课 [`16_i18n.md`](docs/teaching/16_i18n.md) + `tutorial/16_i18n` 配套小程序；第 15 课 datum（`15_datum.md`）此前漏列于本表，已补入。
 > - 个别行号锚点（如 `paint_frame` 的 `dup_of` 跳过、`i18n.c` 的各函数区间）已按当前源码校正；其余函数级锚点经核对仍然有效。
 
+> **对账补记（2026-11-03 二次补齐，对应提交 `6f1de61`）**：
+> - 上一轮完整对账后，又落地了两类"显示路径健壮性"修复，本次补齐进文档：
+>   **① Wayland 透明花屏**——地图画布缓冲 alpha 字节恒为 0（`raster_rgb` 只写 R/G/B），Deepin Wayland 按 ARGB8888 上传导致地图区透出桌面乱色；修复在 `map_canvas.cpp:75-76`（`m_px[i] |= 0xFF000000u`），xcb/离屏无副作用。已在第 12 课"边界原则 ③"与第 8 课 `if(a->font)` 门控处记录，并附 `QT_QPA_PLATFORM=xcb` 对照诊断。
+>   **② 字体失败静默丢字**——`paint_frame` 的 `if(a->font)` 门控在 `font_open_default` 返回 NULL 时会静默丢弃全部地名/路名；修复在 `app_init`（`window.c:141-158`）置位 `a->font_missing` 并打响亮 stderr 告警。已补进第 12 课"边界原则 ④"与第 8 课门控处，并标注 `skedaddle_font_probe` / 离屏诊断 `font (已加载|★加载失败)` 两条离线确认手段。
+> - 第 12 课教学目的、演示、练习、验收均已同步这四点（含 Wayland 负向对照实验）。
+
 ---
 
 ## 一、环境搭建（第 0 课前准备）
@@ -292,7 +298,7 @@ python3 scripts/bmpdiff.py z9_a.bmp z9_b.bmp    # 看丢了多少要素（要素
 **课时目标**：看懂一帧是怎么从"图集+视口"变成"像素缓冲"的，以及 Qt 与离屏两套前端如何共用同一入口。
 
 **必读代码**
-- `src/ui/window.h` / `window.c`：`App` 状态机、`paint_frame`（`window.c:1169`，渲染编排）、`app_render_to_buf`（`window.c:1435`，绑定 `Raster` 后调 `paint_frame`）。
+- `src/ui/window.h` / `window.c`：`App` 状态机、`paint_frame`（`window.c:1189`，渲染编排）、`app_render_to_buf`（`window.c:1455`，绑定 `Raster` 后调 `paint_frame`）。
 - `src/ui/offscreen_shot.c` / `offscreen_shot.h`：`offscreen_shot_main`（`skedaddle --shot-offscreen` 单一可信源；纯内存缓冲 `0x00RRGGBB` + 内建 24 位 BMP 写出，零 SDL）。
 - `src/ui/chrome.c` / `chrome.h`：`ChromeID`/`paint_chrome`/`chrome_hit`/`chrome_act`（自绘标题栏/顶栏/右栏/菜单/面板）。
 - `src/ui/audit.c` / `audit.h`：`app_offscreen_audit`（像素计数 + 断言共享模块）。
@@ -417,6 +423,8 @@ SKEDADDLE_TTS_DRYRUN=/tmp/tts.txt ./build_rel/skedaddle_voice_e2e   # 端到端�
 **核心讲解**
 1. **边界原则**：C 渲染核心一行不动，只换"缓冲归属 + 叠加层由 QPainter 画"。`qt_ui=1` 时 `paint_frame` 跳过 C 自绘 chrome/搜索框/面板（由 Qt 真控件承担），但地图渲染保留。
 2. **浮层透明度语义**：只淡底板、文字/图标保持清晰（`IconButton` 自绘底板按 pct 算 alpha；`QGraphicsOpacityEffect` 已否——它会把文字一起淡掉）。
+3. **★ 地图缓冲 alpha 字节必须置 0xFF（Wayland 透明花屏）**：`app_render_to_buf` 传 `amask=0`，光栅器只写 R/G/B ⇒ 缓冲恒 `0x00RRGGBB`；Deepin Wayland 按 ARGB8888 上传 ⇒ alpha=0 全透明、地图区透出桌面乱色（"双击一片花"）。修复在 `map_canvas.cpp:75-76` 渲染后 `m_px[i] |= 0xFF000000u`；xcb/离屏无副作用。
+4. **★ 字体加载失败要响亮告警**：`paint_frame` 的 `if(a->font)` 门控（`window.c:1302`）一旦 `font_open_default` 返回 NULL，所有文字静默丢弃、几何照常（`a->font_missing` 置位 + 响亮 stderr 告警在 `window.c:141-158`）。离线用 `skedaddle_font_probe` 或离屏诊断 `font (已加载|★加载失败)` 确认。
 
 **课堂演示**
 ```bash
