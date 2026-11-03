@@ -26,13 +26,13 @@
 | `datum.h` | `DatumId` 枚举（`DATUM_WGS84`/`CGCS2000`/`BJ54`/`XA80`） | `datum.h:22-28` |
 | `datum.h` | `GridTypeId` 枚举、`grid_gk_datum` | `datum.h:40-50` |
 | `datum.h` | `DatumSevenParam`、`DatumTie`、`DatumGridDesc` 结构体 | `datum.h:104-151` |
-| `datum.c` | `DatumDef` 内部结构、`DATUMS` 参数表 | `datum.c:93-139` |
-| `datum.c` | `geod_to_ecef` / `ecef_to_geod`（大地坐标 ⇄ ECEF） | `datum.c:155-183` |
-| `datum.c` | `helmert_matrix` / `inv3` / `apply_fwd` / `apply_inv`（七参数正/逆） | `datum.c:188-248` |
-| `datum.c` | `datum_wgs84_to` / `datum_to_wgs84` | `datum.c:297-333` |
-| `datum.c` | `datum_solve_seven_param`（重合点最小二乘解七参数） | `datum.c:501-560` |
-| `datum.c` | `gauss_fwd` / `gauss_inv`（高斯-克吕格正/反算） | `datum.c:666-719` |
-| `datum.c` | `datum_gk_forward` / `datum_gk_inverse`（方里格投影） | `datum.c:721-737` |
+| `datum.c` | `DatumDef` 内部结构、`DATUMS` 参数表 | `datum.c:94-140` |
+| `datum.c` | `geod_to_ecef` / `ecef_to_geod`（大地坐标 ⇄ ECEF） | `datum.c:156-184` |
+| `datum.c` | `helmert_matrix` / `inv3` / `apply_fwd` / `apply_inv`（七参数正/逆） | `datum.c:189-249` |
+| `datum.c` | `datum_wgs84_to` / `datum_to_wgs84` | `datum.c:298-334` |
+| `datum.c` | `datum_solve_seven_param`（重合点最小二乘解七参数） | `datum.c:502-561` |
+| `datum.c` | `gauss_fwd` / `gauss_inv`（高斯-克吕格正/反算） | `datum.c:667-720` |
+| `datum.c` | `datum_gk_forward` / `datum_gk_inverse`（方里格投影） | `datum.c:722-738` |
 
 ## 三、完整实现代码
 
