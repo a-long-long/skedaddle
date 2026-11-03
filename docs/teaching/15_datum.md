@@ -17,12 +17,12 @@
 
 | 小程序 `main.c` 函数 | 生产实现 `datum.c` 对应 | 行号区间 | 说明 |
 |---|---|---|---|
-| `geod_to_ecef` / `ecef_to_geod` | `datum.c` 同名函数 | `datum.c:437-465` | 大地坐标 ⇄ ECEF（Bowring 闭式，~mm） |
-| `wgs84_to_datum`（`Xs = Xw − T`） | `datum_wgs84_to` → `apply_inv` | `datum.c:558-576` | WGS84 → 基准（用真正的矩阵逆，非"减平移"） |
-| 反向取负 `wgs_n = −yy_n` | `datum_to_wgs84` → `apply_fwd` | `datum.c:540-556` | 基准 → WGS84；常量平移下与反向严格反对称 |
-| `gauss_fwd` / `gauss_inv` | `datum_gk_forward` / `datum_gk_inverse` | `datum.c:681-752` | 高斯-克吕格正/反算（含 500 km 假东偏移） |
-| `ddeg_to_m` | `shift_by_meters`（`datum.c:869`）思路同源 | `datum.c:869-883` | 经纬度差 → 北/东向米（局部曲率半径） |
-| `BJ54_T` / `XA80_T` | `DATUMS` 参数表 | `datum.c:405-430` | 三参数（米）；BJ54=EPSG:4214 默认 TOWGS84，XA80=赵玉明等 2013 |
+| `geod_to_ecef` / `ecef_to_geod` | `datum.c` 同名函数 | `datum.c:156-184` | 大地坐标 ⇄ ECEF（Bowring 闭式，~mm） |
+| `wgs84_to_datum`（`Xs = Xw − T`） | `datum_wgs84_to` → `apply_inv` | `datum.c:316-334` | WGS84 → 基准（用真正的矩阵逆，非"减平移"） |
+| 反向取负 `wgs_n = −yy_n` | `datum_to_wgs84` → `apply_fwd` | `datum.c:298-314` | 基准 → WGS84；常量平移下与反向严格反对称 |
+| `gauss_fwd` / `gauss_inv` | `datum_gk_forward` / `datum_gk_inverse` | `datum.c:667-738` | 高斯-克吕格正/反算（含 500 km 假东偏移） |
+| `ddeg_to_m` | `shift_by_meters`（`datum.c:282`）思路同源 | `datum.c:282-296` | 经纬度差 → 北/东向米（局部曲率半径） |
+| `BJ54_T` / `XA80_T` | `DATUMS` 参数表 | `datum.c:135-140` | 三参数（米）；BJ54=EPSG:4214 默认 TOWGS84，XA80=赵玉明等 2013 |
 
 参数来源与局限（完整版见 `datum.c` 顶部 30+ 行长注释，已摘录于 `01_coords.md` 第 760–832 行）：
 - BJ54 平移 = EPSG:4214 默认 TOWGS84 `(+15.8, −154.4, −82.3)`，但适用区是塔里木盆地西南——华北用会偏 60~95 m（北京实测水平 63.5 m）。

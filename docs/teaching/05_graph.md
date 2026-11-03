@@ -47,7 +47,7 @@
 | `static int write_disp_tiles(Graph *g, const char *dir, const char *src, const Buf *pr)` | `978-~1179` | 显示层切规则网格 tile；**失败致命**（由 `build_display` 上抛，见 `graph_build.c:978`） |
 | `static int build_display(Graph *g, const char *dir, const char *src)` | `1169-1225` | 解析线/面引用点为 polyrefs 缓冲 `pr`，再调 `write_disp_tiles`；**不再落盘整省 areas/lines/polyrefs.bin**（见 `graph_build.c:1169`） |
 | ~~`static int write_lines_areas(...)`~~ | — | **已删除**：原"落盘整省三件套 + 调 write_disp_tiles"。整省三件套（areas/lines/polyrefs.bin）是 195 MB 冗余，已证实可安全省去；运行时显示一律走 disp tile（或 PBF 解码）。`build_display` 仅保留 polyrefs 缓冲构建 + 调 `write_disp_tiles`，tile 化失败改为**致命**（不再有整省兜底，静默失败会留下面/线全无的省）。 |
-| `static int write_spatial_index(Graph *g, const char *dir, const char *src)` | `1305-1475` | 生成 tile→(from,edge) 空间索引（见 `graph_build.c:1305-1475`） |
+| `static int write_spatial_index(Graph *g, const char *dir, const char *src)` | `1230-1400` | 生成 tile→(from,edge) 空间索引（见 `graph_build.c:1230-1400`） |
 | `static void graph_free(Graph *g)` | `1480-1492` | 释放全部缓冲 |
 
 以下是上述三行的完整实现（逐字摘自源文件）：

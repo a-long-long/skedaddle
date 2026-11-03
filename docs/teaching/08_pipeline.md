@@ -22,7 +22,7 @@
 | `paint_nav_car` / `fill_triangle` | `navdraw.c:151-178` / `navdraw.c:127-149` | 车头三角箭头（蓝芯白边），按航向旋转 |
 | `paint_nomap_banner` + `nfill/nrect/ntext` | `navdraw.c:548-631` / `navdraw.c:29-47` | 无图区提示横幅（"你为什么看不到东西"） |
 | `app_offscreen_audit` | `audit.c:79-217`（声明 `audit.h:43-44`） | 像素计数 + 断言共享模块（被 `offscreen_shot` 复用） |
-| `paint_chrome` / `draw_nomap` | `chrome.c:597-615` / `chrome.c:383-402` | nav-desktop 风格界面层（11 类元素）+ 无图卡片 |
+| `paint_chrome` / `draw_nomap` | `chrome.c:610-628` / `chrome.c:396-415` | nav-desktop 风格界面层（11 类元素）+ 无图卡片 |
 
 > 说明：`paint_frame` 实际位于 `src/ui/window.c`（非 `render/paint.c`）；`render/paint.c` 提供的是被 `paint_frame` 调用的要素绘制函数（`paint_areas/roads/lines/contours` 等）。本课聚焦编排主流程与覆盖层、审计、chrome。
 

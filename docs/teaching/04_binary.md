@@ -727,7 +727,7 @@ void mapset_set_view(MapSet *ms, const int32_t vb[4])
 }
 ```
 
-`bbox_overlap`（`mapset.c:777-780`，四角交集判定）与 `src_unload`（`mapset.c:446-498`，关文件/释放缓存但保留身份）为 `set_view` 的支撑函数，完整代码（`src/map/mapset.c:446-498` 与 `src/map/mapset.c:777-780`）如下：
+`bbox_overlap`（`mapset.c:758-761`，四角交集判定）与 `src_unload`（`mapset.c:432-479`，关文件/释放缓存但保留身份）为 `set_view` 的支撑函数，完整代码（`src/map/mapset.c:432-479` 与 `src/map/mapset.c:758-761`）如下：
 
 ```c
 /* mapset.c:446-498 —— src_unload：关文件/释放缓存但保留身份 */

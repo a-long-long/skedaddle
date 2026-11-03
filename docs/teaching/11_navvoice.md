@@ -20,9 +20,9 @@
 |---|---|---|
 | `src/route/voice.h` | 播报策略的公开接口：分级提前量常量、告警类型、冷却常量、`VoiceRouter`/`VoiceFrame` 结构、各 `voice_*` 原型 | `voice.h:1` 起 |
 | `src/route/voice.c` | **纯逻辑**：只决定"该播第几级 + 这句话怎么说"，不碰发声/线程 | `voice.c:1` 起 |
-| `src/ui/voice_wire.h` | 接线层的状态集合 `NavVoiceCtx` 与入口 `nav_voice_frame` 声明 | `voice_wire.h:36` |
-| `src/ui/voice_wire.c` | **唯一接线点**：取状态 → `voice_tick` 编排 → `sk_tts_speak` 发声；到达帧例外处理 | `voice_wire.c:15` |
-| `src/utils/plat.h` | 平台抽象层声明，含离线 TTS 接口 `sk_tts_speak` 等 | `plat.h:150` 起 |
+| `src/ui/voice_wire.h` | 接线层的状态集合 `NavVoiceCtx` 与入口 `nav_voice_frame` 声明 | `voice_wire.h:52` |
+| `src/ui/voice_wire.c` | **唯一接线点**：取状态 → `voice_tick` 编排 → `sk_tts_speak` 发声；到达帧例外处理 | `voice_wire.c:52` |
+| `src/utils/plat.h` | 平台抽象层声明，含离线 TTS 接口 `sk_tts_speak` 等 | `plat.h:156` 起 |
 | `src/utils/plat.c` | `sk_tts_speak` 实现（常驻会话 + 队列 + 后台朗读线程） | `plat.c:1127` |
 
 **分层要点**
@@ -1572,7 +1572,7 @@ int sk_tts_speak(const char *text)
 }
 ```
 
-> 说明：上方 `sk_tts_speak` 之前的 `tts_speak_once`/`tts_backend_speak`/`tts_worker`/`tts_queue_*` 等 TTS 队列与常驻会话机制（约 `plat.c:828`–`plat.c:1125`）已**完整**嵌入上文代码块（逐字、可编译）；`sk_tts_speak` 本身亦为**完整体**。
+> 说明：上方 `sk_tts_speak` 之前的 `tts_speak_once`/`tts_backend_speak`/`tts_worker`/`tts_queue_*` 等 TTS 队列与常驻会话机制（约 `plat.c:828`–`plat.c:1158`）已**完整**嵌入上文代码块（逐字、可编译）；`sk_tts_speak` 本身亦为**完整体**。
 
 ## 四、与其他功能之间的联系
 
