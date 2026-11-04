@@ -200,6 +200,46 @@ adb push products/graph /sdcard/Android/data/com.skedaddle.android/files/
 可用省（与 `products/graph/` 一致）：beijing, tianjin, hebei, shanxi(山西),
 shaanxi(陕西), shandong, henan, liaoning。
 
+### 6.1 首次装机 → 真正跑起来的清单（静态核对，未真机验证）
+
+**能不能装** —— 对 `app-debug.apk` 做 `aapt2 dump badging` / `apksigner verify` 的结果：
+
+- 只带 `lib/arm64-v8a/`，`native-code: 'arm64-v8a'` ⇒ 必须是 64 位 ARM 手机；
+  32 位 ARM 或 x86 模拟器会 `INSTALL_FAILED_NO_MATCHING_ABIS`。
+- `minSdk 26`（Android 8.0+）、`targetSdk 33`；`application-debuggable` + debug
+  签名（`CN=Android Debug`），v2 签名 `Verifies`。系统需允许「安装未知来源应用」。
+- APK 13,622,241 B；CJK 字体与 `libc++_shared.so` 已打包，so 的 `NEEDED` 只有
+  `liblog / libz / libm / libdl / libc / libc++_shared`，13 个 JNI 符号全部导出，
+  `MainActivity` / `MapView` / `Skedaddle` 等类都在 dex 里。
+
+**装完直接打开是黑屏** —— `MainActivity` 把 `graphDir` 固定为
+`getExternalFilesDir(null)/graph`。`app_init → mapset_load` 在目录不存在、或没有
+含 `manifest.txt` 的省目录时直接返回 -1；JNI `Skedaddle.init` 于是返回 false，
+`MapView` 渲染线程永远画黑底「正在加载图集…」。**不会闪退**（13 个 JNI 入口
+都判 `g_inited`），但也没有地图。所以顺序必须是：
+
+1. 装 APK 并启动一次（抽字体、建私有目录）。
+2. `adb push products/graph /sdcard/Android/data/com.skedaddle.android/files/`
+   —— 落到 `files/graph/<省>/...`；只想试跑可只推单省
+   `products/graph/beijing`（约 337 MB，含 `disp.idx` / `lanes.bin` / `t_*`）。
+3. **完全退出再启动**：C 核心只在 init 时扫一次 graph 根，热推不会重载。
+
+个别 Android 11+ ROM 会拒绝 `adb push` 进 `Android/data`；替代做法是把省目录推到
+`/sdcard/`，用「下载省图」里的「从本地文件安装」选 zip，或改
+`MainActivity.onCreate` 的 `graphDir` 指过去。
+
+**当前数据下哪些功能能跑**（本机 `products/graph/` 只有 beijing，全仓没有
+`places_auto.db` / `lm.bin`）：
+
+| 功能 | 状态 |
+|---|---|
+| 地图显示 / 拖动 / 缩放 | 可用：`disp.idx` + `t_*.areas/lines/polyrefs` 完整 |
+| 算路 | 可用但偏慢：有 `rev.bin`，缺可选 `lm.bin` ⇒ 退回纯直线启发式 |
+| 地名搜索 | **不可用**：`app_init` 用相对路径 `products/places_auto.db` 开搜索库，Android 进程 CWD 下没有；`a->sdb == NULL` 时搜索恒返回空串 |
+| 语音播报 | 不发声（Android 分支只有 DRYRUN，见 §9） |
+| 真实定位 | 未接，点选起终点做模拟导航 |
+| 省内下载 / OTA | `server_base` 默认为空，需在设置里填服务器地址；否则只能本地安装 |
+
 ## 7. 字体
 
 `DroidSansFallback.ttf`（CJK 兜底）已内嵌在 `assets/fonts/`，首次运行自动抽到
@@ -234,9 +274,13 @@ shaanxi(陕西), shandong, henan, liaoning。
 - **离线 TTS 桩**：Android 上 `sk_tts_speak` 仅保留 DRYRUN 写盘分支（无离线语音引擎），
   语音播报不发声。
 - **视觉/样式**：顶底栏是简易浮层，未做 Material 精细布局；浮层透明度等桌面端特性未接。
-- **真机验证待做**：本机（ARM64 Linux）已完整编译出 so + APK（见 §5.1），Java/JNI
-  语法与符号链接全通过，但尚未在真机上跑过 init/渲染/算路。
+- **真机验证待做**：ARM64 Linux（§5.1）与 x86_64 Windows（§5.2）都已编出 so + APK，
+  Java/JNI 语法、符号链接与签名全通过，但**两者都没有在真机上跑过** init/渲染/算路。
 - **minSdk 26**：仅 Android 8.0+，故图标用 XML 自适应（无需打包 PNG）。
+- **地名搜索在 Android 上默认不可用**：`app_init` 里
+  `search_open("products/places_auto.db")` 是相对路径，Android 进程没有这个目录，
+  且 v1 的 `assets/` 里也没带该库；`a->sdb == NULL` 时 `app_search_query` 直接返回 0
+  （不崩，只是搜不到）。要启用需另外部署该库并用 `SKEDADDLE_PLACES` 指绝对路径。
 
 ### 已落地的“增量更新 / OTA”能力（见 §11）
 
