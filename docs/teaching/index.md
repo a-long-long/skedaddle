@@ -9,10 +9,11 @@
 > `01_coords` ↔ `tutorial/01_coords`，……，`13_gates` ↔ `tutorial/13_gates`，
 > `14_capstone` ↔ `tutorial/14_capstone`，`15_datum` ↔ `tutorial/15_datum`，`16_i18n` ↔ `tutorial/16_i18n`。
 > 读源码式讲义看"为什么这么写"，配套小程序看"怎么跑起来"。
+> **第 17 课是唯一例外**：它以真实的 `android/` 产品工程为配套（需 NDK / Gradle），不再提供 `tutorial/17_android` 小程序 —— 这一课要跑的就是产品本身。
 
 **课程总览与程序运行流程图见 [`00_overview.md`](00_overview.md)（第 0 课）——建议从这里开始读。**
 
-## 课程表（按程序运行流程排序，编号 00–16）
+## 课程表（按程序运行流程排序，编号 00–17）
 
 | 文件 | 课次 | 主题 | 配套 `tutorial/` |
 |---|---|---|---|
@@ -33,6 +34,7 @@
 | [14_capstone.md](14_capstone.md) | 14 | 综合项目（改一个点 + 加一条判据） | `14_capstone` |
 | [15_datum.md](15_datum.md) | 15 | 坐标系基准（datum）：为什么只换椭球等于没转换 | `15_datum` |
 | [16_i18n.md](16_i18n.md) | 16 | 极简多语言（i18n）：为什么中文是 msgid 是安全的 | `16_i18n` |
+| [17_android.md](17_android.md) | 17 | Android 原生 JNI App：把同一个 C 核心搬进手机 | `android/` 真实工程（无 `tutorial/` 小程序） |
 
 ## 阅读建议
 
@@ -40,4 +42,5 @@
   → 每帧渲染（视口→光栅→管线）→ 用户交互（搜索/路由/导航）→ 外壳（Qt）→ 门禁 → 综合项目。
 - 每课的"④ 与其他功能的联系"标了上游 / 下游，对照第 0 课的流程图一起读，能串起完整链路。
 - 每课都可在 `tutorial/NN_xxx/` 找到同名编号、可独立编译运行的小程序，建议"先读源码讲义、再跑小程序"或反之。
+- 第 17 课是「第二个前端」：与 `12_qt` 并列，C 核心一行未改；它的动手环节就是 `android/` 工程的编译与部署，命令见 [`../android.md`](../android.md)。
 - 环境搭建与构建命令见 [`../teaching-plan.md`](../teaching-plan.md) 的「一、环境搭建」。

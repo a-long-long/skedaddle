@@ -20,17 +20,19 @@
 | `plat.h` | 不透明 typedef：`SkDir`/`SkMutex`/`SkCond`/`SkProc`（按行序：72=`SkDir`、81=`SkMutex`、90=`SkCond`、132=`SkProc`） | `plat.h:72,81,90,132` |
 | `plat.h` | `sk_thread_spawn` / `sk_proc_spawn` / `sk_now_ms` / `sk_tts_speak` / `sk_font_candidates` 声明 | `plat.h:99,135,145,156,196` |
 | `plat.h` | `sk_map_file` / `sk_unmap_file` 声明 | `plat.h:66-67` |
-| `plat.c` | `struct SkDir` / `struct SkProc` / `struct SkMutex` / `struct SkCond`（真实结构在 `#ifdef` 内，Win/POSIX 各一份） | `plat.c:351-360,571,579,1407,1454,1539,1568` |
-| `plat.c` | `sk_thread_spawn`（pthread / CreateThread 收口） | `plat.c:1526-1535,1623-1632` |
-| `plat.c` | `sk_now_ms`（单调时钟） | `plat.c:733-748` |
+| `plat.c` | `struct SkDir` / `struct SkProc` / `struct SkMutex` / `struct SkCond`（真实结构在 `#ifdef` 内，Win/POSIX 各一份） | `plat.c:351-360,577,585,1474,1521,1606,1635` |
+| `plat.c` | `sk_thread_spawn`（pthread / CreateThread 收口） | `plat.c:1593-1602,1690-1699` |
+| `plat.c` | `sk_now_ms`（单调时钟） | `plat.c:739-754` |
 | `plat.c` | `sk_map_file`（只读映射，POSIX mmap / Win CreateFileMapping） | `plat.c:296-328` |
-| `plat.c` | `sk_font_candidates`（中文/系统字体候选链） | `plat.c:1372-1401` |
+| `plat.c` | `sk_font_candidates`（中文/系统字体候选链） | `plat.c:1439-1468` |
+| `plat.h` | Android 私有目录注入接口（`__ANDROID__` 内）：`sk_android_set_paths` / `sk_android_set_font_dir` / `sk_android_files_dir` | `plat.h:204-218` |
+| `plat.c` | Android 目录注入块 + `sk_exe_path` / TTS / `sk_temp_dir` / `sk_config_dir` / `get_font_dir` 的 `__ANDROID__` 分支 | `plat.c:435,1137,1179,1205-1244,1272,1297,1411` |
 | `mem.h` | `SK_MMAP_THRESHOLD_BYTES` 宏、注释 | `mem.h:7-22` |
 | `mem.c` | `sk_pin_allocator`（构造函数钉死分配器） | `mem.c:16-34` |
 | `strpool.h` | `StrPool` 不透明类型与接口声明 | `strpool.h:9-23` |
 | `strpool.c` | `struct StrPool`、`fnv1a`、`sp_intern` / `sp_get` / `sp_serialize` | `strpool.c:7-17,19-24,72-110,117-121,126-137` |
 
-> 注：`sk_proc_spawn`、`sk_tts_speak` 的**声明**见 3.1；其完整实现（常驻子进程 + 管道、离线 TTS 队列与后台朗读线程，对应 `plat.c:587-1185`，其中 TTS 队列/后台线程在 `plat.c:829-1154`、`sk_tts_speak` 在 `plat.c:1127`）见 3.2 节末尾的完整源码。
+> 注：`sk_proc_spawn`、`sk_tts_speak` 的**声明**见 3.1；其完整实现（常驻子进程 + 管道、离线 TTS 队列与后台朗读线程，对应 `plat.c:593-1201`，其中 TTS 队列/后台线程在 `plat.c:835-1168`、`sk_tts_speak` 在 `plat.c:1133`）见 3.2 节末尾的完整源码。
 
 ## 三、完整实现代码
 
@@ -454,7 +456,7 @@ const char *const *sk_font_candidates(size_t *n)
 }
 ```
 
-> 完整源码 · `src/utils/plat.c:587-1185`（常驻子进程 + 管道、离线 TTS 队列与后台朗读线程；其中 TTS 队列/后台线程在 `plat.c:829-1154`、`sk_tts_speak` 在 `plat.c:1127`）
+> 完整源码 · `src/utils/plat.c:593-1201`（常驻子进程 + 管道、离线 TTS 队列与后台朗读线程；其中 TTS 队列/后台线程在 `plat.c:835-1168`、`sk_tts_speak` 在 `plat.c:1133`）
 
 ```c
 SkProc *sk_proc_spawn(const char *exe, char *const argv[])
@@ -1001,6 +1003,14 @@ int sk_tts_speak(const char *text)
 {
     if (!text || !*text) return 0;
 
+#ifdef __ANDROID__
+    /* Android 上不使用离线 TTS：fork/exec 受 SELinux 限制，且无系统 espeak；
+     * 语音播报留待后续接 Android TextToSpeech。仍支持 SKEDADDLE_TTS_DRYRUN 写盘，
+     * 便于无头验收"集成是否正确"。 */
+    if (tts_dryrun_write(text)) return 1;
+    return 0;
+#endif
+
     /* DRYRUN 同步写，避免起线程（自测要确定性） */
     if (tts_dryrun_write(text)) return 1;
 
@@ -1035,6 +1045,8 @@ int sk_tts_available(void)
 #ifdef _WIN32
     char exe[1024];
     return sk_find_in_path("powershell.exe", exe, sizeof(exe)) == 0 ? 1 : 0;
+#elif defined(__ANDROID__)
+    return 0;  /* v1 无离线 TTS 引擎（后续接 Android TextToSpeech） */
 #else
     char exe[1024];
     if (sk_find_in_path("spd-say", exe, sizeof(exe)) == 0) return 1;
@@ -1257,10 +1269,105 @@ void sp_serialize(StrPool *p, uint8_t **out, size_t *out_len)
 }
 ```
 
+
+### 3.5 Android 分支：当平台连 `$HOME` 和「可执行文件」都没有
+
+> 这是 2026-11-04 随 Android 原生 JNI App（第 17 课）加入的**第三个平台分支**。
+> 前两个（Win32 / POSIX）靠 `#ifdef _WIN32` 分流；Android 不是 POSIX 桌面：它没有
+> `$HOME` / `XDG_CONFIG_HOME` / `TMPDIR`，`/proc/self/exe` 指向 `app_process` 而非本 APK，
+> `fork/exec` 受 SELinux 限制，系统里也没有 `espeak`。若不给它单独分支，C 核心会**静默**
+> 落进「字体缺失」与「无 TTS 引擎」两条兜底 —— 正是第 12 课那条文字门控会踩的坑。
+
+**纪律不变**：所有差异仍 100% 收口在 `plat.c`，业务代码零 `#ifdef __ANDROID__`，
+C 核心一行没改；新增的三个全局量也用 `#ifdef __ANDROID__` 包住，**与分支同寿命**，
+不给其它平台增加一字节。
+
+#### 3.5.1 接口（`plat.h:204-218`）
+
+```h
+#ifdef __ANDROID__
+void  sk_android_set_paths(const char *files_dir, const char *cache_dir);
+void  sk_android_set_font_dir(const char *font_dir);
+const char *sk_android_files_dir(void);
+#endif
+```
+
+Java 侧 `context.getFilesDir()` / `getCacheDir()` 拿到 app 私有、可写、随卸载清除的目录，
+在 native 初始化时经 JNI 传进来；字体随 APK 放在 `assets/fonts/`，首次运行抽到 files
+目录后再由 `sk_android_set_font_dir` 单独告知。
+
+#### 3.5.2 目录注入（`plat.c:1205-1244`，逐字）
+
+```c
+#ifdef __ANDROID__
+static char g_android_files_dir[2048];
+static char g_android_cache_dir[2048];
+static char g_android_font_dir[2048];
+
+static void android_slash_fix(char *s)
+{
+    for (char *p = s; *p; p++) if (*p == '\\') *p = '/';
+}
+
+void sk_android_set_paths(const char *files_dir, const char *cache_dir)
+{
+    if (files_dir && *files_dir) {
+        snprintf(g_android_files_dir, sizeof(g_android_files_dir), "%s", files_dir);
+        android_slash_fix(g_android_files_dir);
+    }
+    if (cache_dir && *cache_dir) {
+        snprintf(g_android_cache_dir, sizeof(g_android_cache_dir), "%s", cache_dir);
+        android_slash_fix(g_android_cache_dir);
+    }
+}
+
+void sk_android_set_font_dir(const char *font_dir)
+{
+    if (font_dir && *font_dir) {
+        snprintf(g_android_font_dir, sizeof(g_android_font_dir), "%s", font_dir);
+        android_slash_fix(g_android_font_dir);
+    }
+}
+
+const char *sk_android_files_dir(void)
+{
+    return g_android_files_dir[0] ? g_android_files_dir : NULL;
+}
+```
+
+`android_slash_fix` 把反斜杠统一成 `/`：Java 传来的路径在部分厂商 ROM 上可能带 `\`，
+而 C 侧用 `snprintf("%s/...")` 直接拼接，不归一化就会拼出一个不存在的目录。
+
+#### 3.5.3 五处消费点
+
+| 位置 | 分支行为 | 为什么 |
+|---|---|---|
+| `sk_exe_path` `plat.c:435` | 直接 `return -1` | `/proc/self/exe` 指向 `app_process`；调用方应退回已注入的 Android 目录 |
+| `sk_tts_speak` `plat.c:1137` | 只走 `tts_dryrun_write`，随后 `return 0`，**不起后台朗读线程** | SELinux 禁 fork/exec + 无 espeak；DRYRUN 仍可验证接线（3.2 逐字副本已含此段） |
+| `sk_tts_available` `plat.c:1179` | `return 0` | v1 无离线 TTS 引擎，后续接 Android `TextToSpeech` |
+| `sk_temp_dir` `plat.c:1272` | 返回 `g_android_cache_dir` | 无 `TMPDIR` / `TEMP` / `TMP` |
+| `sk_config_dir` `plat.c:1297` | 返回 `<files_dir>/.config` | 无 `XDG_CONFIG_HOME` / `HOME`，`settings.ini` 写这里 |
+| `get_font_dir` `plat.c:1411` | 返回 `g_android_font_dir`（优先级仅次于 `SKEDADDLE_FONT_DIR`） | 无 `/usr/share/fonts`，也没有 exe 同目录可退 |
+
+> **为什么字体这一条最要命**：`get_font_dir` 失败 ⇒ `font_open_default()` 返回 NULL ⇒
+> `paint_frame` 的 `if(a->font)` 门控把**所有文字静默丢弃**，几何照常画出来 ——
+> 「有图无线无字」。第 12 课把它记为硬纪律，Android 分支就是它的具体落点。
+
+#### 3.5.4 与第 17 课的分工
+
+本课只讲**平台层**（C 侧怎么被注入目录、怎么降级）。JNI 桥、Java 层、CMake 复用 `src/`、
+每帧 `px[i] |= 0xFF000000` 的 alpha 修正、地图增量更新与 OTA 都在第 17 课；
+构建命令与 thirdparty vendor 步骤见 `docs/android.md`。
+
+**练习**：把 JNI 侧 `sk_android_set_paths` 的调用注释掉（模拟没接线），跑一次带
+`SKEDADDLE_TTS_DRYRUN` 的验收，观察 `get_font_dir` 落到哪条兜底、`settings.ini` 被写到哪 ——
+用「文字是否出现」这个**可见判据**证明注入确实承重（而不是只看有没有报错）。
+
 ## 四、与其他功能之间的联系
 
 - **被几乎所有模块使用**：`graph_build.c`/`route.c`/`paint.c`/`ui_qt/*` 只调 `sk_*` 接口。`sk_font_candidates` 被 `render/font.c` 组建字体集；`SkMutex`/`SkCond` 支撑 TTS 后台朗读线程与并发加载；`sk_map_file`（经 `sk_mmap_file`）是所有大文件（nodes.bin / 边表）只读映射的底座。
 - **与 L1 / L3 交汇**：`StrPool` 是 L3 PBF 路名去重后的落盘容器（`names.bin`，`sp_serialize` 输出 `[u32 count][u32 off[count+1]][bytes]`）；`sk_now_ms`/`sk_thread_spawn` 在 L4 / L5 的并行建图与瓦片加载中反复出现。
+- **与 L17 Android 前端**：`sk_android_set_*` 由 JNI 在 `app_init` 之前调用，是 C 核心唯一感知 Android 的入口；业务层其余代码完全不知道自己跑在手机上 —— 这是「平台差异 100% 收口」这条纪律在第三个平台上的复验。
 - **与 L11 导航语音**：`sk_tts_speak` / `sk_tts_flush` 依赖 `sk_thread_spawn` + `SkMutex`/`SkCond` 实现后台串行朗读线程，调用方（导航每帧推进）绝不被阻塞。
 - **链接纪律**：`plat.c` 的线程用 pthread 实现，故 `-pthread` 由 `skedaddle_plat` 库统一承载（`CMakeLists.txt` 相关目标）。漏挂会在链接 `skedaddle_tts_selftest` 时报 `pthread_create` 未定义。
 - **与 L13 架构门禁**：业务代码零 `#ifdef _WIN32` 是跨平台门禁的验收点之一（`cross-platform-portability-audit` 思路）。

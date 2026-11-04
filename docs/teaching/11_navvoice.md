@@ -23,7 +23,7 @@
 | `src/ui/voice_wire.h` | 接线层的状态集合 `NavVoiceCtx` 与入口 `nav_voice_frame` 声明 | `voice_wire.h:52` |
 | `src/ui/voice_wire.c` | **唯一接线点**：取状态 → `voice_tick` 编排 → `sk_tts_speak` 发声；到达帧例外处理 | `voice_wire.c:52` |
 | `src/utils/plat.h` | 平台抽象层声明，含离线 TTS 接口 `sk_tts_speak` 等 | `plat.h:156` 起 |
-| `src/utils/plat.c` | `sk_tts_speak` 实现（常驻会话 + 队列 + 后台朗读线程） | `plat.c:1127` |
+| `src/utils/plat.c` | `sk_tts_speak` 实现（常驻会话 + 队列 + 后台朗读线程） | `plat.c:1133` |
 
 **分层要点**
 
@@ -1237,7 +1237,7 @@ static int tts_dryrun_write(const char *text)
     return 1;
 }
 
-/* === src/utils/plat.c:828-1125 —— TTS 队列 / 常驻会话 / 后台朗读线程（完整体，逐字） === */
+/* === src/utils/plat.c:834-1131 —— TTS 队列 / 常驻会话 / 后台朗读线程（完整体，逐字） === */
 /* ---- 单句模式（回退路径）：Windows 走临时 .ps1，POSIX 走命令行 TTS ---- */
 static void tts_speak_once(const char *text)
 {
@@ -1536,11 +1536,19 @@ static int tts_queue_init(void)
     if (sk_thread_spawn(tts_worker, NULL) != 0) { g_tts.running = 0; return 0; }
     return 1;
 }
-/* === src/utils/plat.c:828-1125 完 === */
+/* === src/utils/plat.c:834-1131 完 === */
 
 int sk_tts_speak(const char *text)
 {
     if (!text || !*text) return 0;
+
+#ifdef __ANDROID__
+    /* Android 上不使用离线 TTS：fork/exec 受 SELinux 限制，且无系统 espeak；
+     * 语音播报留待后续接 Android TextToSpeech。仍支持 SKEDADDLE_TTS_DRYRUN 写盘，
+     * 便于无头验收"集成是否正确"。 */
+    if (tts_dryrun_write(text)) return 1;
+    return 0;
+#endif
 
     /* DRYRUN 同步写，避免起线程（自测要确定性） */
     if (tts_dryrun_write(text)) return 1;
@@ -1572,7 +1580,9 @@ int sk_tts_speak(const char *text)
 }
 ```
 
-> 说明：上方 `sk_tts_speak` 之前的 `tts_speak_once`/`tts_backend_speak`/`tts_worker`/`tts_queue_*` 等 TTS 队列与常驻会话机制（约 `plat.c:828`–`plat.c:1158`）已**完整**嵌入上文代码块（逐字、可编译）；`sk_tts_speak` 本身亦为**完整体**。
+> 说明：上方 `sk_tts_speak` 之前的 `tts_speak_once`/`tts_backend_speak`/`tts_worker`/`tts_queue_*` 等 TTS 队列与常驻会话机制（约 `plat.c:834`–`plat.c:1172`）已**完整**嵌入上文代码块（逐字、可编译）；`sk_tts_speak` 本身亦为**完整体**。
+
+> **Android 例外（详见第 17 课）**：上面 `sk_tts_speak` 开头的 `#ifdef __ANDROID__` 分支让 Android 上**只走 DRYRUN 写盘、不起后台朗读线程**（SELinux 限制 fork/exec，且系统无 espeak）；`plat.c` 的 `sk_tts_available()` 在 `__ANDROID__` 下也直接返回 0。真实发声留待接 Android `TextToSpeech`，但 `SKEDADDLE_TTS_DRYRUN` 仍能验证 `voice_wire → say_dup → sk_tts_speak` 这条唯一接线是通的。
 
 ## 四、与其他功能之间的联系
 

@@ -23,10 +23,10 @@
 3. **依赖是纯 DAG**——`utils ← pbf ← map ← route ← render ← ui ← ui_qt`，反向依赖会立刻 `undefined-reference`。`scripts/check_layers.sh` 是守护门禁。
 4. **核心零 SDL**——`skedaddle_core` 连 SDL 的 include 都不给；SDL 仅残留在两个去 SDL 化对照体（`skedaddle_blend_equiv`/`skedaddle_clip_equiv`）里做"逐像素等价"验证。
 
-### 0.3 课程表（共 17 篇：第 0 课总览 → 第 14 课综合项目 → 第 15 课基准 → 第 16 课多语言，编号与 `tutorial/00–16` 一一对应）
+### 0.3 课程表（共 18 篇：第 0 课总览 → 第 14 课综合项目 → 第 15 课基准 → 第 16 课多语言 → 第 17 课 Android 前端，编号 00–17）
 
-> 课程统一编号为 **00–16**：第 0 课是总览（读源码讲义 `docs/teaching/00_overview.md`，与可运行小程序 `tutorial/00_minimal` 配套）；
-> 01–13 为主题课；14 为综合项目；15（坐标系基准 datum）、16（极简多语言 i18n）为两节进阶专题。每课都有两份**同号**资料——「读真实源码讲义 `docs/teaching/NN_*.md`」与「可独立编译运行的小程序 `tutorial/NN_*/`」。
+> 课程统一编号为 **00–17**：第 0 课是总览（读源码讲义 `docs/teaching/00_overview.md`，与可运行小程序 `tutorial/00_minimal` 配套）；
+> 01–13 为主题课；14 为综合项目；15（坐标系基准 datum）、16（极简多语言 i18n）为两节进阶专题；17（Android 原生 JNI App）为「第二个前端」专题。**00–16 每课都有两份同号资料**——「读真实源码讲义 `docs/teaching/NN_*.md`」与「可独立编译运行的小程序 `tutorial/NN_*/`」；**第 17 课是唯一例外**，配套资料为真实产品工程 `android/`（需 NDK/Gradle），不提供小程序。
 
 | 课次 | 主题 | 对应模块 | 关键产出 | 配套资料 |
 |---|---|---|---|---|
@@ -47,11 +47,17 @@
 | 14 | 综合项目 | 全程 | 改一个点 + 加一条判据 | `docs/teaching/14_capstone.md` + `tutorial/14_capstone` |
 | 15 | 坐标系基准（datum） | `utils/datum` | 三参数赫尔默特 + 交叉验证 | `docs/teaching/15_datum.md` + `tutorial/15_datum` |
 | 16 | 极简多语言（i18n） | `src/i18n`, `lang/*.xml` | zh 为 msgid + 缺译回退链 | `docs/teaching/16_i18n.md` + `tutorial/16_i18n` |
+| 17 | Android 原生 JNI App | `android/`, `utils/plat` 的 `__ANDROID__` 分支 | JNI 桥 + 30fps 渲染线程 + 增量更新/OTA | `docs/teaching/17_android.md` + `android/` 工程 + `docs/android.md` |
+
+> **对账补记（2026-11-04，远端 Android 前端落地）**：
+> - 新增 `android/` 原生 JNI App（3 个提交 / 42 文件）与 `src/utils/plat.{c,h}` 的 `__ANDROID__` 分支，已补入第 17 课 [`17_android.md`](teaching/17_android.md)；第 2 课新增 3.5 节讲目录注入，第 2/11 课的 TTS 逐字副本已同步 Android 分支。
+> - `plat.c` +67 行、`plat.h` +16 行导致两课全部 `plat.c:` / `plat.h:` 锚点后移，已按行级 diff 精确重映射（含逗号列表与区间两端）。
+> - 第 17 课无 `tutorial/` 小程序：它要跑的是产品工程本身，构建/部署/自托管命令见 [`docs/android.md`](android.md)。
 
 > **对账补记（2026-11-03 完整对账，当日补齐 i18n 课次）**：
 > - 上面 **00–16 课**已逐课对照当前代码。已修正的过时项集中在第 4/5 课与建图/显示层：
 >   整省三件套（areas/lines/polyrefs.bin）的 **nmbin 读取路径已彻底断根**（`mapset.c` 不再打开、构建不再生成、`disp_tile_selftest` 改为统一以 PBF 解码作基准）；`osmid.bin` 已删；SDL 已从核心彻底移除（仅剩两个去 SDL 化对照体 `skedaddle_blend_equiv`/`skedaddle_clip_equiv` 做逐像素等价验证）。回归基线现为 **87 通过 / 0 失败**。
-> - **i18n 缺口已补齐**：`src/i18n/`（多语言系统，配 7 套非中文语言包）现已有第 16 课 [`16_i18n.md`](docs/teaching/16_i18n.md) + `tutorial/16_i18n` 配套小程序；第 15 课 datum（`15_datum.md`）此前漏列于本表，已补入。
+> - **i18n 缺口已补齐**：`src/i18n/`（多语言系统，配 7 套非中文语言包）现已有第 16 课 [`16_i18n.md`](teaching/16_i18n.md) + `tutorial/16_i18n` 配套小程序；第 15 课 datum（`15_datum.md`）此前漏列于本表，已补入。
 > - 个别行号锚点（如 `paint_frame` 的 `dup_of` 跳过、`i18n.c` 的各函数区间）已按当前源码校正；其余函数级锚点经核对仍然有效。
 
 > **对账补记（2026-11-03 二次补齐，对应提交 `6f1de61`）**：
@@ -469,7 +475,7 @@ SKEDADDLE_TTS_DRYRUN=/tmp/tts.txt ./build_rel/skedaddle_voice_e2e   # 端到端�
 
 ## 三、综合项目（第 14 课 / Capstone）
 
-> 逐课展开版见 [`docs/teaching/14_capstone.md`](docs/teaching/14_capstone.md)，可运行小程序见 `tutorial/14_capstone/`。
+> 逐课展开版见 [`docs/teaching/14_capstone.md`](teaching/14_capstone.md)，可运行小程序见 `tutorial/14_capstone/`。
 > 两者同号，配套完成"改一个点 + 加一条判据"的闭环。
 
 **目标**：独立完成"改一个点 + 加一条判据"，体验完整的"改 → 测 → 守"闭环。
