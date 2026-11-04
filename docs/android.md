@@ -208,10 +208,16 @@ shaanxi(陕西), shandong, henan, liaoning。
   32 位 ARM 或 x86 模拟器会 `INSTALL_FAILED_NO_MATCHING_ABIS`。
 - `minSdk 26`（Android 8.0+）、`targetSdk 33`；`application-debuggable` + debug
   签名（`CN=Android Debug`），v2 签名 `Verifies`。系统需允许「安装未知来源应用」。
-- APK 约 13 MB（debug 包，体积随构建机略有差异）；CJK 字体与 `libc++_shared.so`
-  已打包，so 的 `NEEDED` 只有
+- APK 13,622,241 B（≈13.0 MB，debug 包，体积随构建机略有差异），共 842 个条目：
+  `classes.dex` 9,763,712 B + `classes2.dex` 515,944 B + `classes3.dex` 65,732 B、
+  `lib/arm64-v8a/libskedaddle.so` 1,504,736 B、
+  `lib/arm64-v8a/libc++_shared.so` 1,026,616 B、
+  `assets/fonts/DroidSansFallback.ttf` 3,939,852 B、`resources.arsc`。
+  CJK 字体与 `libc++_shared.so` 已打包，so 的 `NEEDED` 只有
   `liblog / libz / libm / libdl / libc / libc++_shared`，13 个 JNI 符号全部导出，
   `MainActivity` / `MapView` / `Skedaddle` 等类都在 dex 里。
+- 权限只有 `INTERNET` 与 `REQUEST_INSTALL_PACKAGES`（**无定位权限**，与 §9
+  的「未接真实 GPS」一致）。
 
 **装完直接打开会弹引导** —— `MainActivity` 把 `graphDir` 固定为
 `getExternalFilesDir(null)/graph`。`app_init → mapset_load` 在目录不存在、或没有
@@ -288,6 +294,31 @@ shaanxi(陕西), shandong, henan, liaoning。
   `search_open("products/places_auto.db")` 是相对路径，Android 进程没有这个目录，
   且 v1 的 `assets/` 里也没带该库；`a->sdb == NULL` 时 `app_search_query` 直接返回 0
   （不崩，只是搜不到）。要启用需另外部署该库并用 `SKEDADDLE_PLACES` 指绝对路径。
+
+### 与桌面 Qt 版的功能对照（2026-11-04 逐项核查）
+
+Android 端只暴露 13 个 JNI 方法（`Skedaddle.java`）：`init / render / pan / zoomAt /
+setView / getView / unproject / search / setStart / clearRoute / planRoute /
+setShowFlags / shutdown`。对照 `src/ui_qt/main_window.cpp:996-1200` 的菜单，下列
+缺失项是**没接线**，不是 C 核心不具备：
+
+| 能力 | 桌面 Qt | Android |
+|---|---|---|
+| 地图显示 / 拖动缩放 / 点选起终点算路 | ✅ | ✅ |
+| 地名搜索 | ✅ `places_auto.db` | ⚠️ JNI 在，库未部署 ⇒ 恒返回空串 |
+| POI / 地名 / 等高线开关 | ✅ | ✅（`setShowFlags`） |
+| 真实 GPS/NMEA、卫星模型 / 天空图 | ✅ `nmea_*` / `satellite_*` / `skyplot_*` | ❌ 无定位权限、无 JNI 桥 |
+| 模拟导航 / 跟随车头 / 偏航重算 / 途经点 / 缩放到路线 | ✅ `app_nav_sim_*` / `app_nav_via` / `app_nav_fit` | ❌ 未暴露 JNI |
+| 语音播报 | ✅ | ❌ 仅 DRYRUN（见上） |
+| GPX 导入 / 导出 / 收藏 / 轨迹面板 | ✅ | ❌ |
+| 坐标系 / 经纬网 / 网格类型与细分 | ✅（`datum.c`） | ❌ |
+| 道路 LOD 0–4 / 字号增减 / 浮层透明度 | ✅ | ❌（字号在 init 固定 14） |
+| 夜间模式（手动 + 日出日落自动）/ 多语言 | ✅ | ❌ |
+| 无地图检测引导 | ❌ | ✅（`OnInitListener` + `retryInit`） |
+| 地图获取 | Geofabrik PBF 下载 + `sync_maps.sh` 转换 | 省图 zip 增量下载 / 本地安装 + APK OTA |
+
+> 补齐方向：给 `skedaddle_jni.cpp` 加 `app_nav_sim_*` / `datum` / `day_night` 等桥并在
+> `MainActivity` 挂 UI 即可，C 核心零改动（与 §1 的分层纪律一致）。
 
 ### 已落地的“增量更新 / OTA”能力（见 §11）
 
