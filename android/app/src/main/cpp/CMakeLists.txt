@@ -60,7 +60,9 @@ else()
 endif()
 if(EXISTS "${PROTOC_C_SRC}")
   list(APPEND EXTRA_TP "${PROTOC_C_SRC}")
-  include_directories("${THIRDPARTY}/protobuf-c")
+  # 生成的 pb-c.h 以 <protobuf-c/protobuf-c.h> 引头，须把 thirdparty 父目录
+  # 放进 include 路径；同一目录下的 protobuf-c.c 用 "protobuf-c.h" 相对引用也兼容。
+  include_directories("${THIRDPARTY}")
 else()
   message(WARNING "未找到 cpp/thirdparty/protobuf-c/protobuf-c.c —— 请 vendor protobuf-c 运行时源码。")
 endif()

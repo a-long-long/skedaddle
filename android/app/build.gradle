@@ -2,9 +2,24 @@ plugins {
     id 'com.android.application'
 }
 
+// ---------------------------------------------------------------------------
+// 双模式构建：
+//  - x86_64 宿主（Windows/普通 Linux）：官方 NDK，走 externalNativeBuild 标准流程。
+//  - aarch64 Linux 宿主（ARM64 机）：官方 NDK 无 ARM64 宿主包，宿主工具跑不了，
+//    改用预编译 so —— 先运行 android/scripts/build-so-local.sh 生成
+//    app/src/main/jniLibs/arm64-v8a/libskedaddle.so，Gradle 只负责 Java/打包。
+//    可用 -Pskedaddle.forceNdk=true 强制走 NDK 模式（例如日后用社区 ARM64 NDK）。
+// ---------------------------------------------------------------------------
+def isArm64LinuxHost = System.getProperty('os.arch') == 'aarch64' \
+    && System.getProperty('os.name').toLowerCase().contains('linux')
+def usePrebuiltSo = isArm64LinuxHost \
+    && !providers.gradleProperty('skedaddle.forceNdk').getOrElse('false').toBoolean()
+
 android {
     namespace 'com.skedaddle.android'
-    compileSdk 33
+    // compileSdk 34：appcompat 1.6.1 传递依赖的 androidx.activity 1.8 要求 ≥34。
+    // targetSdk 仍为 33（运行行为不变）；minSdk 26 不变。
+    compileSdk 34
 
     defaultConfig {
         applicationId "com.skedaddle.android"
@@ -19,12 +34,14 @@ android {
             abiFilters 'arm64-v8a'   // 仅 64 位；32 位设备(minSdk<21)已罕见
         }
 
-        externalNativeBuild {
-            cmake {
-                arguments "-DANDROID_STL=c++_shared",
-                          "-DSKEDADDLE_SRC_ROOT=" + rootDir.getParentFile().absolutePath
-                cFlags "-D__ANDROID__"
-                cppFlags "-D__ANDROID__"
+        if (!usePrebuiltSo) {
+            externalNativeBuild {
+                cmake {
+                    arguments "-DANDROID_STL=c++_shared",
+                              "-DSKEDADDLE_SRC_ROOT=" + rootDir.getParentFile().absolutePath
+                    cFlags "-D__ANDROID__"
+                    cppFlags "-D__ANDROID__"
+                }
             }
         }
     }
@@ -41,12 +58,16 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
-    externalNativeBuild {
-        cmake {
-            path "src/main/cpp/CMakeLists.txt"
-            version "3.22.1"
+    if (!usePrebuiltSo) {
+        externalNativeBuild {
+            cmake {
+                path "src/main/cpp/CMakeLists.txt"
+                version "3.22.1"
+            }
         }
     }
+    // 预编译模式的 so 存在性校验放在 preBuild 执行阶段（见文件末尾），
+    // 避免配置期就失败、连 wrapper 生成这类纯 Gradle 任务都做不了。
 
     // 屏幕旋转/尺寸变化时不让 Activity 重建（原生状态在 libskedaddle.so 里，
     // 重建会丢 app_init 的图集与视口）。由 MapView 自己处理尺寸变化。
@@ -59,4 +80,18 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+}
+
+// 预编译 so 模式：编译/打包前校验产物存在，避免打出缺库 APK 后才在设备上炸。
+if (usePrebuiltSo) {
+    def prebuiltSo = file("src/main/jniLibs/arm64-v8a/libskedaddle.so")
+    tasks.matching { it.name == 'preBuild' }.configureEach {
+        doFirst {
+            if (!prebuiltSo.exists()) {
+                throw new GradleException(
+                    "ARM64 Linux 宿主走预编译 so 模式，但 ${prebuiltSo} 不存在。\n" +
+                    "请先运行：bash android/scripts/build-so-local.sh")
+            }
+        }
+    }
 }

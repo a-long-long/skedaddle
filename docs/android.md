@@ -3,9 +3,8 @@
 原生 JNI App：复用 C 核心（地图渲染 / 搜索 / 算路），Android 端只写 UI 与 JNI 桥，
 **不碰** 桌面端的 Qt 前端（`src/ui_qt/`）与离屏路径。
 
-> ⚠️ **本机（开发机）无 Android SDK / NDK，以下代码按规范编写、未经真机编译。**
-> 必须在装有 Android SDK + NDK 的构建机（或 Android Studio）上验证。
-> 已知风险点已在「已知限制」一节列出。
+> ✅ **本机（ARM64 Linux）已可完整出 APK**（2026-11-04 验证），见 §5.1。
+> x86_64 宿主（Windows/Linux）走标准 externalNativeBuild 流程即可。
 
 ---
 
@@ -71,35 +70,82 @@ android/
 ## 4. 第三方库 vendor（必须，否则链接失败）
 
 NDK 不自带 `sqlite3` 与 `protobuf-c` 运行时。把源码 vendor 进
-`app/src/main/cpp/thirdparty/`：
+`app/src/main/cpp/thirdparty/`（**该目录已被 `android/.gitignore` 排除，不进 git**；
+仓库保持精简，克隆后用下面脚本一键补齐）：
 
 ```bash
-TP=android/app/src/main/cpp/thirdparty
-# sqlite3 amalgamation
-mkdir -p $TP/sqlite3
-curl -L https://www.sqlite.org/2023/sqlite-amalgamation-3430100.zip -o /tmp/sqlite.zip
-unzip -o /tmp/sqlite.zip -d /tmp/sqlite
-cp /tmp/sqlite/*/sqlite3.c /tmp/sqlite/*/sqlite3.h $TP/sqlite3/
-
-# protobuf-c 运行时（仅 protobuf-c.c + protobuf-c.h）
-mkdir -p $TP/protobuf-c
-git clone --depth 1 https://github.com/protobuf-c/protobuf-c.git /tmp/pbc
-cp /tmp/pbc/protobuf-c/protobuf-c.c /tmp/pbc/protobuf-c/protobuf-c.h $TP/protobuf-c/
+bash android/scripts/vendor-thirdparty.sh
 ```
 
+脚本会拉取 sqlite3 amalgamation（默认 3.43.1）与 protobuf-c 运行时（`.c` + `.h`），
+直连不通时 protobuf-c 自动走 `ghfast.top` 镜像。可用环境变量 `SK_SQLITE_VER` /
+`SK_SQLITE_ZIP` / `SK_PROTOBUFC_REPO` 覆盖源。
+
 > 缺失时 `cpp/CMakeLists.txt` 只给 `WARNING`，链接阶段才会真正因 `sqlite3_*` /
-> `protobuf_c_*` 未定义而失败——这是预期，按上面补上即可。
+> `protobuf_c_*` 未定义而失败——这是预期，跑一次上面的脚本即可。
 
 ## 5. 构建
 
+构建模式由 `app/build.gradle` 按宿主架构自动选择，无需手工配置：
+
+| 宿主 | 模式 | 说明 |
+|---|---|---|
+| x86_64（Windows/Linux） | `externalNativeBuild` 标准流程 | 装 Android Studio 的 SDK+NDK 即可 |
+| aarch64 Linux（ARM64 机） | 预编译 so | 先跑 §5.1 脚本出 so，Gradle 只打包 |
+| 任意 → 强制标准流程 | `-Pskedaddle.forceNdk=true` | 需可运行的 NDK 宿主工具 |
+
 ```bash
 cd android
-# 若有 gradlew：
 ./gradlew :app:assembleDebug
 # 或 Android Studio：打开 android/ 目录 → 等待同步 → Run 'app'
 ```
 
 产物：`app/build/outputs/apk/debug/app-debug.apk`，安装到 arm64 设备。
+
+### 5.1 ARM64 Linux 宿主：预编译 so 模式
+
+官方 NDK 只发布 x86_64 宿主二进制，ARM64 Linux 机上其 clang/ninja/ndk-build 无法
+运行。本仓库的方案是**只用 NDK 包中架构无关的资产，编译链接全用宿主原生 clang**：
+
+- **NDK sysroot**（Bionic 头文件/桩库）+ `libclang_rt.builtins.a`（目标代码）：
+  从 `android-ndk-r27b-linux.zip` 提取（一次）→ `~/tools/android/ndk-sysroot`。
+  **`android/scripts/setup-local-toolchain.sh <ndk-zip> [api]` 一键完成提取**
+  （含 clang-res 的 include 符号链接 + builtins 布局），无需手工摆路径。
+- **clang 运行时**：本机 UOS 仓库版 clang 24 的 resource-dir 无运行时库，自建
+  `~/tools/android/clang-res`（include 符号链接 + builtins 摆成 clang 期望布局，
+  由上面脚本生成）
+- **交叉编译**：`android/scripts/local-clang-android.toolchain.cmake` +
+  `build-so-local.sh`，即 `clang --target=aarch64-linux-android26 --sysroot=...`
+  （`-unwindlib=none`：arm64 Android 的 unwinder 在 libc 里，API 21+）
+- **产物**：`app/src/main/jniLibs/arm64-v8a/libskedaddle.so`（约 1.8M，
+  NEEDED 仅 liblog/libz/libm/libdl/libc，JNI 桥零 STL → 无 libc++_shared 依赖）
+
+```bash
+# 本机（aarch64 Linux）一条链：
+source android/scripts/env-android.sh    # JDK17 / SDK / GRADLE_USER_HOME / protoc-c
+bash android/scripts/build-so-local.sh Release   # 出 so（脚本会自动 source 上一行）
+cd android && ./gradlew :app:assembleDebug        # 出 APK
+```
+
+> `env-android.sh` 是本机（aarch64 Linux）专用环境脚本：显式设 `JAVA_HOME`、
+> `ANDROID_HOME`、`GRADLE_USER_HOME`（避开全局 `~/.gradle/init.gradle` 的
+> mavenLocal 冲突）并带上宿主 protoc-c/ninja。Windows / x86_64 Linux 机器
+> 走标准流程，不需要它。
+
+> JDK 17 + CMake 3.22 + ninja（`~/.local/bin`）+ 宿主 `protoc-c`（`~/.local/usr/bin`，
+> 需 `LD_LIBRARY_PATH=~/.local/usr/lib/aarch64-linux-gnu`）均为本机已有环境。
+> SDK/Gradle 布局：`~/tools/android/{sdk, gradle/8.7, ndk-sysroot, clang-res}`，
+> 与系统盘/系统包零接触，删目录即卸载。gradle wrapper 的 distributionUrl 已指向
+> 腾讯镜像；`settings.gradle` 内置阿里云 maven 镜像，Windows 机器同样受益。
+> 本机注意：全局 `~/.gradle/init.gradle` 会注入 mavenLocal 与本项目
+> `FAIL_ON_PROJECT_REPOS` 冲突，构建时须 `GRADLE_USER_HOME=~/tools/android/gradle-home`。
+
+**aapt2（唯一残留的 x86_64 环节）**：AGP 打包必须用 maven 里的 aapt2 x86_64 二进制。
+方案：nix 装 box64（`nix profile install nixpkgs#box64`，0.4.4，走清华缓存），
+`~/tools/android/bin/aapt2` 是两行 wrapper（`exec box64 aapt2-x64/aapt2 "$@"`），
+x86_64 真身已从 AGP maven jar 解到 `~/tools/android/aapt2-x64/`；
+`gradle.properties` 的 `android.aapt2FromMavenOverride` 指向该 wrapper。
+x86_64 宿主（Windows）不装 box64 也不受影响——AGP 找不到 override 时自然回退。
 
 ## 6. 部署图集（必须，否则 init 失败）
 
@@ -149,8 +195,8 @@ shaanxi(陕西), shandong, henan, liaoning。
 - **离线 TTS 桩**：Android 上 `sk_tts_speak` 仅保留 DRYRUN 写盘分支（无离线语音引擎），
   语音播报不发声。
 - **视觉/样式**：顶底栏是简易浮层，未做 Material 精细布局；浮层透明度等桌面端特性未接。
-- **本机未编译**：开发机无 SDK/NDK，全部按 NDK 规范编写 + host 用真实 JDK `jni.h`
-  （NDK 同源于 Oracle 规范）做了 JNI 桥的 `-fsyntax-only` 校验；真机/构建机验证待做。
+- **真机验证待做**：本机（ARM64 Linux）已完整编译出 so + APK（见 §5.1），Java/JNI
+  语法与符号链接全通过，但尚未在真机上跑过 init/渲染/算路。
 - **minSdk 26**：仅 Android 8.0+，故图标用 XML 自适应（无需打包 PNG）。
 
 ## 10. 后续可加（非 v1）

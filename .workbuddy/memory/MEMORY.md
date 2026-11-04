@@ -72,3 +72,12 @@
 ## 已达成水平（参考口径，勿跨口径相减）
 - 渲染 1280×800：z9 113 / z11 51 / z13 35 / z15 16 ms（8 省北京中心，4 轮最小）。
 - 算路 50 条(30 地标 w=1.25)：中位 123 / p90 753 / 最慢 1503 ms，展开 10.43M；比无表快 1.6×、p90 4.2×、质量 −3.21%。
+
+## Android 原生 JNI App（2026-11-04 新增，见 docs/android.md）
+- 方向：原生 JNI App，不动 `ui_qt`；C 核心零改动，平台差异全在 `plat.c` 的 `__ANDROID__` 分支（`sk_android_set_paths/font_dir` 注入 files/cache 目录）。
+- 工程：`android/`（Gradle + NDK CMake 复用 `src/` 核心编 `libskedaddle.so`）；JNI 桥包名 `com.skedaddle.android.Skedaddle`。
+- **JNI 桥本机校验法**：无 NDK，但用**忠实复刻 NDK 的 `jni.h` 垫片**（C++ `JNIEnv_` struct + inline 转发 `functions->X(this,...)`）+ 真实 `src/` 头，`g++ -std=c++17 -D__ANDROID__ -Wall -Wextra -fsyntax-only` 零告警 ⇒ 契约正确。注意**真实 JDK `jni.h` 的 C++ 模式 `JNIEnv=JNIEnv_`(struct) 且无 inline 包装**，不足以校验 Android `env->Method()` 写法，别用 JDK 头当 NDK 替身。
+- **第三方必须 vendor**：`android/app/src/main/cpp/thirdparty/{sqlite3,protobuf-c}`（NDK 不自带），缺则链接失败；取源命令见 docs §4。
+- **复刻 Wayland 教训**：JNI 每帧渲染后 `px[i]|=0xFF000000`（C 光栅不写 alpha，否则 Bitmap 全透明花屏）。
+- 限制：未接真实 GPS/NMEA（点选起终点）、下载是桩、TTS 仅 DRYRUN、minSdk 26、本机未真机编译（待构建机验证）。
+- 部署图集：`adb push products/graph /sdcard/Android/data/com.skedaddle.android/files/`。

@@ -3,13 +3,11 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- 简单地图钉 + 路，代表“导航地图” -->
+    <!-- 简单地图钉 + 路，代表“导航地图”（vector 无 <circle>，用 path 画圆） -->
     <path
         android:fillColor="#FF3B82F6"
         android:pathData="M54,28 C43,28 34,37 34,48 C34,63 54,82 54,82 C54,82 74,63 74,48 C74,37 65,28 54,28 Z" />
-    <circle
+    <path
         android:fillColor="#FFFFFFFF"
-        android:cx="54"
-        android:cy="48"
-        android:r="9" />
+        android:pathData="M54,39 A9,9 0 1,0 54,57 A9,9 0 1,0 54,39 Z" />
 </vector>

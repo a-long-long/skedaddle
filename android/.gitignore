@@ -1,0 +1,21 @@
+# Gradle
+.gradle/
+build/
+app/build/
+# 各机构建机自己的 SDK 路径（local.properties 含机器专属 sdk.dir，禁止提交）
+local.properties
+
+# vendored 第三方源码：NDK 不自带，由 android/scripts/vendor-thirdparty.sh 拉取，
+# 不进 git（避免仓库膨胀 ~10MB）。构建前先跑该脚本。
+app/src/main/cpp/thirdparty/
+
+# 本机（ARM64 Linux）预编译产物：由 android/scripts/build-so-local.sh 生成。
+# Windows x86_64 机器走 externalNativeBuild 标准流程，不产生该文件。
+# 若团队想让 ARM64 机只出 APK（改 Java/资源），可提交此 so。
+app/src/main/jniLibs/
+
+# IDE
+.idea/
+*.iml
+.clangd/
+compile_commands.json
