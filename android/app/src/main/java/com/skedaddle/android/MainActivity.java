@@ -55,6 +55,11 @@ public class MainActivity extends AppCompatActivity {
     private double mStartLat, mStartLon;
 
     private Prefs mPrefs;
+    private File mGraphDir;
+    private AlertDialog mNoMapDialog;
+    /** 去了下载/设置页，返回时 onResume 自动重试 init。 */
+    private boolean mExpectMapChange = false;
+    private boolean mRetrying = false;
 
     private final ArrayList<String> mResultNames = new ArrayList<>();
     private final ArrayList<double[]> mResultCoords = new ArrayList<>();
@@ -83,9 +88,13 @@ public class MainActivity extends AppCompatActivity {
         // 真机可改这里或读取 SharedPreferences。
         File ext = getExternalFilesDir(null);
         String base = (ext != null) ? ext.getAbsolutePath() : getFilesDir().getAbsolutePath();
-        File graphDir = new File(base, "graph");
-        mMap.prepare(graphDir.getAbsolutePath(), filesDir, cacheDir, fontDir, fontPath, 14);
+        mGraphDir = new File(base, "graph");
+        mMap.prepare(mGraphDir.getAbsolutePath(), filesDir, cacheDir, fontDir, fontPath, 14);
         mMap.setOnMapTapListener(this::onMapTap);
+        mMap.setOnInitListener(new MapView.OnInitListener() {
+            @Override public void onInitOk()      { onMapInitOk(); }
+            @Override public void onInitFailed()  { onMapInitFailed(); }
+        });
 
         // 配置中枢：启动时应用已保存的显示开关，并决定是否后台查更新。
         mPrefs = new Prefs(this);
@@ -136,11 +145,15 @@ public class MainActivity extends AppCompatActivity {
             mInfo.setText(R.string.infobar_default);
         });
 
-        bSettings.setOnClickListener(v ->
-                startActivity(new Intent(this, SettingsActivity.class)));
+        bSettings.setOnClickListener(v -> {
+            mExpectMapChange = true;
+            startActivity(new Intent(this, SettingsActivity.class));
+        });
 
-        bDownload.setOnClickListener(v ->
-                startActivity(new Intent(this, DownloadActivity.class)));
+        bDownload.setOnClickListener(v -> {
+            mExpectMapChange = true;
+            startActivity(new Intent(this, DownloadActivity.class));
+        });
     }
 
     // ------------------------------------------------------------------
@@ -279,9 +292,70 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    // ------------------------------------------------------------------
+    // 无地图检测 → 引导下载 → 返回自动重载
+    // ------------------------------------------------------------------
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (mExpectMapChange) {
+            mExpectMapChange = false;
+            if (mMap != null && !mMap.isInited()) {
+                mRetrying = true;
+                mMap.retryInit();
+            }
+        }
+    }
+
+    private void onMapInitOk() {
+        if (isFinishing() || isDestroyed()) return;
+        if (mNoMapDialog != null && mNoMapDialog.isShowing()) mNoMapDialog.dismiss();
+        if (mRetrying) {
+            mRetrying = false;
+            Toast.makeText(getApplicationContext(),
+                    R.string.map_retry_ok, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void onMapInitFailed() {
+        if (isFinishing() || isDestroyed()) return;
+        if (mRetrying) {                 // 重试仍失败：别反复弹窗，只轻提示
+            mRetrying = false;
+            Toast.makeText(getApplicationContext(),
+                    R.string.map_retry_fail, Toast.LENGTH_LONG).show();
+            return;
+        }
+        showNoMapDialog();
+    }
+
+    private void showNoMapDialog() {
+        if (isFinishing() || isDestroyed()) return;
+        if (mNoMapDialog != null && mNoMapDialog.isShowing()) return;
+        String server = (mPrefs != null && mPrefs.hasServer())
+                ? mPrefs.getServerBase() : getString(R.string.server_not_set);
+        String msg = getString(R.string.map_missing_msg,
+                mGraphDir.getAbsolutePath(), server);
+        mNoMapDialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.map_missing_title)
+                .setMessage(msg)
+                .setPositiveButton(R.string.map_missing_download, (d, w) -> {
+                    mExpectMapChange = true;
+                    startActivity(new Intent(this, DownloadActivity.class));
+                })
+                .setNeutralButton(R.string.map_missing_settings, (d, w) -> {
+                    mExpectMapChange = true;
+                    startActivity(new Intent(this, SettingsActivity.class));
+                })
+                .setNegativeButton(R.string.map_missing_later, null)
+                .setCancelable(true)
+                .create();
+        mNoMapDialog.show();
+    }
+
     @Override
     protected void onDestroy() {
         mUi.removeCallbacks(mViewTick);
+        if (mNoMapDialog != null && mNoMapDialog.isShowing()) mNoMapDialog.dismiss();
         mMap.release();
         super.onDestroy();
     }

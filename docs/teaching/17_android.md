@@ -28,8 +28,8 @@
 |---|---|---|
 | `java/.../Skedaddle.java` | 唯一的 native 门面；`static { System.loadLibrary("skedaddle"); }` | `Skedaddle.java:10-75`（声明 30-74） |
 | `cpp/skedaddle_jni.cpp` | JNI 桥：13 个 `Java_com_skedaddle_android_Skedaddle_*` 函数，持有全局 `App g_app` + `SkMutex` | `skedaddle_jni.cpp:32-259` |
-| `java/.../MapView.java` | `SurfaceView` + 30 fps 渲染线程 + 平移/双指缩放/双击/点选反投影 | `MapView.java:27,136-162` |
-| `java/.../MainActivity.java` | 抽 `assets/fonts/` 字体到 files 目录、搜索面板、导航按钮 | `MainActivity.java:42,77-85,263` |
+| `java/.../MapView.java` | `SurfaceView` + 30 fps 渲染线程 + 平移/双指缩放/双击/点选反投影 | `MapView.java:27,179-205` |
+| `java/.../MainActivity.java` | 抽 `assets/fonts/` 字体到 files 目录、搜索面板、导航按钮 | `MainActivity.java:42,82-90,276` |
 | `cpp/CMakeLists.txt` | 复用仓库 `src/` 全部核心源码：`skedaddle_core STATIC` → `skedaddle SHARED` | `CMakeLists.txt:114-127` |
 | `src/utils/plat.c` | Android 目录注入 + TTS/exe/temp/config/font 平台分支 | `plat.c:1205-1244`（详见第 2 课 3.5） |
 | `java/.../Downloader.java` | HTTP 下载 + zip 解包（地图包与 APK 共用） | `Downloader.java:20,34,80` |
@@ -71,17 +71,67 @@ if (!g_mu) g_mu = sk_mutex_create();
 int rc = app_init(&g_app, gdir ? gdir : "", (int)w, (int)h, fp, fs, nullptr);  // ③ 才初始化
 ```
 
-调用链是 `MainActivity`（`MainActivity.java:77-85` 取 `getFilesDir()` / `getCacheDir()`、
-`263` 抽字体）→ `MapView.java:105` 的 `Skedaddle.init(...)` → 上面这段。
+调用链是 `MainActivity`（`MainActivity.java:82-90` 取 `getFilesDir()` / `getCacheDir()`、
+`276` 抽字体）→ `MapView.java:116` 的 `Skedaddle.init(...)` → 上面这段。
 **为什么顺序是硬约束**：`app_init` 内部会读配置目录、建字体，`plat.c` 的
 `sk_config_dir` / `get_font_dir` 在 Android 上唯一的数据来源就是这两个全局量；
 注入晚了，`get_font_dir` 会静默失败 ⇒ `font_open_default()` 返回 NULL ⇒
 `paint_frame` 的 `if(a->font)` 把文字全丢掉。第 12 课记过这条门控，这里就是它的触发路径。
 
+#### 3.2.1 `init` 失败时：检测 → 引导下载 → 自动重载
+
+把失败只写进 Log 是不够的：用户看到的是一块永远写着「正在加载图集…」的黑屏，
+既不知道原因，也找不到入口。`app_init → mapset_load` 在 `graphDir` 不存在、
+或没有含 `manifest.txt` 的省目录时返回 -1（第 5 课），JNI `init` 于是返回 false。
+现在这个结果被接成一条**可操作的路径**：
+
+| 环节 | 落点 |
+|---|---|
+| 检测 | `MapView.java:109-136`：`surfaceChanged` 把 init 结果经 `OnInitListener` 用 `post(...)` 切回主线程 |
+| 引导 | `MainActivity.java:331-353` 弹「未检测到地图数据」：下载省图 / 设置服务器 / 稍后 |
+| 重载 | 从下载页返回 `MainActivity.java:299-307`（`onResume`）调 `MapView.retryInit()`，成功后不必杀进程重启 |
+
+```java
+// MapView.java:143-158（retryInit 完整实现，逐字）
+    public void retryInit() {
+        if (!mPrepared) return;
+        mHint = getResources().getString(R.string.map_hint_loading);
+        new Thread(() -> {
+            boolean ok;
+            synchronized (mInitLock) {
+                if (mW <= 0 || mH <= 0) { notifyInit(false); return; }
+                ok = Skedaddle.init(mGraphDir, mFilesDir, mCacheDir,
+                        mFontDir, mW, mH, mFontPath, mFontSize);
+                mInited = ok;
+                mHint = ok ? null : getResources().getString(R.string.map_hint_missing);
+                Log.i(TAG, ok ? "native init retry OK" : "native init retry FAILED");
+            }
+            notifyInit(ok);
+        }, "skedaddle-init-retry").start();
+    }
+```
+
+画布也不再永远写「正在加载图集…」：`drawInitializing`（`MapView.java:208-217`）读
+`mHint`，由 `prepare` 置为加载中，init 失败后改成「未检测到地图数据 · 请点『下载』获取省图」。
+
+两个容易忽略的点：
+
+- **回调必须切主线程**：`surfaceChanged` 在 `mInitLock` 内，通知只投递 Runnable，
+  不在锁里碰 UI（`MapView.java:132-136`）。
+- **重载要放后台线程**：337MB 级图集放主线程会 ANR；`retryInit` 与渲染线程共用
+  同一把 `mInitLock`，保证不与 `render()` 并发访问进程级 `g_app`。JNI `init` 在
+  `g_inited` 为真时先 `app_shutdown`，所以重复调用是安全的。
+
+> **边界：只检测 + 引导，不自动下载。** 默认 `server_base` 为空，没有服务器就无从
+> 下载；对话框因此同时给「设置服务器」和「下载省图」两个入口，后者在无服务器时还能
+> 走「从本地文件安装」选 zip。另外运行中 `adb push` 热推进来的图集**仍需重启应用**
+> （C 核心只在 init 时扫一次 graph 根），而应用内安装完返回会自动重试——这是两条
+> 路径的区别。
+
 ### 3.3 每帧：30 fps 渲染线程 + 强制不透明
 
 ```java
-// MapView.java:146-159（节选，RenderThread.run）
+// MapView.java:189-204（节选，RenderThread.run）
 c = holder.lockCanvas();
 if (c != null) {
     synchronized (mInitLock) {

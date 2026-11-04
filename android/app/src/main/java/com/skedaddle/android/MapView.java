@@ -58,10 +58,19 @@ public class MapView extends SurfaceView implements SurfaceHolder.Callback {
     private boolean mNavMode = false;
 
     private OnMapTapListener mTapListener;
+    private OnInitListener mInitListener;
+    /** 渲染线程在 init 未成功时显示的提示（主线程写、渲染线程读）。 */
+    private volatile String mHint;
 
     public interface OnMapTapListener {
         /** 导航模式下单击地图，回传该点的经纬度。 */
         void onMapTap(double lat, double lon);
+    }
+
+    /** native 初始化结果回调（已切回主线程）：用于「无地图 → 引导下载」。 */
+    public interface OnInitListener {
+        void onInitOk();
+        void onInitFailed();
     }
 
     public MapView(Context context) { super(context); initHolder(); }
@@ -79,11 +88,13 @@ public class MapView extends SurfaceView implements SurfaceHolder.Callback {
         mGraphDir = graphDir; mFilesDir = filesDir; mCacheDir = cacheDir;
         mFontDir = fontDir; mFontPath = fontPath; mFontSize = fontSize;
         mPrepared = true;
+        mHint = getResources().getString(R.string.map_hint_loading);
     }
 
     public void setNavMode(boolean on) { mNavMode = on; }
     public boolean isNavMode() { return mNavMode; }
     public void setOnMapTapListener(OnMapTapListener l) { mTapListener = l; }
+    public void setOnInitListener(OnInitListener l) { mInitListener = l; }
     public boolean isInited() { return mInited; }
 
     // ------------------------------------------------------------------
@@ -106,12 +117,44 @@ public class MapView extends SurfaceView implements SurfaceHolder.Callback {
                         mFontDir, mW, mH, mFontPath, mFontSize);
                 if (ok) {
                     mInited = true;
+                    mHint = null;
                     Log.i(TAG, "native init OK " + mW + "x" + mH);
                 } else {
+                    mHint = getResources().getString(R.string.map_hint_missing);
                     Log.e(TAG, "native init FAILED —— 检查 graphDir 路径与图集");
                 }
+                notifyInit(ok);
             }
         }
+    }
+
+    /** 把 init 结果切回主线程通知，避免在 mInitLock 内直接碰 UI。 */
+    private void notifyInit(boolean ok) {
+        OnInitListener l = mInitListener;
+        if (l == null) return;
+        post(() -> { if (ok) l.onInitOk(); else l.onInitFailed(); });
+    }
+
+    /**
+     * 图集装好后重新尝试 native init（从下载页返回时调用，无需杀进程重启）。
+     * 加载 337MB 级图集较耗时 ⇒ 放后台线程；与渲染线程共用 mInitLock，
+     * 保证不会和 render() 并发访问 C 核心的进程级 App。
+     */
+    public void retryInit() {
+        if (!mPrepared) return;
+        mHint = getResources().getString(R.string.map_hint_loading);
+        new Thread(() -> {
+            boolean ok;
+            synchronized (mInitLock) {
+                if (mW <= 0 || mH <= 0) { notifyInit(false); return; }
+                ok = Skedaddle.init(mGraphDir, mFilesDir, mCacheDir,
+                        mFontDir, mW, mH, mFontPath, mFontSize);
+                mInited = ok;
+                mHint = ok ? null : getResources().getString(R.string.map_hint_missing);
+                Log.i(TAG, ok ? "native init retry OK" : "native init retry FAILED");
+            }
+            notifyInit(ok);
+        }, "skedaddle-init-retry").start();
     }
 
     @Override
@@ -168,7 +211,8 @@ public class MapView extends SurfaceView implements SurfaceHolder.Callback {
             p.setColor(Color.WHITE);
             p.setTextSize(24);
             p.setTextAlign(Paint.Align.CENTER);
-            String msg = mPrepared ? "正在加载图集…" : "未初始化（缺少图集路径）";
+            String msg = mHint != null ? mHint
+                    : getResources().getString(R.string.map_hint_unprepared);
             c.drawText(msg, c.getWidth() / 2f, c.getHeight() / 2f, p);
         }
     }

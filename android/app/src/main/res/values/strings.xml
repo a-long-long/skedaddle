@@ -57,4 +57,17 @@
     <string name="map_action_reinstall">重新下载</string>
     <string name="pick_zip_title">选择省图 zip 包</string>
     <string name="map_loading">加载中…</string>
+
+    <!-- 无地图检测 → 引导下载 → 返回自动重载 -->
+    <string name="map_hint_loading">正在加载图集…</string>
+    <string name="map_hint_missing">未检测到地图数据 · 请点「下载」获取省图</string>
+    <string name="map_hint_unprepared">未初始化（缺少图集路径）</string>
+    <string name="map_missing_title">未检测到地图数据</string>
+    <string name="map_missing_msg">应用专属目录下没有可用省图：\n%1$s\n\n当前更新服务器：%2$s\n\n可用「下载省图」在线获取或本地 zip 安装；也可用 adb push 推入图集。</string>
+    <string name="map_missing_download">下载省图</string>
+    <string name="map_missing_settings">设置服务器</string>
+    <string name="map_missing_later">稍后</string>
+    <string name="map_retry_ok">地图已加载</string>
+    <string name="map_retry_fail">仍未检测到地图，请确认省图已安装完整</string>
+    <string name="server_not_set">未配置（仅本地 zip 安装）</string>
 </resources>

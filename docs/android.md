@@ -208,21 +208,26 @@ shaanxi(陕西), shandong, henan, liaoning。
   32 位 ARM 或 x86 模拟器会 `INSTALL_FAILED_NO_MATCHING_ABIS`。
 - `minSdk 26`（Android 8.0+）、`targetSdk 33`；`application-debuggable` + debug
   签名（`CN=Android Debug`），v2 签名 `Verifies`。系统需允许「安装未知来源应用」。
-- APK 13,622,241 B；CJK 字体与 `libc++_shared.so` 已打包，so 的 `NEEDED` 只有
+- APK 约 13 MB（debug 包，体积随构建机略有差异）；CJK 字体与 `libc++_shared.so`
+  已打包，so 的 `NEEDED` 只有
   `liblog / libz / libm / libdl / libc / libc++_shared`，13 个 JNI 符号全部导出，
   `MainActivity` / `MapView` / `Skedaddle` 等类都在 dex 里。
 
-**装完直接打开是黑屏** —— `MainActivity` 把 `graphDir` 固定为
+**装完直接打开会弹引导** —— `MainActivity` 把 `graphDir` 固定为
 `getExternalFilesDir(null)/graph`。`app_init → mapset_load` 在目录不存在、或没有
-含 `manifest.txt` 的省目录时直接返回 -1；JNI `Skedaddle.init` 于是返回 false，
-`MapView` 渲染线程永远画黑底「正在加载图集…」。**不会闪退**（13 个 JNI 入口
-都判 `g_inited`），但也没有地图。所以顺序必须是：
+含 `manifest.txt` 的省目录时直接返回 -1；JNI `Skedaddle.init` 于是返回 false。
+此时 `MapView` 经 `OnInitListener` 回调 `MainActivity`，弹出「未检测到地图数据」
+对话框（下载省图 / 设置服务器 / 稍后），画布同时显示提示文案。13 个 JNI 入口
+都判 `g_inited`，所以不会闪退。按顺序装机：
 
 1. 装 APK 并启动一次（抽字体、建私有目录）。
 2. `adb push products/graph /sdcard/Android/data/com.skedaddle.android/files/`
    —— 落到 `files/graph/<省>/...`；只想试跑可只推单省
    `products/graph/beijing`（约 337 MB，含 `disp.idx` / `lanes.bin` / `t_*`）。
-3. **完全退出再启动**：C 核心只在 init 时扫一次 graph 根，热推不会重载。
+3. **完全退出再启动**：C 核心只在 init 时扫一次 graph 根，`adb push` 热推不会重载。
+   若走应用内「下载省图 / 从本地 zip 安装」，从下载页返回 `onResume` 会自动
+   `retryInit()` 重新加载图集，**无需手动杀进程重启**（`MainActivity.java:299-307`、
+   `MapView.java:143-158`）。
 
 个别 Android 11+ ROM 会拒绝 `adb push` 进 `Android/data`；替代做法是把省目录推到
 `/sdcard/`，用「下载省图」里的「从本地文件安装」选 zip，或改
@@ -277,6 +282,8 @@ shaanxi(陕西), shandong, henan, liaoning。
 - **真机验证待做**：ARM64 Linux（§5.1）与 x86_64 Windows（§5.2）都已编出 so + APK，
   Java/JNI 语法、符号链接与签名全通过，但**两者都没有在真机上跑过** init/渲染/算路。
 - **minSdk 26**：仅 Android 8.0+，故图标用 XML 自适应（无需打包 PNG）。
+- **无地图只引导、不自动下载**：`server_base` 默认为空，没有配置服务器就无从下载；
+  未配置时只能「从本地文件安装」选 zip 或 `adb push` 推入图集（见 §6.1）。
 - **地名搜索在 Android 上默认不可用**：`app_init` 里
   `search_open("products/places_auto.db")` 是相对路径，Android 进程没有这个目录，
   且 v1 的 `assets/` 里也没带该库；`a->sdb == NULL` 时 `app_search_query` 直接返回 0
@@ -285,8 +292,9 @@ shaanxi(陕西), shandong, henan, liaoning。
 ### 已落地的“增量更新 / OTA”能力（见 §11）
 
 - **地图数据增量更新**：`DownloadActivity` 已不再是桩——可拉省图清单、扫描本地已装省与
-  版本、逐省下载/更新，或从本地 zip 安装。但 C 核心在 `init` 时一次性加载 graph 根，
-  **新增/更新省后需重启应用**才会被加载（当前未做热重载）。
+  版本、逐省下载/更新，或从本地 zip 安装。C 核心在 `init` 时一次性加载 graph 根，
+  但从下载页返回 `onResume` 会自动 `retryInit()` 重载，**无需杀进程重启**；只有运行中
+  `adb push` 热推或后台改目录才需要重启应用（真正的进程内热换省仍未做）。
 - **App 自更新（OTA）**：`SettingsActivity` 的“检查更新”可拉 `app/update.json`、比较
   versionCode、下载 APK 并经 FileProvider 调起系统安装器（需
   `REQUEST_INSTALL_PACKAGES` 权限，Android 8+）。
@@ -299,7 +307,8 @@ shaanxi(陕西), shandong, henan, liaoning。
 - `app_nav_via` / 途经点。
 - 浮层/昼夜/网格开关（已有 `App` 字段，加 JNI 即暴露）。
 - 离线 TTS 引擎接入（如 Vosk / 系统 TTS）。
-- 地图省图**热重载**（当前 init 一次性加载 graph 根，新增/更新省需重启应用）。
+- 真正的地图省图**热重载**（进程内换省不重跑 init）：目前只有「从下载页返回时
+  `retryInit()` 一次」，运行中 `adb push` 新省仍需重启应用。
 
 ## 11. 增量更新 / OTA（已落地）
 
