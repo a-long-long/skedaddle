@@ -54,6 +54,8 @@ public class MainActivity extends AppCompatActivity {
     private boolean mHasStart = false;
     private double mStartLat, mStartLon;
 
+    private Prefs mPrefs;
+
     private final ArrayList<String> mResultNames = new ArrayList<>();
     private final ArrayList<double[]> mResultCoords = new ArrayList<>();
     private ArrayAdapter<String> mResultAdapter;
@@ -85,6 +87,12 @@ public class MainActivity extends AppCompatActivity {
         mMap.prepare(graphDir.getAbsolutePath(), filesDir, cacheDir, fontDir, fontPath, 14);
         mMap.setOnMapTapListener(this::onMapTap);
 
+        // 配置中枢：启动时应用已保存的显示开关，并决定是否后台查更新。
+        mPrefs = new Prefs(this);
+        Skedaddle.setShowFlags(mPrefs.getFlagPoi() ? 1 : 0,
+                mPrefs.getFlagLabels() ? 1 : 0,
+                mPrefs.getFlagContours() ? 1 : 0);
+
         mResultAdapter = new ArrayAdapter<>(this,
                 android.R.layout.simple_list_item_1, android.R.id.text1, mResultNames);
         mResults.setAdapter(mResultAdapter);
@@ -94,6 +102,8 @@ public class MainActivity extends AppCompatActivity {
 
         // 底栏刷新：每 500ms 读一次视口。
         mUi.postDelayed(mViewTick, 500);
+
+        if (mPrefs.getAutoUpdate()) maybeCheckUpdate();
     }
 
     // ------------------------------------------------------------------
@@ -126,7 +136,8 @@ public class MainActivity extends AppCompatActivity {
             mInfo.setText(R.string.infobar_default);
         });
 
-        bSettings.setOnClickListener(v -> openSettings());
+        bSettings.setOnClickListener(v ->
+                startActivity(new Intent(this, SettingsActivity.class)));
 
         bDownload.setOnClickListener(v ->
                 startActivity(new Intent(this, DownloadActivity.class)));
@@ -210,23 +221,26 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ------------------------------------------------------------------
-    // 设置对话框
+    // 自动检查应用更新（最多每 24h 一次，发现新版本仅轻提示，不自动下载）
     // ------------------------------------------------------------------
-    private void openSettings() {
-        boolean[] states = {true, true, true};
-        String[] labels = {
-                getString(R.string.opt_poi),
-                getString(R.string.opt_labels),
-                getString(R.string.opt_contours)};
-        AlertDialog.Builder b = new AlertDialog.Builder(this);
-        b.setTitle(R.string.settings_title);
-        b.setMultiChoiceItems(labels, states, (d, which, checked) -> states[which] = checked);
-        b.setPositiveButton(android.R.string.ok, (d, w) -> {
-            Skedaddle.setShowFlags(states[0] ? 1 : 0, states[1] ? 1 : 0, states[2] ? 1 : 0);
-            Toast.makeText(this, "已应用", Toast.LENGTH_SHORT).show();
-        });
-        b.setNegativeButton(android.R.string.cancel, null);
-        b.show();
+    private void maybeCheckUpdate() {
+        long now = System.currentTimeMillis();
+        if (now - mPrefs.getLastUpdateCheck() < 24L * 3600 * 1000) return;
+        mPrefs.setLastUpdateCheck(now);
+        new Thread(() -> {
+            try {
+                int cur = getPackageManager()
+                        .getPackageInfo(getPackageName(), 0).versionCode;
+                Manifests.AppUpdate u = UpdateChecker.fetchUpdate(mPrefs, cur);
+                if (u != null) {
+                    runOnUiThread(() -> Toast.makeText(this,
+                            getString(R.string.update_available_fmt, u.versionName),
+                            Toast.LENGTH_LONG).show());
+                }
+            } catch (Exception ignored) {
+                // 静默失败（无服务器/网络错）；用户可在设置手动查
+            }
+        }).start();
     }
 
     // ------------------------------------------------------------------

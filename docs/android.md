@@ -44,8 +44,14 @@ android/
       java/com/skedaddle/android/
         Skedaddle.java          native 桥（方法名决定 JNI 函数名）
         MapView.java            SurfaceView + 渲染线程 + 手势
-        MainActivity.java       顶栏/搜索/导航/设置/下载
-        DownloadActivity.java   下载桩（v1 未接服务）
+        MainActivity.java       顶栏/搜索/导航/设置入口/自动更新检查
+        DownloadActivity.java   地图数据增量更新（拉清单+扫描本地+逐省下载/本地安装）
+        SettingsActivity.java   设置中心（服务器/自动更新/检查更新/显示开关/关于）
+        Prefs.java             配置中枢（SharedPreferences；新增开关从这里加）
+        Downloader.java        通用 HTTP 下载 + zip 解包（地图与 APK 共用）
+        Manifests.java         省图清单 / 应用更新清单解析（org.json）
+        UpdateChecker.java     App 自更新（OTA）：拉清单+下载 APK+FileProvider 安装
+      res/xml/file_paths.xml   FileProvider 暴露 updates/ 与 graph/ 给系统安装器
       res/                      布局、字符串、主题、自适应图标
       cpp/
         CMakeLists.txt          复用 src/ 全部核心源码
@@ -191,7 +197,6 @@ shaanxi(陕西), shandong, henan, liaoning。
 
 - **未接真实 GPS / NMEA**：导航是“屏幕点选起终点 + 模拟”，不接定位源（桌面端有模拟
   导航，本端暂未暴露对应 JNI；后续可加 `sim_*` 桥）。
-- **下载是桩**：`DownloadActivity` 仅列出省并说明 adb 推送方式，真实 HTTP 下载未接。
 - **离线 TTS 桩**：Android 上 `sk_tts_speak` 仅保留 DRYRUN 写盘分支（无离线语音引擎），
   语音播报不发声。
 - **视觉/样式**：顶底栏是简易浮层，未做 Material 精细布局；浮层透明度等桌面端特性未接。
@@ -199,10 +204,89 @@ shaanxi(陕西), shandong, henan, liaoning。
   语法与符号链接全通过，但尚未在真机上跑过 init/渲染/算路。
 - **minSdk 26**：仅 Android 8.0+，故图标用 XML 自适应（无需打包 PNG）。
 
+### 已落地的“增量更新 / OTA”能力（见 §11）
+
+- **地图数据增量更新**：`DownloadActivity` 已不再是桩——可拉省图清单、扫描本地已装省与
+  版本、逐省下载/更新，或从本地 zip 安装。但 C 核心在 `init` 时一次性加载 graph 根，
+  **新增/更新省后需重启应用**才会被加载（当前未做热重载）。
+- **App 自更新（OTA）**：`SettingsActivity` 的“检查更新”可拉 `app/update.json`、比较
+  versionCode、下载 APK 并经 FileProvider 调起系统安装器（需
+  `REQUEST_INSTALL_PACKAGES` 权限，Android 8+）。
+- **配置中枢 `Prefs`**：所有运行时偏好（服务器地址、自动更新、显示开关）集中于
+  `Prefs.java`，新增功能开关不必散落 Activity。
+
 ## 10. 后续可加（非 v1）
 
 - `app_nav_sim_*` 桥（模拟导航 + 车头跟随）。
 - `app_nav_via` / 途经点。
-- 真实下载服务 + 解包 + 进度。
 - 浮层/昼夜/网格开关（已有 `App` 字段，加 JNI 即暴露）。
 - 离线 TTS 引擎接入（如 Vosk / 系统 TTS）。
+- 地图省图**热重载**（当前 init 一次性加载 graph 根，新增/更新省需重启应用）。
+
+## 11. 增量更新 / OTA（已落地）
+
+两类更新共用 `Downloader`（HTTP + zip 解包）与 `Prefs`（服务器地址等配置）。
+
+### 11.1 地图数据增量更新
+
+入口：`DownloadActivity`（顶栏“下载”按钮）。行为：
+
+- 若已在 `SettingsActivity` 配置**更新服务器**，拉 `<serverBase>/map/manifest.json`；
+  否则列出内置省、仅支持“从本地文件安装”。
+- 扫描本地 `graph/` 子目录，读取 `<省>/.skversion` 得到已装版本（无文件=未知版本）。
+- 每行显示状态：未安装 / 已装 vX / 可更新 → vY，并提供 下载 / 更新 / 重新下载 按钮。
+- 远程下载：`<serverBase>` + 清单 `url` → 解包到 `graph/<id>/` 并写 `.skversion`。
+- 本地安装：`ACTION_OPEN_DOCUMENT` 选 zip（顶层即 `<id>/…`）→ 解包到 `graph/` 并对新目录写 `.skversion`。
+
+**省图清单格式**（`map/manifest.json`）：
+
+```json
+{
+  "updated": "2026-11-04",
+  "provinces": [
+    {"id": "beijing", "name": "北京", "version": 3, "size": 12345678,
+     "url": "/map/beijing.zip"},
+    {"id": "shaanxi", "name": "陕西", "version": 1, "size": 9876543,
+     "url": "https://cdn.example.com/map/shaanxi.zip"}
+  ]
+}
+```
+
+- `url` 可为相对（`serverBase` 拼接）或完整 http(s)。
+- `version` 仅用于判断“可更新”（> 已装版本）；`size` 仅展示。
+
+### 11.2 App 自更新（OTA）
+
+入口：`SettingsActivity` → “检查更新”（勾选“自动检查应用更新”后，启动每天最多查一次）。
+
+- 拉 `<serverBase>/app/update.json`，比较 `versionCode`；大于已装才提示。
+- 下载 APK 到 `<external-files>/updates/skedaddle-update.apk`，经 `FileProvider`
+  （`authorities = <applicationId>.fileprovider`，见 `res/xml/file_paths.xml`）调起系统
+  安装器。**需 `REQUEST_INSTALL_PACKAGES` 权限**（Android 8+）。
+
+**应用更新清单格式**（`app/update.json`）：
+
+```json
+{
+  "versionCode": 2,
+  "versionName": "0.3-android",
+  "apkUrl": "/app/skedaddle-0.3-android.apk",
+  "notes": "新增 XX、修复 YY"
+}
+```
+
+> 发新版时把 `versionCode` 递增（当前 `app/build.gradle` 是 1），否则设备不会判定为“可更新”。
+
+### 11.3 如何自托管
+
+任意静态文件服务（`nginx` / 对象存储 / GitHub Pages）即可，目录结构：
+
+```
+<serverBase>/
+  map/manifest.json
+  map/<省>.zip          # 顶层为 <省>/…（与 products/graph/<省> 一致）
+  app/update.json
+  app/skedaddle-<ver>.apk
+```
+
+`serverBase` 在 App 内“设置”填写（持久化到 `Prefs`）；留空则只用本地安装、无 OTA。

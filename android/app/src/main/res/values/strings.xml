@@ -17,10 +17,44 @@
     <string name="route_fail">该起终点不可达</string>
     <string name="route_ok">里程 %.1f km · 预计 %.0f 分</string>
 
-    <string name="settings_title">显示设置</string>
+    <string name="settings_title">设置</string>
     <string name="opt_poi">POI 图标</string>
     <string name="opt_labels">地名标注</string>
     <string name="opt_contours">等高线</string>
 
     <string name="infobar_default">拖动平移 · 双指缩放 · 双击放大</string>
+
+    <!-- 设置中心 -->
+    <string name="settings_server">更新服务器</string>
+    <string name="settings_server_hint">https://your-server（留空=仅本地/手动）</string>
+    <string name="settings_auto_update">自动检查应用更新</string>
+    <string name="settings_check_update">检查更新</string>
+    <string name="settings_display">显示选项</string>
+    <string name="settings_apply_display">应用显示设置</string>
+
+    <!-- 应用更新（OTA） -->
+    <string name="update_checking">正在检查更新…</string>
+    <string name="update_available_fmt">发现新版本 %s，去“设置-检查更新”下载</string>
+    <string name="update_none">已是最新版本</string>
+    <string name="update_no_server">未配置更新服务器（设置里填）</string>
+    <string name="update_fail">更新检查失败：%s</string>
+    <string name="update_downloading">正在下载新版本…</string>
+    <string name="update_downloaded">下载完成，正在调起安装…</string>
+
+    <!-- 地图数据增量更新 -->
+    <string name="download_install_local">从本地文件安装</string>
+    <string name="download_from_server_first">请先在“设置”配置更新服务器</string>
+    <string name="download_start">开始：%s</string>
+    <string name="download_progress">%1$d / %2$d KB</string>
+    <string name="download_done">已安装 %s，重启应用生效</string>
+    <string name="download_fail">失败：%s</string>
+    <string name="map_status_none">未安装</string>
+    <string name="map_status_installed">已装 v%1$d</string>
+    <string name="map_status_unknown">已装（未知版本）</string>
+    <string name="map_status_update">可更新 → v%1$d</string>
+    <string name="map_action_install">下载</string>
+    <string name="map_action_update">更新</string>
+    <string name="map_action_reinstall">重新下载</string>
+    <string name="pick_zip_title">选择省图 zip 包</string>
+    <string name="map_loading">加载中…</string>
 </resources>

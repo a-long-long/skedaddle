@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- APK 自更新：下载到 <external-files>/updates/ -->
+    <external-files-path name="updates" path="updates/" />
+    <!-- 地图省图：解包到 <external-files>/graph/ -->
+    <external-files-path name="graph" path="graph/" />
+    <!-- 字体/临时文件 -->
+    <cache-path name="cache" path="." />
+</paths>

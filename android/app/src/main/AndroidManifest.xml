@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- 下载省图（DownloadActivity 桩）需要网络；离线导航本身不需要。 -->
+    <!-- 下载省图 / 应用自更新都需要网络；离线导航本身不需要。 -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Android 8+ 调起系统安装器安装未知来源 APK 需要此权限（OTA 自更新）。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- v1 不接真实 GPS；模拟导航用屏幕点选，故不申请定位权限。 -->
 
@@ -25,11 +28,28 @@
             </intent-filter>
         </activity>
 
-        <!-- 下载省图桩：列出可选省 + 给出获取方式（真实下载服务未接）。 -->
+        <!-- 设置中心：服务器地址 / 自动更新 / 检查更新 / 显示开关 / 关于。 -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="@string/settings_title" />
+
+        <!-- 地图数据增量更新：拉清单 + 逐省下载/更新/本地安装。 -->
         <activity
             android:name=".DownloadActivity"
             android:exported="false"
             android:label="@string/download_title" />
+
+        <!-- APK 自更新经 FileProvider 暴露应用私有文件给系统安装器。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

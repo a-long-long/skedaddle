@@ -26,7 +26,7 @@ android {
         minSdk 26          // 26+ 仅用 XML 自适应图标（无需打包 PNG）；老设备不在此 v1 范围
         targetSdk 33
         versionCode 1
-        versionName "0.1-android"
+        versionName "0.2-android"   // 已含地图增量更新 + OTA 自更新；OTA 下个版本需 versionCode=2
 
         ndk {
             // 构建机需安装与此一致的 NDK；版本可在 Android Studio SDK Manager 装。
