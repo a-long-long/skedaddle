@@ -65,12 +65,19 @@ android/
 
 ## 3. 前置（构建机）
 
+- **JDK 17（必需）**：AGP 8.1.4 在 JDK 22 下会在 Groovy 语义分析阶段直接报
+  `Unsupported class file major version 66`。Gradle 8.7 本身支持 Java 22，但 AGP 不支持。
 - **Android SDK** + **NDK**（建议 25.x 或 21.x，版本号要与 `app/build.gradle` 的
   `ndk { }` 一致；在 SDK Manager 安装）。
 - **CMake** ≥ 3.22（Gradle 的 `externalNativeBuild` 会用）。
-- **host 端 `protoc-c`**：图集解码依赖 protobuf-c 的 C binding，由 host（非交叉）生成
-  `osmformat.pb-c.c / fileformat.pb-c.c`。桌面构建机在 `env.sh` 里已就绪；纯 Android
-  构建机需另装 `protobuf-c` 工具。
+- **host 端 protobuf-c 代码生成器**：图集解码依赖 protobuf-c 的 C binding，由 host
+  （非交叉）生成 `osmformat.pb-c.c / fileformat.pb-c.c`。Linux 用独立 `protoc-c`；
+  Windows/MSYS2 的 `protoc-c.exe` 实为 `protoc-gen-c` 插件二进制（与
+  `protoc-gen-c.exe` 同一份），需把 `protoc.exe` + `protoc-gen-c.exe` 放进 PATH，
+  `cpp/CMakeLists.txt` 的 `CMAKE_HOST_WIN32` 分支会自动改走
+  `protoc --plugin=protoc-gen-c=...`（Android 属交叉编译，`WIN32` 描述 target，
+  恒为 false，不能用来判宿主）。
+  桌面构建机在 `env.sh` 里已就绪；纯 Android 构建机需另装 `protobuf-c` 工具。
 - **可选但推荐**：`gradle` 8.x（或用 Android Studio 打开后它自动生成 `gradlew` 与 wrapper）。
 
 ## 4. 第三方库 vendor（必须，否则链接失败）
@@ -151,7 +158,34 @@ cd android && ./gradlew :app:assembleDebug        # 出 APK
 `~/tools/android/bin/aapt2` 是两行 wrapper（`exec box64 aapt2-x64/aapt2 "$@"`），
 x86_64 真身已从 AGP maven jar 解到 `~/tools/android/aapt2-x64/`；
 `gradle.properties` 的 `android.aapt2FromMavenOverride` 指向该 wrapper。
-x86_64 宿主（Windows）不装 box64 也不受影响——AGP 找不到 override 时自然回退。
+⚠ x86_64 宿主（Windows）**必须**用 `-Pandroid.aapt2FromMavenOverride=<本机 aapt2>`
+覆盖这一行：实测 AGP 8.1.4 遇到不存在的 override 路径**不会**回退 maven aapt2，
+而是报 `Custom AAPT2 location does not point to an AAPT2 executable` 并中止配置。
+详见 §5.2。
+
+### 5.2 x86_64 Windows 宿主：标准流程（2026-11-04 实测）
+
+官方 NDK 带 Windows 宿主 clang/ninja，直接走 `externalNativeBuild`，无需预编译 so。
+前置：JDK 17、Android SDK（`platforms;android-34` / `build-tools;34.0.0` /
+`platform-tools`）、NDK 25.1.8937393、CMake 3.22.1、MSYS2 的 `protoc.exe` +
+`protoc-gen-c.exe`（放进 PATH），以及 §4 的 vendor 第三方源码。
+
+```bash
+export JAVA_HOME=<JDK17 目录>
+export ANDROID_HOME=<Android SDK 目录>
+export GRADLE_USER_HOME=<独立目录，避开全局 init.gradle>
+export PATH="$JAVA_HOME/bin:$PATH:<MSYS2>/ucrt64/bin"
+cd android
+./gradlew :app:assembleDebug --no-daemon \
+  -Pandroid.aapt2FromMavenOverride=<SDK>/build-tools/34.0.0/aapt2.exe
+```
+
+`-Pandroid.aapt2FromMavenOverride` 不能省（原因见 §5.1 末）。本机实测：
+`BUILD SUCCESSFUL`，产物 `app/build/outputs/apk/debug/app-debug.apk` 12 MB，
+含 `lib/arm64-v8a/libskedaddle.so` 1.50 MB（ELF64 / AArch64）、3 个 dex、
+DroidSansFallback.ttf；`aapt2 dump badging` = `com.skedaddle.android`
+versionCode 1 / `0.2-android` / minSdk 26 / targetSdk 33；`apksigner verify`
+v2 签名通过。注意这只是**构建产物验证**，真机运行仍需 §6 推图集。
 
 ## 6. 部署图集（必须，否则 init 失败）
 

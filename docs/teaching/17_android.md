@@ -30,7 +30,7 @@
 | `cpp/skedaddle_jni.cpp` | JNI 桥：13 个 `Java_com_skedaddle_android_Skedaddle_*` 函数，持有全局 `App g_app` + `SkMutex` | `skedaddle_jni.cpp:32-259` |
 | `java/.../MapView.java` | `SurfaceView` + 30 fps 渲染线程 + 平移/双指缩放/双击/点选反投影 | `MapView.java:27,136-162` |
 | `java/.../MainActivity.java` | 抽 `assets/fonts/` 字体到 files 目录、搜索面板、导航按钮 | `MainActivity.java:42,77-85,263` |
-| `cpp/CMakeLists.txt` | 复用仓库 `src/` 全部核心源码：`skedaddle_core STATIC` → `skedaddle SHARED` | `CMakeLists.txt:101-114` |
+| `cpp/CMakeLists.txt` | 复用仓库 `src/` 全部核心源码：`skedaddle_core STATIC` → `skedaddle SHARED` | `CMakeLists.txt:114-127` |
 | `src/utils/plat.c` | Android 目录注入 + TTS/exe/temp/config/font 平台分支 | `plat.c:1205-1244`（详见第 2 课 3.5） |
 | `java/.../Downloader.java` | HTTP 下载 + zip 解包（地图包与 APK 共用） | `Downloader.java:20,34,80` |
 | `java/.../Manifests.java` | 解析 `map/manifest.json` 与 `app/update.json` | `Manifests.java:18,34,63` |
@@ -114,7 +114,7 @@ alpha=0 ⇒ **整屏全透明花屏**。这与第 12 课 Wayland 下 `map_canvas
 ### 3.4 CMake：整核心进 STATIC，只把 JNI 桥做成 SHARED
 
 ```cmake
-# android/app/src/main/cpp/CMakeLists.txt:101-114（节选）
+# android/app/src/main/cpp/CMakeLists.txt:114-127（节选）
 add_library(skedaddle_core STATIC
   ${PBF_SRCS} ${MAP_SRCS} ${ROUTE_SRCS} ${SEARCH_SRCS} ${RENDER_SRCS}
   ${UI_SRCS} ${UTILS_SRCS} ${EXTRA_TP})
@@ -128,8 +128,17 @@ target_link_libraries(skedaddle PRIVATE skedaddle_core log)
 Android 工程里没有任何 `src/` 的拷贝。编成单个 STATIC 再链进 SHARED，是为了避开桌面端
 多库链接顺序问题（第 13 课记过 `-Wl,--start-group` 被移除的历史）。
 
+> **宿主判据别写成 `WIN32`**（`CMakeLists.txt:19-42`）：protobuf-c 绑定由 host 工具
+> 生成，而 Android 是交叉编译——CMake 的 `WIN32` 描述的是 **target**（这里是
+> Android，恒为 false），判断宿主必须用 `CMAKE_HOST_WIN32`。Windows/MSYS2 的
+> `protoc-c.exe` 其实是 `protoc-gen-c` 插件二进制（与 `protoc-gen-c.exe` 同一份
+> 文件），不认 `--c_out`，所以走 `protoc --plugin=protoc-gen-c=... --c_out=`；
+> Linux 才用独立 `protoc-c`。桌面 `CMakeLists.txt` 的 `if(WIN32)` 能成立，只因
+> 它的 target 就是 Windows。判据写错的表现很隐蔽：CMake 配置不报错，直到 ninja
+> 执行生成命令才抛 `Unknown option: --c_out`。
+
 > **第三方必须 vendor**：NDK 不自带 `sqlite3` 与 `protobuf-c` 运行时，缺了会直接链接失败
-> （`CMakeLists.txt:43-67` 有 WARNING）。`android/scripts/vendor-thirdparty.sh` 负责取源，
+> （`CMakeLists.txt:56-80` 有 WARNING）。`android/scripts/vendor-thirdparty.sh` 负责取源，
 > `thirdparty/` 被 `.gitignore` 排除——**克隆后不跑这个脚本必失败**。
 > 这也是「构建」与「教程」分工的原因：命令在 `docs/android.md` §4，本课只讲依赖为什么存在。
 

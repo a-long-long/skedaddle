@@ -17,13 +17,26 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -O2")
 
 # ---------------------------------------------------------------------------
-# protobuf-c 代码生成（host 端 protoc-c，不交叉编译；与 desktop 一致）
+# protobuf-c 代码生成（host 端工具，不交叉编译；与桌面 CMakeLists.txt 同口径）
+# Linux: protoc-c 是独立生成器，可直接 `--c_out=`。
+# Windows/MSYS2: protoc-c.exe 实为 protoc-gen-c 插件二进制（与 protoc-gen-c.exe
+#   是同一份文件），不认 --c_out，必须走 protoc + --plugin=protoc-gen-c=...。
+# ★ 用 CMAKE_HOST_WIN32 而非 WIN32：这里生成的是 **host 工具**，而 Android 属
+#   交叉编译，WIN32 描述的是 target（恒为 false）；桌面 CMakeLists 的 WIN32
+#   分支能用，是因为它的 target 就是 Windows。
 # ---------------------------------------------------------------------------
-find_program(PROTOC_C NAMES protoc-c)
-if(NOT PROTOC_C)
-  message(FATAL_ERROR
-    "host 端 protoc-c 未找到（用于生成 osmformat/fileformat 的 C binding）。"
-    "请在构建机安装 protobuf-c 工具（或 source env.sh）。")
+if(CMAKE_HOST_WIN32)
+  find_program(PROTOC NAMES protoc REQUIRED)
+  find_program(PROTOC_GEN_C NAMES protoc-gen-c protoc-gen-c.exe REQUIRED)
+  set(PROTOC_GEN_CMD ${PROTOC} --plugin=protoc-gen-c=${PROTOC_GEN_C})
+else()
+  find_program(PROTOC_C NAMES protoc-c)
+  if(NOT PROTOC_C)
+    message(FATAL_ERROR
+      "host 端 protoc-c 未找到（用于生成 osmformat/fileformat 的 C binding）。"
+      "请在构建机安装 protobuf-c 工具（或 source env.sh）。")
+  endif()
+  set(PROTOC_GEN_CMD ${PROTOC_C})
 endif()
 set(GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY ${GEN_DIR})
@@ -32,7 +45,7 @@ set(PROTO_HDRS ${GEN_DIR}/osmformat.pb-c.h ${GEN_DIR}/fileformat.pb-c.h)
 set_source_files_properties(${PROTO_SRCS} ${PROTO_HDRS} PROPERTIES GENERATED TRUE)
 add_custom_command(
   OUTPUT ${PROTO_SRCS} ${PROTO_HDRS}
-  COMMAND ${PROTOC_C} --c_out=${GEN_DIR} -I ${SKEDADDLE_SRC_ROOT}/proto
+  COMMAND ${PROTOC_GEN_CMD} --c_out=${GEN_DIR} -I ${SKEDADDLE_SRC_ROOT}/proto
           ${SKEDADDLE_SRC_ROOT}/proto/osmformat.proto
           ${SKEDADDLE_SRC_ROOT}/proto/fileformat.proto
   DEPENDS ${SKEDADDLE_SRC_ROOT}/proto/osmformat.proto

@@ -2,6 +2,8 @@
 .gradle/
 build/
 app/build/
+# AGP externalNativeBuild 的 CMake/Ninja 中间产物（各机不同，禁止提交）
+app/.cxx/
 # 各机构建机自己的 SDK 路径（local.properties 含机器专属 sdk.dir，禁止提交）
 local.properties
 
