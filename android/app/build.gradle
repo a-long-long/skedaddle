@@ -1,0 +1,62 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.skedaddle.android'
+    compileSdk 33
+
+    defaultConfig {
+        applicationId "com.skedaddle.android"
+        minSdk 26          // 26+ 仅用 XML 自适应图标（无需打包 PNG）；老设备不在此 v1 范围
+        targetSdk 33
+        versionCode 1
+        versionName "0.1-android"
+
+        ndk {
+            // 构建机需安装与此一致的 NDK；版本可在 Android Studio SDK Manager 装。
+            // 25.x 与 21.x 皆可用，关键是“装了且版本号对得上”。
+            abiFilters 'arm64-v8a'   // 仅 64 位；32 位设备(minSdk<21)已罕见
+        }
+
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_STL=c++_shared",
+                          "-DSKEDADDLE_SRC_ROOT=" + rootDir.getParentFile().absolutePath
+                cFlags "-D__ANDROID__"
+                cppFlags "-D__ANDROID__"
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // NDK 库含大量地图解析符号，先不混淆；稳定后再考虑。
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
+    }
+
+    // 屏幕旋转/尺寸变化时不让 Activity 重建（原生状态在 libskedaddle.so 里，
+    // 重建会丢 app_init 的图集与视口）。由 MapView 自己处理尺寸变化。
+    androidResources {
+        noCompress 'ttf', 'otf', 'pbf'
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+}

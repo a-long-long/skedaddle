@@ -432,6 +432,12 @@ int sk_exe_path(char *out, size_t cap)
     uint32_t sz = (uint32_t)cap;
     if (_NSGetExecutablePath(out, &sz) != 0) return -1;   /* 缓冲区不够 */
     return 0;
+#elif defined(__ANDROID__)
+    /* Android 没有"可执行文件"概念（/proc/self/exe 指向 app_process，不可用）；
+     * 字体/配置/临时目录一律走 sk_android_set_* 注入的路径，故这里直接失败，
+     * 调用方（get_font_dir 等）应退回已注入的 Android 目录。 */
+    (void)out; (void)cap;
+    return -1;
 #else
     ssize_t n = readlink("/proc/self/exe", out, cap - 1);
     if (n <= 0) return -1;
@@ -1128,6 +1134,14 @@ int sk_tts_speak(const char *text)
 {
     if (!text || !*text) return 0;
 
+#ifdef __ANDROID__
+    /* Android 上不使用离线 TTS：fork/exec 受 SELinux 限制，且无系统 espeak；
+     * 语音播报留待后续接 Android TextToSpeech。仍支持 SKEDADDLE_TTS_DRYRUN 写盘，
+     * 便于无头验收"集成是否正确"。 */
+    if (tts_dryrun_write(text)) return 1;
+    return 0;
+#endif
+
     /* DRYRUN 同步写，避免起线程（自测要确定性） */
     if (tts_dryrun_write(text)) return 1;
 
@@ -1162,6 +1176,8 @@ int sk_tts_available(void)
 #ifdef _WIN32
     char exe[1024];
     return sk_find_in_path("powershell.exe", exe, sizeof(exe)) == 0 ? 1 : 0;
+#elif defined(__ANDROID__)
+    return 0;  /* v1 无离线 TTS 引擎（后续接 Android TextToSpeech） */
 #else
     char exe[1024];
     if (sk_find_in_path("spd-say", exe, sizeof(exe)) == 0) return 1;
@@ -1185,6 +1201,47 @@ int sk_tts_tier_for_distance(double to_go_m)
 }
 
 /* ============================ 其它 ============================ */
+
+/* ---- Android 私有目录（由 JNI 在初始化时写入）----
+ * Android 没有 $HOME/XDG/TMP，也没有可执行文件；app 私有、可写、随卸载清除的
+ * 目录由 Java 侧 context.getFilesDir()/getCacheDir() 取得并传进来。字体随 APK
+ * 打包在 assets/fonts/，首次运行抽到 files 目录后由 sk_android_set_font_dir 告知。
+ * 这些全局只在 __ANDROID__ 下被引用，故与平台分支同寿命、不污染其它平台。 */
+#ifdef __ANDROID__
+static char g_android_files_dir[2048];
+static char g_android_cache_dir[2048];
+static char g_android_font_dir[2048];
+
+static void android_slash_fix(char *s)
+{
+    for (char *p = s; *p; p++) if (*p == '\\') *p = '/';
+}
+
+void sk_android_set_paths(const char *files_dir, const char *cache_dir)
+{
+    if (files_dir && *files_dir) {
+        snprintf(g_android_files_dir, sizeof(g_android_files_dir), "%s", files_dir);
+        android_slash_fix(g_android_files_dir);
+    }
+    if (cache_dir && *cache_dir) {
+        snprintf(g_android_cache_dir, sizeof(g_android_cache_dir), "%s", cache_dir);
+        android_slash_fix(g_android_cache_dir);
+    }
+}
+
+void sk_android_set_font_dir(const char *font_dir)
+{
+    if (font_dir && *font_dir) {
+        snprintf(g_android_font_dir, sizeof(g_android_font_dir), "%s", font_dir);
+        android_slash_fix(g_android_font_dir);
+    }
+}
+
+const char *sk_android_files_dir(void)
+{
+    return g_android_files_dir[0] ? g_android_files_dir : NULL;
+}
+#endif
 
 int sk_strcasecmp(const char *a, const char *b)
 {
@@ -1212,6 +1269,9 @@ const char *sk_temp_dir(void)
     static int  done = 0;
     if (done) return buf;
     done = 1;
+#ifdef __ANDROID__
+    if (g_android_cache_dir[0]) { snprintf(buf, sizeof(buf), "%s", g_android_cache_dir); return buf; }
+#endif
     const char *pick = NULL;
     static const char *envs[] = { "TMPDIR", "TEMP", "TMP" };
     for (size_t i = 0; i < sizeof(envs) / sizeof(envs[0]) && !pick; i++) {
@@ -1234,6 +1294,10 @@ const char *sk_config_dir(void)
     const char *app = getenv("APPDATA");
     if (app && *app) snprintf(buf, sizeof(buf), "%s/skedaddle", app);
     else             snprintf(buf, sizeof(buf), ".");
+#elif defined(__ANDROID__)
+    /* app 私有、持久、随卸载清除；settings.ini 直接写在这里。 */
+    if (g_android_files_dir[0]) snprintf(buf, sizeof(buf), "%s/.config", g_android_files_dir);
+    else                       snprintf(buf, sizeof(buf), ".");
 #else
     const char *xdg  = getenv("XDG_CONFIG_HOME");
     const char *home = getenv("HOME");
@@ -1344,6 +1408,9 @@ static int get_font_dir(char *out, size_t cap)
 {
     const char *e = getenv("SKEDADDLE_FONT_DIR");
     if (e && *e) { snprintf(out, cap, "%s", e); return 0; }
+#ifdef __ANDROID__
+    if (g_android_font_dir[0]) { snprintf(out, cap, "%s", g_android_font_dir); return 0; }
+#endif
     char exep[1024];
     if (sk_exe_path(exep, sizeof(exep)) == 0) {
         char *end = exep + strlen(exep);

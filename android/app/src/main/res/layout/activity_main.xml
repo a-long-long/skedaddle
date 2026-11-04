@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- 地图画布（自定义 SurfaceView） -->
+    <com.skedaddle.android.MapView
+        android:id="@+id/map"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- 顶部容器：顶栏 + 搜索面板（垂直堆叠，避免 FrameLayout 重叠） -->
+    <LinearLayout
+        android:id="@+id/topContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:id="@+id/topbar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:background="@color/bar_bg"
+            android:padding="6dp">
+
+            <TextView
+                android:id="@+id/title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/app_name"
+                android:textColor="@color/white"
+                android:textStyle="bold"
+                android:textSize="18sp"
+                android:gravity="center_vertical" />
+
+            <Button android:id="@+id/btnSearch" style="@style/Widget.Skedaddle.BarBtn" android:text="@string/btn_search" />
+            <Button android:id="@+id/btnNav" style="@style/Widget.Skedaddle.BarBtn" android:text="@string/btn_nav_on" />
+            <Button android:id="@+id/btnClear" style="@style/Widget.Skedaddle.BarBtn" android:text="@string/btn_clear" />
+            <Button android:id="@+id/btnSettings" style="@style/Widget.Skedaddle.BarBtn" android:text="@string/btn_settings" />
+            <Button android:id="@+id/btnDownload" style="@style/Widget.Skedaddle.BarBtn" android:text="@string/btn_download" />
+        </LinearLayout>
+
+        <!-- 搜索面板（默认隐藏） -->
+        <LinearLayout
+            android:id="@+id/searchPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@color/bar_bg"
+            android:padding="8dp"
+            android:visibility="gone">
+
+            <EditText
+                android:id="@+id/query"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/search_hint"
+                android:textColor="@color/white"
+                android:textColorHint="#888888"
+                android:inputType="text"
+                android:imeOptions="actionSearch" />
+
+            <ListView
+                android:id="@+id/results"
+                android:layout_width="match_parent"
+                android:layout_height="220dp"
+                android:background="#22000000" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 底栏：坐标 / 路线信息 -->
+    <TextView
+        android:id="@+id/infobar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="@color/bar_bg"
+        android:textColor="@color/white"
+        android:textSize="13sp"
+        android:padding="6dp"
+        android:text="@string/infobar_default" />
+
+</FrameLayout>

@@ -1,0 +1,7 @@
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="bar_bg">#CC000000</color>
+    <color name="accent">#FF3B82F6</color>
+    <color name="ic_launcher_background">#FF1E293B</color>
+</resources>

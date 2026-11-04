@@ -201,6 +201,22 @@ const char *const *sk_font_candidates(size_t *n);
  * 仅供参考（本项目是软件光栅，无 GPU 渲染路径）；返回 1=有 / 0=无。 */
 int sk_has_gpu(void);
 
+/* ---------------- Android ----------------
+ * Android 没有 $HOME / XDG / TMP 那套目录，也没有"可执行文件"概念；app 私有、
+ * 可写、随卸载清除的目录由 Java 侧通过 context.getFilesDir()/getCacheDir()
+ * 取得，并在 native 初始化时经 JNI 传进来（sk_android_set_paths）。
+ * 字体随 APK 打包在 assets/fonts/，首次运行抽到 files 目录后由
+ * sk_android_set_font_dir 告诉 C 核心去哪找（否则 get_font_dir 在 Android 上
+ * 找不到 /usr/share/fonts 与 exe 目录，会静默落进"字体缺失"分支）。 */
+#ifdef __ANDROID__
+/* files_dir：context.getFilesDir()（持久、私有）；cache_dir：getCacheDir()（临时）。 */
+void  sk_android_set_paths(const char *files_dir, const char *cache_dir);
+/* font_dir：已从 assets 抽出的字体目录（通常是 <files_dir>/fonts）。 */
+void  sk_android_set_font_dir(const char *font_dir);
+/* 已设置的 files 目录（NULL = 未设置）。JNI/字体探测可用。 */
+const char *sk_android_files_dir(void);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,0 +1,26 @@
+<resources>
+    <string name="app_name">skedaddle</string>
+    <string name="download_title">下载省图</string>
+
+    <string name="btn_search">搜索</string>
+    <string name="btn_nav_on">导航</string>
+    <string name="btn_nav_off">退出导航</string>
+    <string name="btn_clear">清除</string>
+    <string name="btn_settings">设置</string>
+    <string name="btn_download">下载</string>
+
+    <string name="search_hint">输入地名 / 兴趣点</string>
+    <string name="search_empty">无结果</string>
+
+    <string name="enter_nav">导航模式：点地图设起点</string>
+    <string name="start_set">起点已设，再点地图设终点</string>
+    <string name="route_fail">该起终点不可达</string>
+    <string name="route_ok">里程 %.1f km · 预计 %.0f 分</string>
+
+    <string name="settings_title">显示设置</string>
+    <string name="opt_poi">POI 图标</string>
+    <string name="opt_labels">地名标注</string>
+    <string name="opt_contours">等高线</string>
+
+    <string name="infobar_default">拖动平移 · 双指缩放 · 双击放大</string>
+</resources>

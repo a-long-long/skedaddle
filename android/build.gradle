@@ -1,0 +1,6 @@
+// 顶层构建脚本。skedaddle 的 Android 工程只含一个 :app 模块。
+// 真正的 C/C++ 核心由 app/build.gradle 的 externalNativeBuild →
+// app/src/main/cpp/CMakeLists.txt 复用仓库 src/ 下的全部源码。
+plugins {
+    id 'com.android.application' version '8.1.4' apply false
+}
