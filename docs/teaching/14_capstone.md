@@ -15,7 +15,7 @@
 
 | 阶段 | 对应课次 | 关键文件 / 函数 | 路径与行号区间 |
 |---|---|---|---|
-| 数据生产（PBF→二进制→建图） | L3 / L4 / L5 | `scripts/sync_maps.sh`、`tools/graph_extract.c`（`graph_build`、`nmbin_open`、`rev_write`） | `scripts/sync_maps.sh:1-432`（完整体见第三节）；`tools/graph_extract.c:1-172`（完整体见第三节） |
+| 数据生产（PBF→二进制→建图） | L3 / L4 / L5 | `scripts/sync_maps.sh`、`tools/graph_extract.c`（`graph_build`、`nmbin_open`、`rev_write`） | `scripts/sync_maps.sh:1-431`（完整体见第三节）；`tools/graph_extract.c:1-171`（完整体见第三节） |
 | 每帧渲染（视口投影→软件光栅→管线） | L6 / L7 / L8 | `src/ui/offscreen_shot.c`（`offscreen_shot_main`、`render_buffer`、`write_bmp24`、`app_offscreen_audit`）、`map/map_view.c`（`mv_project`、`mv_visible_bbox`） | `src/ui/offscreen_shot.c:194-647`（`offscreen_shot_main` 完整体）；关键段见第三节 |
 | 用户交互（搜索→路由→导航语音） | L9 / L10 / L11 | `tools/route_cli.c`（`router_route_ll`、`maneuver_build`）、`src/ui/window.c`（`app_nav_plan_sync`）、`route/maneuver.c`、`route/voice.c`、`ui/voice_wire.c` | `tools/route_cli.c:46-338`（main 完整体）；`--maneuvers` 块见第三节 |
 | Qt 外壳 | L12 | `src/ui_qt/qt_main.cpp`、`map_canvas.cpp`、`main_window.cpp` | `CMakeLists.txt:530-595`（`skedaddle` 目标） |
@@ -467,7 +467,7 @@ fi
 
 ### 3.2 建图核心：`tools/graph_extract.c`（完整体）
 
-PBF → 自描述路网二进制（`nodes.bin`/`edges.bin`/`names.bin`/`restrictions.bin`/`manifest.txt`），并顺手写派生索引 `rev.bin`。**闸门没过就不写 manifest**（`skedaddle_graph_extract.c:89-107`），让“有 manifest”严格等价于“产物可用”。
+PBF → 自描述路网二进制（`nodes.bin`/`edges.bin`/`names.bin`/`restrictions.bin`/`manifest.txt`），并顺手写派生索引 `rev.bin`。**闸门没过就不写 manifest**（`tools/graph_extract.c:89-107`），让“有 manifest”严格等价于“产物可用”。
 
 ```c
 /* skedaddle_graph_extract —— PBF → 自描述路网二进制
@@ -749,7 +749,7 @@ int main(int argc, char **argv)
     return rc;
 ```
 
-### 3.4 用户交互（路由 + 转向指令）：`tools/route_cli.c` 的 `--maneuvers` 块（完整体位于 `skedaddle_route_cli.c:280-300`）
+### 3.4 用户交互（路由 + 转向指令）：`tools/route_cli.c` 的 `--maneuvers` 块（完整体位于 `tools/route_cli.c:280-300`）
 
 `skedaddle_route_cli` 是路由的命令行入口（L10）。`--maneuvers` 调 `maneuver_build` 生成转向指令，并断言“指令里程和 == 总里程”（不变量）。GUI 面板看到的转向指令就是同一份。
 

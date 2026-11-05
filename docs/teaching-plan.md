@@ -49,6 +49,19 @@
 | 16 | 极简多语言（i18n） | `src/i18n`, `lang/*.xml` | zh 为 msgid + 缺译回退链 | `docs/teaching/16_i18n.md` + `tutorial/16_i18n` |
 | 17 | Android 原生 JNI App | `android/`, `utils/plat` 的 `__ANDROID__` 分支 | JNI 桥 + 30fps 渲染线程 + 增量更新/OTA | `docs/teaching/17_android.md` + `android/` 工程 + `docs/android.md` |
 
+> **对账补记（2026-11-05，合并远端 5 提交后逐字块全量对账）**：
+> - 判据用的是「源码切片 vs 讲义代码块」**逐字比对**，不是按插入行数估算位移；工具报的多行号表格漂移一律回源核验后才改：
+>   `05_graph.md` 的 `write_spatial_index` 标注 `1305-1475` → 实际 `1230-1400`；`04_binary.md` 的 `mapset_load`
+>   标注 `693-766` → 实际 `674-747`；`13_gates.md` / `14_capstone.md` 五处「整文件范围」尾行各多算 1 行；
+>   `14_capstone.md` 两处把 CMake target 名当成文件名（`skedaddle_graph_extract.c` / `skedaddle_route_cli.c`
+>   → `tools/graph_extract.c` / `tools/route_cli.c`）。
+> - **第 12 课四个「完整体，逐字」大块按当前源码重新生成**：`main_window.cpp` 三段真实区间
+>   `239-917` / `919-1225` / `1920-2591`，`download_dialog.cpp` 一段 `104-774`。Qt 前端在此期间新增了
+>   卫星天顶图自检、菜单构建调整、`trc()` → `QStringLiteral()`、省份名 `i18n_tr()` 包裹等，旧副本已非逐字。
+> - `05_graph.md` 里 5 行讲义自写注记原先混在「逐字」代码块内，已移到块外作正文，恢复代码块逐字承诺。
+> - 第 17 课补 `Prefs.java`（配置中枢）进功能构成表与 §3.5：9 个 Java 类此前只列了 8 个。
+> - 纪律复核：`versionCode` 仍是 1（`build.gradle:28`），讲义「下个版本用 2」**正确**，直觉怀疑但未回源前不改。
+>
 > **对账补记（2026-11-04，远端 Android 前端落地）**：
 > - 新增 `android/` 原生 JNI App（3 个提交 / 42 文件）与 `src/utils/plat.{c,h}` 的 `__ANDROID__` 分支，已补入第 17 课 [`17_android.md`](teaching/17_android.md)；第 2 课新增 3.5 节讲目录注入，第 2/11 课的 TTS 逐字副本已同步 Android 分支。
 > - `plat.c` +67 行、`plat.h` +16 行导致两课全部 `plat.c:` / `plat.h:` 锚点后移，已按行级 diff 精确重映射（含逗号列表与区间两端）。

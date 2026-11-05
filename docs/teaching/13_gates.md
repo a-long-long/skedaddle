@@ -19,9 +19,9 @@
 | `scripts/check_layers.sh` | 解析真实 `#include`（剥块注释与行注释）算模块依赖图，与方向表比对，违规打印文件行号并 `exit 1` | `scripts/check_layers.sh:1-178`（完整体见第三节） |
 | `scripts/regress.sh` | 全量回归；`ASSERT-OK/ASSERT-FAIL` 双判据（退出码 + 标记）；覆盖渲染/路由/语音/平台/门禁等几十个用例 | `scripts/regress.sh:1-834`（关键判据函数见第三节；完整源码已内嵌于 3.6 节，全文 834 行） |
 | `CMakeLists.txt`（分层段） | 分层链接：模块库按 DAG 顺序定义，`skedaddle_core` 聚合；已移除 `-Wl,--start-group`，链接器单趟解析即第二道防线 | `CMakeLists.txt:266-391` |
-| `tools/core_no_sdl.c` | 架构边界门禁：核心与 Qt 前端零 SDL 符号；对照体必须含 SDL（负向对照，证明检查器非空壳） | `tools/core_no_sdl.c:1-230`（完整体见第三节） |
-| `tools/blend_equiv.c` | alpha 混色与 SDL 软渲染器逐像素等价对照（去 SDL 化合法链 SDL2） | `tools/blend_equiv.c:1-160`（完整体见第三节） |
-| `tools/clip_equiv.c` | 线段裁剪与 `SDL_IntersectRectAndLine` 等价对照（20 万随机线段） | `tools/clip_equiv.c:1-77`（完整体见第三节） |
+| `tools/core_no_sdl.c` | 架构边界门禁：核心与 Qt 前端零 SDL 符号；对照体必须含 SDL（负向对照，证明检查器非空壳） | `tools/core_no_sdl.c:1-229`（完整体见第三节） |
+| `tools/blend_equiv.c` | alpha 混色与 SDL 软渲染器逐像素等价对照（去 SDL 化合法链 SDL2） | `tools/blend_equiv.c:1-159`（完整体见第三节） |
+| `tools/clip_equiv.c` | 线段裁剪与 `SDL_IntersectRectAndLine` 等价对照（20 万随机线段） | `tools/clip_equiv.c:1-76`（完整体见第三节） |
 
 分层方向表（来自 `check_layers.sh:65-73`，即第三节脚本中的 `SK_ALLOWED_*` 环境变量）：
 

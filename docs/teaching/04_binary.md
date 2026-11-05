@@ -582,7 +582,7 @@ fail:
 }
 ```
 
-### 7. `mapset_load` 全量（`mapset.c:693-766`）
+### 7. `mapset_load` 全量（`mapset.c:674-747`）
 
 ```c
 int mapset_load(MapSet *ms, const char *graph_dir)

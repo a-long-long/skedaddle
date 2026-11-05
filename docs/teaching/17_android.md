@@ -32,6 +32,7 @@
 | `java/.../MainActivity.java` | 抽 `assets/fonts/` 字体到 files 目录、搜索面板、导航按钮 | `MainActivity.java:42,82-90,276` |
 | `cpp/CMakeLists.txt` | 复用仓库 `src/` 全部核心源码：`skedaddle_core STATIC` → `skedaddle SHARED` | `CMakeLists.txt:114-127` |
 | `src/utils/plat.c` | Android 目录注入 + TTS/exe/temp/config/font 平台分支 | `plat.c:1205-1244`（详见第 2 课 3.5） |
+| `java/.../Prefs.java` | `SharedPreferences` 配置中枢：服务器地址 / 自动更新开关 / 每日检查时间戳 / 三个显示开关统一存取 | `Prefs.java:13-75`（键名 16-21） |
 | `java/.../Downloader.java` | HTTP 下载 + zip 解包（地图包与 APK 共用） | `Downloader.java:20,34,80` |
 | `java/.../Manifests.java` | 解析 `map/manifest.json` 与 `app/update.json` | `Manifests.java:18,34,63` |
 | `java/.../DownloadActivity.java` | 地图增量更新：`.skversion` 比对、下载/更新/本地 zip 安装 | `DownloadActivity.java:41,48,267` |
@@ -151,7 +152,7 @@ JNI 的 `render`（`skedaddle_jni.cpp:82-110`）同步视口尺寸、收割后�
 `app_render_to_buf` 直接写进 Java 的 `int[]`。**关键的一行在 C++ 侧**：
 
 ```cpp
-/* skedaddle_jni.cpp:105-107 */
+/* skedaddle_jni.cpp:105-107（节选，略去中间的注释行）*/
 long n = (long)w * (long)h;
 for (long i = 0; i < n; i++) p[i] |= 0xFF000000u;
 ```
@@ -203,6 +204,7 @@ Android 工程里没有任何 `src/` 的拷贝。编成单个 STATIC 再链进 S
 | 权限 | `INTERNET` | `REQUEST_INSTALL_PACKAGES`（`AndroidManifest.xml:8`） |
 
 两者共用 `Downloader.download` + `Downloader.extractZip`（`Downloader.java:34,80`）。
+两者还共用 `Prefs`（`server_base` / `auto_update` / `last_update_check` 等键，见 `Prefs.java:16-21`）：服务器地址留空就不发网络请求，勾选自动更新才每日最多查一次——配置集中在一处，新增开关不必散落到各 `Activity`。
 判据用的是**纯十进制整数版本号**，不是时间戳也不是文件大小——与第 13 课「布尔判据用
 展开数/里程/像素，时间只兜底」同一条纪律。发新版必须递增 `versionCode`，否则设备永远
 判定「无需更新」（`build.gradle:29` 的注释专门提醒了下个版本用 2）。

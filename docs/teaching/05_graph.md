@@ -293,11 +293,6 @@ static int build_display(Graph *g, const char *dir, const char *src)
         ar[i].ref_off = off;
     }
 
-    /* ★ 省版变更（2026-11-03）：不再落盘整省 areas/lines/polyrefs.bin。
-     *   这些"整省三件套"是 195 MB 冗余（与 disp tile 内容重复），已证实可安全省去；
-     *   运行时显示一律走 disp tile（或 PBF 解码），见 mapset.c 的 tile 拼接路径。
-     *   因此本函数只构建 polyrefs 缓冲 pr，随后直接交给 write_disp_tiles。 */
-
     /* 显示层分 tile（抽取期一次性切好；失败致命 —— 不再有整省三件套兜底）*/
     int rc = write_disp_tiles(g, dir, src, &pr);
     buf_free(&pr);
@@ -305,8 +300,14 @@ static int build_display(Graph *g, const char *dir, const char *src)
 }
 ```
 
+> **讲义注记（非源码原文）**：★ 自 2026-11-03 省版变更起，不再落盘整省
+> `areas/lines/polyrefs.bin`——这「整省三件套」是 195 MB 冗余（与 disp tile 内容重复），
+> 运行时显示一律走 disp tile（或 PBF 解码）。因此 `build_display` 只构建 `pr` 缓冲后直接交给
+> `write_disp_tiles`。上方代码块严格逐字摘自 `graph_build.c:1169-1225`，不含本注记。
+
+
 ```c
-/* graph_build.c:1305-1475 —— write_spatial_index：生成 tile→(from,edge) 空间索引 */
+/* graph_build.c:1230-1400 —— write_spatial_index：生成 tile→(from,edge) 空间索引 */
 static int write_spatial_index(Graph *g, const char *dir, const char *src)
 {
     size_t ne = g->e_to.n / 4;
