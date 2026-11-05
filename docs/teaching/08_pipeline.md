@@ -329,6 +329,19 @@ int app_render_to_buf(App *a, void *px, int w, int h, size_t stride,
 
 > 关键纪律：按"跨省统一层级"遍历（先所有省的面、再所有省的路），否则层级会乱；`dup_of>=0` 整省包含的省直接跳过（见 `paint_frame` 第 1232 行）。
 
+> **字体清晰度（2026-11-05 补）**：地图文字由 C 侧 `stb_truetype` 光栅化，
+> 它**不做 hinting**；14px 中文的笔画因此大量落在覆盖度 80~180 的半透明
+> 像素上，再叠 1px 黑影就发灰发虚。`render/font.c` 在 `glyph_build()` 后
+> 对缓存的 8-bit alpha 做一次 S 曲线（`v = (a-128)*k + 128`，k 默认 1.6，
+> `SKEDADDLE_FONT_SHARP=1.0` 可关闭做逐像素对照），让笔画核心实心、
+> 边缘过渡收窄；每个码点只算一次，零逐帧开销。`render/labels.c` 的
+> `halo_enabled()` 则在**所有比例尺**把普通地名与路名的黑影换成
+> `font_draw_halo()` 白描边，并把贴边标签钳进画布（避免只剩半截字）；
+> `admin_on` 只负责低 zoom 的区域名大字分级。曾把白描边限制在 z<14，
+> 结果 500 米 / 200 米档完全没吃到修复 —— 用户实测反馈后放开。
+> `SKEDADDLE_LABEL_HALO=0` 恢复旧黑影路径，配合
+> `SKEDADDLE_FONT_SHARP=1.0` 可逐字节复现改动前出图 —— 这就是负向对照。
+
 ### 3. `navdraw` 路线绘制（`navdraw.c`）
 
 `RSeg`（段的两端点 + 是否已走过）与 `paint_route`（投影一次、两遍复用；按 `done_seg`/`done_t` 切分"已走/未走"）：

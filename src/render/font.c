@@ -225,6 +225,31 @@ static int glyph_face(Font *f, uint32_t cp)
     return 0;
 }
 
+/* 字形锐化：stb_truetype 不做 hinting，14px 的 CJK 笔画大多落在半透明
+ * 像素上（覆盖度 80~180），再叠 1px 阴影 / 8 邻域白描边，整行字就发灰发虚。
+ * 在缓存位图上做一次 S 曲线对比度增强：>128 推向 255、<128 推向 0，
+ * 让笔画核心实心、边缘过渡收窄到 1px。每个码点只做一次，零逐帧开销。
+ * SKEDADDLE_FONT_SHARP=1.0 关闭（用于前后逐像素对照），默认 1.6。 */
+static void glyph_sharpen(Glyph *g)
+{
+    static int k100 = 0;
+    if (k100 == 0) {
+        const char *e = getenv("SKEDADDLE_FONT_SHARP");
+        double k = (e && *e) ? atof(e) : 1.6;
+        if (k < 1.0) k = 1.0;
+        if (k > 3.0) k = 3.0;
+        k100 = (int)(k * 100.0 + 0.5);
+    }
+    if (!g->alpha || g->w <= 0 || g->h <= 0 || k100 == 100) return;
+    size_t n = (size_t)g->w * (size_t)g->h;
+    for (size_t i = 0; i < n; i++) {
+        int v = ((int)g->alpha[i] - 128) * k100 / 100 + 128;
+        if (v < 0) v = 0;
+        if (v > 255) v = 255;
+        g->alpha[i] = (uint8_t)v;
+    }
+}
+
 /* 光栅化 cp 到 g->alpha（用 face 指定的面）。g->w/h/advance/xoff/yoff 一并填好。
    缺失字形：alpha 留 NULL，advance 估一个。 */
 static void glyph_build(Glyph *g, Font *f, uint32_t cp, int face)
@@ -249,6 +274,7 @@ static void glyph_build(Glyph *g, Font *f, uint32_t cp, int face)
     stbtt_GetCodepointHMetrics(&fa->info, (int)cp, &adv, &lsb);
     g->advance = (int)(adv * fa->scale + 0.5);
     if (g->advance <= 0) g->advance = w;
+    glyph_sharpen(g);
 }
 
 static Glyph *glyph_get(Font *f, uint32_t cp)

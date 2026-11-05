@@ -23,6 +23,7 @@ typedef struct {
     LabelItem *items;
     int        n_items, cap_items;
     double     cached_bb[4];
+    double     cached_zoom;
     int        cached_kindmax;
     int        loaded;
 } LabelCache;

@@ -41,6 +41,19 @@ static void font_draw_halo(Font *f, Raster *rs, int x, int y,
     font_draw(f, rs, x, y, s, r, g, b, 0);
 }
 
+/* 白描边总开关：默认对所有比例尺生效。SKEDADDLE_LABEL_HALO=0 恢复旧的
+ * 1px 黑影 + 不钳制路径，配合 SKEDADDLE_FONT_SHARP=1.0 可逐字节复现
+ * 改动前的出图（负向对照）。进程内只读一次环境变量，零逐帧开销。 */
+static int halo_enabled(void)
+{
+    static int v = -1;
+    if (v < 0) {
+        const char *e = getenv("SKEDADDLE_LABEL_HALO");
+        v = !(e && (!strcmp(e, "0") || !strcmp(e, "off")));
+    }
+    return v;
+}
+
 /* ------------------------------------------------------------------ */
 /* 地名标注                                                             */
 /* ------------------------------------------------------------------ */
@@ -186,6 +199,7 @@ static int refresh_items(LabelCache *lc, const MapView *v)
 
     lc->loaded = 1;
     lc->cached_kindmax = kind_max;
+    lc->cached_zoom = v->zoom;
     memcpy(lc->cached_bb, bb, sizeof(bb));
     if (!lc->db) { lc->n_items = 0; return 0; }
 
@@ -196,14 +210,18 @@ static int refresh_items(LabelCache *lc, const MapView *v)
     const char *sql =
         "SELECT name,lat,lon,kind,weight FROM place "
         "WHERE lat BETWEEN ?1 AND ?2 AND lon BETWEEN ?3 AND ?4 AND kind<=?5 "
-        "ORDER BY weight DESC LIMIT 400";
+        "ORDER BY weight DESC LIMIT ?6";
     sqlite3_stmt *st = NULL;
     if (sqlite3_prepare_v2(lc->db, sql, -1, &st, NULL) != SQLITE_OK) return -1;
     sqlite3_bind_double(st, 1, bb[0] - dla);
     sqlite3_bind_double(st, 2, bb[2] + dla);
     sqlite3_bind_double(st, 3, bb[1] - dlo);
     sqlite3_bind_double(st, 4, bb[3] + dlo);
+    /* 中低 zoom 视口大、候选多，全局按权重取 Top-400 会把郊区低权重
+     * 村名/POI 全截断，只剩城区街道名 ⇒ 文字挤在城区的那一半。
+     * z<14 放宽到 1200；z>=14（500 米档）维持 400，出图逐字节不变。 */
     sqlite3_bind_int(st, 5, kind_max);
+    sqlite3_bind_int(st, 6, v->zoom < 14.0 ? 1200 : 400);
 
     lc->n_items = 0;
     while (sqlite3_step(st) == SQLITE_ROW) {
@@ -235,12 +253,19 @@ static int refresh_items(LabelCache *lc, const MapView *v)
 static uint8_t g_grid[GRID_COLS * GRID_ROWS];
 static int g_grid_w = 110, g_grid_h = 34;
 
-static void grid_for_font(Font *font)
+/* 网格必须覆盖整块画布：固定 64x40 在 1280x800 下够用，但窗口一高，
+ * gy = y / g_grid_h 就 >= GRID_ROWS，整片底部标签被 continue 丢掉 ——
+ * 表现为「下半屏没有字」。视口超大时按视口放大格距，保证全覆盖。 */
+static void grid_for_font(Font *font, int view_w, int view_h)
 {
     int cw = font ? font_text_w(font, "\xe4\xb8\xad") : 14;   /* "中" */
     if (cw <= 0) cw = 14;
     g_grid_w = cw * 8;   if (g_grid_w < 60) g_grid_w = 60;
     g_grid_h = (int)(cw * 2.4); if (g_grid_h < 22) g_grid_h = 22;
+    if (view_w > 0 && (view_w + g_grid_w - 1) / g_grid_w > GRID_COLS)
+        g_grid_w = view_w / GRID_COLS + 1;
+    if (view_h > 0 && (view_h + g_grid_h - 1) / g_grid_h > GRID_ROWS)
+        g_grid_h = view_h / GRID_ROWS + 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -338,29 +363,47 @@ void paint_place_labels(Raster *rs, const MapView *v,
     mv_visible_bbox(v, bb);
     int kind_max = kind_max_for_zoom(v->zoom);
 
+    /* 缩放显式判据：跨度比在连续小步缩放时可能被平移抵消，缓存里留着
+     * 旧视口的 Top-N，投影到新视口就整体偏到一边。 */
     if (!lc->loaded || lc->cached_kindmax != kind_max ||
+        fabs(v->zoom - lc->cached_zoom) >= 0.25 ||
         bbox_moved_far(lc->cached_bb, bb)) {
         if (refresh_items(lc, v) != 0) return;
     }
 
     memset(g_grid, 0, sizeof(g_grid));
-    grid_for_font(font);
+    grid_for_font(font, v->w, v->h);
 
     /* ★ 1/2/5/10 公里等中低 zoom 才有「区域名」层：市/区名用大字、镇名加白描边，
      *   与 POI 小字拉开视觉层级。旧实现把 kind 1~2 的行政区名和村名/POI 画成
      *   一样大的小字 + 橙色圆圈，在 5/10 公里档根本认不出哪一个是区域名。
-     *   z>=14 完全走下面的原逻辑 ⇒ 高 zoom 出图逐字节不变。 */
+     *   z>=14 不做分级显示（无大字层），但文字同样走白描边。 */
     int  admin_on = (v->zoom < 14.0 && show_labels);
+    int  halo_on  = halo_enabled();   /* 清晰度逻辑与分级显示解耦 */
     Font *big = admin_on ? admin_font(font_size > 0 ? font_size * 2 : 28) : NULL;
     int  big_ch = big ? font_text_w(big, "\xe4\xb8\xad") : 0;   /* "中" ≈ 字高 */
     if (big_ch <= 0) big_ch = 26;
 
     int drawn = 0, icons = 0;
+    /* 贴边标签：锚点在视口内、字形却有一半在画布外，被裁成「半截字」，
+     * 看着就像糊字。中低 zoom 把绘制原点钳进画布，保证整字可见；
+     * SKEDADDLE_LABEL_HALO=0 时不钳制，供负向对照。 */
+    int small_ch = font ? font_text_w(font, "\xe4\xb8\xad") : 14;
+    if (small_ch <= 0) small_ch = 14;
     for (int i = 0; i < lc->n_items; i++) {
         LabelItem *it = &lc->items[i];
         int x, y;
         mv_project(v, it->lat, it->lon, &x, &y);
         if (x < 0 || y < 0 || x >= v->w || y >= v->h) continue;
+
+        int tx = x + 10, ty = y - 8;
+        if (halo_on) {
+            int tw = font_text_w(font, it->name);
+            if (tx + tw >= v->w - 1) tx = v->w - tw - 2;
+            if (tx < 1) tx = 1;
+            if (ty + small_ch >= v->h - 1) ty = v->h - small_ch - 2;
+            if (ty < 1) ty = 1;
+        }
 
         int gx = x / g_grid_w, gy = y / g_grid_h;
         if (gx >= GRID_COLS || gy >= GRID_ROWS) continue;
@@ -375,6 +418,10 @@ void paint_place_labels(Raster *rs, const MapView *v,
         if (admin_on && big && it->kind <= 2) {
             atw = font_text_w(big, it->name);
             ax0 = x - atw / 2; ay0 = y - big_ch / 2;
+            if (ax0 + atw >= v->w - 1) ax0 = v->w - atw - 2;
+            if (ax0 < 1) ax0 = 1;
+            if (ay0 + big_ch >= v->h - 1) ay0 = v->h - big_ch - 2;
+            if (ay0 < 1) ay0 = 1;
             agx0 = ax0 / g_grid_w; agx1 = (ax0 + atw) / g_grid_w;
             agy0 = ay0 / g_grid_h; agy1 = (ay0 + big_ch) / g_grid_h;
             if (agx0 < 0) agx0 = 0;
@@ -393,7 +440,7 @@ void paint_place_labels(Raster *rs, const MapView *v,
                     g_grid[yy * GRID_COLS + xx] = 1;
             font_draw_halo(big, rs, ax0, ay0, it->name, 30, 44, 76);
             /* 小小定位点取代 POI 圆圈：区名代表"一片地方"而非一个设施 */
-            fill_disc(rs, x, y + big_ch / 2 + 3, 2, raster_rgb(rs, 30, 44, 76));
+            fill_disc(rs, x, ay0 + big_ch + 3, 2, raster_rgb(rs, 30, 44, 76));
             drawn++;
             continue;
         }
@@ -402,7 +449,7 @@ void paint_place_labels(Raster *rs, const MapView *v,
         g_grid[gy * GRID_COLS + gx] = 1;
         if (admin_on && it->kind == 3) {
             /* 镇名：普通字号 + 白描边深色字，形成第二级层次 */
-            font_draw_halo(font, rs, x + 10, y - 8, it->name, 38, 42, 54);
+            font_draw_halo(font, rs, tx, ty, it->name, 38, 42, 54);
             drawn++;
             if (show_poi) { draw_poi_marker(rs, x, y, it->kind); icons++; }
             continue;
@@ -411,7 +458,13 @@ void paint_place_labels(Raster *rs, const MapView *v,
         /* 图标与标签独立开关，但共用一个避让格（任一个显示就占格，避免重叠） */
         if (show_poi)   { draw_poi_marker(rs, x, y, it->kind); icons++; }
         if (show_labels){
-            font_draw(font, rs, x + 10, y - 8, it->name, 46, 48, 56, 1);
+            /* 全比例尺统一白描边：1px 黑影会把小字糊成一团，500 米 /
+             * 200 米档同样如此。SKEDADDLE_LABEL_HALO=0 恢复旧黑影路径，
+             * 配合 SKEDADDLE_FONT_SHARP=1.0 做逐字节负向对照。 */
+            if (halo_on)
+                font_draw_halo(font, rs, tx, ty, it->name, 46, 48, 56);
+            else
+                font_draw(font, rs, tx, ty, it->name, 46, 48, 56, 1);
             drawn++;
         }
     }
@@ -434,7 +487,7 @@ void paint_road_labels(Raster *rs, const MapView *v, Font *font,
     road_labels_get(&lbl, &n);
 
     memset(g_grid, 0, sizeof(g_grid));
-    grid_for_font(font);
+    grid_for_font(font, v->w, v->h);
 
     /* 同名只标一次（哈希位图）。注意 name_id 只在本省 names.bin 内唯一，
        不同省的同名路（如"建设路"）各自带着自己的池，哈希到同一位会互相
@@ -464,8 +517,12 @@ void paint_road_labels(Raster *rs, const MapView *v, Font *font,
         g_grid[gy * GRID_COLS + gx] = 1;
         seen[byte] |= mask;
 
-        /* 路名用深蓝灰，与地名黑灰区分 */
-        font_draw(font, rs, x, y, s, 70, 80, 110, 1);
+        /* 路名用深蓝灰，与地名黑灰区分；同样全比例尺走白描边，
+         * 否则深蓝灰小字 + 1px 黑影仍是发虚的一批。 */
+        if (halo_enabled())
+            font_draw_halo(font, rs, x, y, s, 70, 80, 110);
+        else
+            font_draw(font, rs, x, y, s, 70, 80, 110, 1);
         drawn++;
     }
     if (st) st->road_labels_drawn = drawn;
