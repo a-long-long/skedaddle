@@ -79,5 +79,6 @@
 - **JNI 桥本机校验法**：无 NDK，但用**忠实复刻 NDK 的 `jni.h` 垫片**（C++ `JNIEnv_` struct + inline 转发 `functions->X(this,...)`）+ 真实 `src/` 头，`g++ -std=c++17 -D__ANDROID__ -Wall -Wextra -fsyntax-only` 零告警 ⇒ 契约正确。注意**真实 JDK `jni.h` 的 C++ 模式 `JNIEnv=JNIEnv_`(struct) 且无 inline 包装**，不足以校验 Android `env->Method()` 写法，别用 JDK 头当 NDK 替身。
 - **第三方必须 vendor**：`android/app/src/main/cpp/thirdparty/{sqlite3,protobuf-c}`（NDK 不自带），缺则链接失败；取源命令见 docs §4。
 - **复刻 Wayland 教训**：JNI 每帧渲染后 `px[i]|=0xFF000000`（C 光栅不写 alpha，否则 Bitmap 全透明花屏）。
-- 限制：未接真实 GPS/NMEA（点选起终点）、下载是桩、TTS 仅 DRYRUN、minSdk 26、本机未真机编译（待构建机验证）。
+- 限制：未接真实 GPS/NMEA（点选起终点）、TTS 仅 DRYRUN、minSdk 26、本机(ARM64 Linux)与 Windows 副机均可出 APK，均未真机运行验证。
+- **已落地增量更新+OTA（aef95e4）**：`Prefs`(配置中枢)/`Downloader`(HTTP+zip)/`Manifests`(清单解析)/`UpdateChecker`(OTA)；`DownloadActivity` 真实化（拉 `map/manifest.json`+扫描 `graph/<省>/.skversion`+逐省下载/本地 zip 安装）；`SettingsActivity` 取代旧显示对话框（服务器/自动更新/检查更新/显示开关/关于）+ FileProvider 安装 APK。清单格式与自托管见 docs §11。**注意：应用内装完省图从下载页返回会自动 retryInit 重载（f08f4ba）；仅 adb 运行中热推/后台改目录需重启，真正的进程内热换省（app_reload_maps 接进 JNI）仍未做**。
 - 部署图集：`adb push products/graph /sdcard/Android/data/com.skedaddle.android/files/`。
