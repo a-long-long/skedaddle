@@ -55,6 +55,8 @@ rm -rf "$DIST"
 mkdir -p "$DIST"
 cp "$BUILD/skedaddle.exe" "$DIST/"
 cp -r "$ROOT/fonts" "$DIST/fonts"
+# language pack: POST_BUILD copies lang/ next to the exe; runtime loads it there.
+if [ -d "$BUILD/lang" ]; then cp -r "$BUILD/lang" "$DIST/lang"; fi
 
 # ---- 3) Qt 依赖收集 ----------------------------------------------------
 echo "=== windeployqt --release ==="
@@ -80,6 +82,9 @@ done
 cat > "$DIST/start.bat" <<'EOF'
 @echo off
 cd /d "%~dp0"
+rem places DB resolves against CWD; point it back to the repo root,
+rem otherwise the map shows up with no place/POI/road labels at all.
+if exist "..\..\products\places_auto.db" set SKEDADDLE_PLACES=..\..\products\places_auto.db
 skedaddle.exe --graph=..\..\products\graph\beijing
 EOF
 
@@ -93,6 +98,10 @@ skedaddle Release 版
 
 【操作】视图菜单勾选「等高线」或按 O 键开关等高线；
 鼠标拖拽平移、滚轮缩放；右上角搜索框搜地点（需 places_auto.db 地名库）。
+
+【地名标注】start.bat 已设置 SKEDADDLE_PLACES 指向仓库 products/places_auto.db；
+若该库不存在（用 skedaddle_places_build --sources=sources --db=products/places_auto.db 生成），
+界面会显示地图但没有任何地名 / POI / 路名标注，也不会报错。
 
 【自带依赖】Qt6 / 字体(fonts/) / protobuf-c / sqlite3 / zlib 均已随包，无需另装。
 
