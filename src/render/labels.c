@@ -6,6 +6,42 @@
 #include <math.h>
 
 /* ------------------------------------------------------------------ */
+/* 行政区名（区域名）分级显示 —— 低 zoom 专用                           */
+/* ------------------------------------------------------------------ */
+/* 为什么单独开一份 Font：字号是 Font 创建时定的，没有"临时放大"接口；且必须
+ * 走 font_open_default()（多面候选链 + CJK 回退），单文件 font_open 画中文会
+ * 变方框。按 pt 缓存跨帧复用，app_shutdown 调 label_admin_font_free() 释放。 */
+static Font *g_admin_font;
+static int   g_admin_pt;
+
+static Font *admin_font(int pt)
+{
+    if (g_admin_font && g_admin_pt == pt) return g_admin_font;
+    font_close(g_admin_font);
+    g_admin_font = font_open_default(pt);
+    g_admin_pt = pt;
+    return g_admin_font;
+}
+
+void label_admin_font_free(void)
+{
+    font_close(g_admin_font);
+    g_admin_font = NULL;
+    g_admin_pt = 0;
+}
+
+/* 白描边：先 8 邻域铺白、再叠主色，保证大字压在路网/色块上仍可读。 */
+static void font_draw_halo(Font *f, Raster *rs, int x, int y,
+                           const char *s, uint8_t r, uint8_t g, uint8_t b)
+{
+    static const int dx[8] = { -1, 0, 1, -1, 1, -1, 0, 1 };
+    static const int dy[8] = { -1,-1,-1,  0, 0,  1, 1, 1 };
+    for (int i = 0; i < 8; i++)
+        font_draw(f, rs, x + dx[i], y + dy[i], s, 255, 255, 255, 0);
+    font_draw(f, rs, x, y, s, r, g, b, 0);
+}
+
+/* ------------------------------------------------------------------ */
 /* 地名标注                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -294,7 +330,7 @@ static void draw_poi_marker(Raster *rs, int x, int y, int kind)
 }
 
 void paint_place_labels(Raster *rs, const MapView *v,
-                        LabelCache *lc, Font *font, PaintStats *st,
+                        LabelCache *lc, Font *font, int font_size, PaintStats *st,
                         int show_poi, int show_labels)
 {
     if (!lc || !font) return;
@@ -310,6 +346,15 @@ void paint_place_labels(Raster *rs, const MapView *v,
     memset(g_grid, 0, sizeof(g_grid));
     grid_for_font(font);
 
+    /* ★ 1/2/5/10 公里等中低 zoom 才有「区域名」层：市/区名用大字、镇名加白描边，
+     *   与 POI 小字拉开视觉层级。旧实现把 kind 1~2 的行政区名和村名/POI 画成
+     *   一样大的小字 + 橙色圆圈，在 5/10 公里档根本认不出哪一个是区域名。
+     *   z>=14 完全走下面的原逻辑 ⇒ 高 zoom 出图逐字节不变。 */
+    int  admin_on = (v->zoom < 14.0 && show_labels);
+    Font *big = admin_on ? admin_font(font_size > 0 ? font_size * 2 : 28) : NULL;
+    int  big_ch = big ? font_text_w(big, "\xe4\xb8\xad") : 0;   /* "中" ≈ 字高 */
+    if (big_ch <= 0) big_ch = 26;
+
     int drawn = 0, icons = 0;
     for (int i = 0; i < lc->n_items; i++) {
         LabelItem *it = &lc->items[i];
@@ -320,7 +365,48 @@ void paint_place_labels(Raster *rs, const MapView *v,
         int gx = x / g_grid_w, gy = y / g_grid_h;
         if (gx >= GRID_COLS || gy >= GRID_ROWS) continue;
         if (g_grid[gy * GRID_COLS + gx]) continue;
+
+        /* 区名大字：按实际包围盒占格（通常 2x1~2x2），并先检查整块是否已被占，
+         * 否则相邻区名的大字会互相压字（10 公里档实测「石景山区/北京市」重叠）。
+         * 固定占 3x3 又会平白挤掉十几个小地名，加剧「地名变少」的观感。
+         * SQL 已按 weight DESC 排序，区名(w=240~340)必然先到先得。 */
+        int is_admin = 0, ax0 = 0, ay0 = 0, atw = 0;
+        int agx0 = 0, agx1 = 0, agy0 = 0, agy1 = 0;
+        if (admin_on && big && it->kind <= 2) {
+            atw = font_text_w(big, it->name);
+            ax0 = x - atw / 2; ay0 = y - big_ch / 2;
+            agx0 = ax0 / g_grid_w; agx1 = (ax0 + atw) / g_grid_w;
+            agy0 = ay0 / g_grid_h; agy1 = (ay0 + big_ch) / g_grid_h;
+            if (agx0 < 0) agx0 = 0;
+            if (agy0 < 0) agy0 = 0;
+            if (agx1 >= GRID_COLS) agx1 = GRID_COLS - 1;
+            if (agy1 >= GRID_ROWS) agy1 = GRID_ROWS - 1;
+            int taken = 0;
+            for (int yy = agy0; yy <= agy1 && !taken; yy++)
+                for (int xx = agx0; xx <= agx1; xx++)
+                    if (g_grid[yy * GRID_COLS + xx]) { taken = 1; break; }
+            is_admin = !taken;
+        }
+        if (is_admin) {
+            for (int yy = agy0; yy <= agy1; yy++)
+                for (int xx = agx0; xx <= agx1; xx++)
+                    g_grid[yy * GRID_COLS + xx] = 1;
+            font_draw_halo(big, rs, ax0, ay0, it->name, 30, 44, 76);
+            /* 小小定位点取代 POI 圆圈：区名代表"一片地方"而非一个设施 */
+            fill_disc(rs, x, y + big_ch / 2 + 3, 2, raster_rgb(rs, 30, 44, 76));
+            drawn++;
+            continue;
+        }
+        /* 大字放不下：退回普通小地名标注，地名数量不缩水 */
+
         g_grid[gy * GRID_COLS + gx] = 1;
+        if (admin_on && it->kind == 3) {
+            /* 镇名：普通字号 + 白描边深色字，形成第二级层次 */
+            font_draw_halo(font, rs, x + 10, y - 8, it->name, 38, 42, 54);
+            drawn++;
+            if (show_poi) { draw_poi_marker(rs, x, y, it->kind); icons++; }
+            continue;
+        }
 
         /* 图标与标签独立开关，但共用一个避让格（任一个显示就占格，避免重叠） */
         if (show_poi)   { draw_poi_marker(rs, x, y, it->kind); icons++; }
@@ -339,10 +425,10 @@ void paint_place_labels(Raster *rs, const MapView *v,
 void paint_road_labels(Raster *rs, const MapView *v, Font *font,
                        PaintStats *st)
 {
-    /* z14（比例尺 500 米）起画路名：与 paint_roads 里三处收集门槛一致。
-     * 旧门槛 15.0 让「500 米」档一条路名都没有，画面全靠地名撑着，
-     * 地名再被缓存缺陷削掉时就表现为「放大后什么文字都没有」。 */
-    if (!font || v->zoom < 14.0) return;
+    /* z12（比例尺 2 公里）起画路名：与 paint_roads 里三处收集门槛一致。
+     * 旧门槛 15.0→14.0 仍让 1/2 公里档一条路名都没有；中低 zoom 的
+     * 「没有文字」观感有一半来自这里，另一半是行政区名没做分级显示。 */
+    if (!font || v->zoom < 12.0) return;
 
     const RoadLabel *lbl; int n;
     road_labels_get(&lbl, &n);

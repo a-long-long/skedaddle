@@ -350,7 +350,7 @@ static void paint_roads_tiled(Raster *rs, const MapView *v,
                     raster_thick_line(rs, x0, y0, x1, y1, width,
                                       ccls[cls > 4 ? 4 : cls]);
 
-                    if (cls <= 2 && zoom >= 14.0 &&
+                    if (cls <= 2 && zoom >= 12.0 &&
                         x0 >= 0 && x0 < W && y0 >= 0 && y0 < H) {
                         uint32_t eidx = sk_get_u32(xl + XL2_EDGE);
                         if ((uint64_t)eidx < ne) {
@@ -421,7 +421,7 @@ static void paint_roads_tiled(Raster *rs, const MapView *v,
                 st->drawn++;
 
                 uint32_t nid = sk_get_u32(er + EF_NAME_ID);
-                if (nid && cls <= 2 && zoom >= 14.0 &&
+                if (nid && cls <= 2 && zoom >= 12.0 &&
                     x0 >= 0 && x0 < W && y0 >= 0 && y0 < H)
                     road_labels_add(np, nid, (x0 + x1) / 2, (y0 + y1) / 2);
             }
@@ -524,9 +524,9 @@ void paint_roads(Raster *rs, const MapView *v,
                               raster_rgb(rs, s->r, s->g, s->b));
             st->drawn++;
 
-            /* 顺带收集路名锚点：主干以上、有名、屏幕内（z14 起） */
+            /* 顺带收集路名锚点：主干以上、有名、屏幕内（z12 起） */
             uint32_t nid = sk_get_u32(er + EF_NAME_ID);
-            if (nid && cls <= 2 && v->zoom >= 14.0 &&
+            if (nid && cls <= 2 && v->zoom >= 12.0 &&
                 x0 >= 0 && x0 < W && y0 >= 0 && y0 < H)
                 road_labels_add(np, nid, (x0 + x1) / 2, (y0 + y1) / 2);
         }

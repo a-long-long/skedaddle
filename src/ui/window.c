@@ -277,6 +277,7 @@ void app_shutdown(App *a)
     gpx_db_close(a->gpx_db);
     a->gpx_db = NULL;
     gpx_store_free(&a->gpx);
+    label_admin_font_free();
     font_close(a->font_big);
     font_close(a->font);
 }
@@ -1301,7 +1302,7 @@ static void paint_frame(Raster *rs, App *a, PaintStats *st)
     TICK(ms_lines);
     if (a->font) {
         /* 地名库是全局一份（places.db 跨省通用），只需查一次 */
-        paint_place_labels(rs, &a->view, &a->places, a->font, st,
+        paint_place_labels(rs, &a->view, &a->places, a->font, a->font_size, st,
                            a->show_poi, a->show_labels);
         paint_road_labels(rs, &a->view, a->font, st);
     }
