@@ -32,7 +32,8 @@
 ## 渲染边界（SDL 已彻底移除）
 - 交互前端唯一 `skedaddle`；离屏唯一 `src/ui/offscreen_shot.c`（零 SDL，malloc 缓冲 + 内建 BMP writer）。SDL 仅存于 `blend_equiv`/`clip_equiv` 门禁对照体。
 - ★★ 审计计数源走 C 核心缓冲（`offscreen_shot_main` 设 `a.qt_ui=0`）⇒ **不可删 `chrome.c`/`paint.c`/`navdraw.c`**。共享审计 = `src/render/audit.{c,h}`。
-- `--shot` 须显式刷新状态栏（主循环不启动 ⇒ 截图撒谎）。销毁 renderer 前 `font_drop_textures()`，**不能每帧调**（毁 CJK 缓存）。
+- ★ `--shot=<png>` 不调用 `win.start()` ⇒ 画布定时 renderNow 不触发，PNG 只有 chrome 空白底（offscreen/xcb 皆然），**不是渲染 bug**；验证地图内容用 `--shot-offscreen`（C 核心缓冲）。状态栏现由 paintEvent 自动绘制，旧「须显式刷新」口径已过时。销毁 renderer 前 `font_drop_textures()`，**不能每帧调**（毁 CJK 缓存）。
+- ★★ 放大后地名消失（2026-11-05 修）：`labels.c:bbox_moved_far` 旧判据对**纯缩放**不敏感（角点位移/旧跨度恒 <0.2），z≥14 `kind_max` 恒 12 后缓存不重查，高 zoom 小视口裁光旧 Top-400 大地名 ⇒ 修法=加 bbox 跨度比（<0.8 或 >1.25 重查）。路名门槛同步 15→14（`paint.c` 三处 + `labels.c` 一处），500 米档才有路名。**只在同进程连续缩放中复现**，新进程 `--shot-offscreen` 首帧永远查得到 ⇒ 别用离屏单帧统计否认这个 bug。验收：连续缩放台架对拍 + z13/z15 像素 0% + z14 6.44% 全是新增文字 + regress 87/0。z17/18 仍稀疏属数据密度上限（路名只标 cls<=2）。
 
 ## 判据纪律（最高价值）
 - 布尔判据用展开数/里程/像素，时间只兜底取多轮最小；渲染取第二帧、算路丢第 1 次。

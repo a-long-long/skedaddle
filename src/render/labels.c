@@ -120,11 +120,19 @@ static int kind_max_for_zoom(double zoom)
     return 12;
 }
 
-/* 视口变化超过 20% 才重查 SQL；否则平移缩放只重投影 */
+/* 视口变化超过 20% 才重查 SQL；否则平移只重投影。
+ * ★ 缩放必须单独判：旧实现只把四角位移按「上次缓存 bbox 跨度」归一化，
+ *   而纯缩放时位移恰与跨度成正比，比值恒 <0.2（0.5 档约 0.08~0.14），
+ *   于是 zoom>=14 后 kind_max 恒为 12、缓存长时间不刷新，高 zoom 小视口里
+ *   旧的大范围 Top-400 大地名被裁光 —— 表现为「放大到 500 米以下没地名」。
+ *   这里先比 bbox 跨度：0.5 档缩放跨度变 0.707/1.414 倍，必然触发重查。 */
 static int bbox_moved_far(const double *a, const double *b)
 {
     double dw = (a[2] - a[0]) + (a[3] - a[1]);
-    if (dw <= 1e-12) return 1;
+    double dn = (b[2] - b[0]) + (b[3] - b[1]);
+    if (dw <= 1e-12 || dn <= 1e-12) return 1;
+    double ratio = dn / dw;
+    if (ratio < 0.8 || ratio > 1.25) return 1;   /* 缩放：跨度变了 20% 以上 */
     double d = 0;
     for (int i = 0; i < 4; i++) {
         double x = (a[i] - b[i]) / dw;
@@ -331,7 +339,10 @@ void paint_place_labels(Raster *rs, const MapView *v,
 void paint_road_labels(Raster *rs, const MapView *v, Font *font,
                        PaintStats *st)
 {
-    if (!font || v->zoom < 15.0) return;
+    /* z14（比例尺 500 米）起画路名：与 paint_roads 里三处收集门槛一致。
+     * 旧门槛 15.0 让「500 米」档一条路名都没有，画面全靠地名撑着，
+     * 地名再被缓存缺陷削掉时就表现为「放大后什么文字都没有」。 */
+    if (!font || v->zoom < 14.0) return;
 
     const RoadLabel *lbl; int n;
     road_labels_get(&lbl, &n);

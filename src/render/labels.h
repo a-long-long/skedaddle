@@ -9,8 +9,8 @@
 #include "render/paint.h"
 
 /* 地名标注：从 places.db（place 表）按视口查询，网格避让后画。
- * 查询结果缓存在 LabelCache 里，视口变化超阈值才重新查 SQL，
- * 平移缩放时只重投影 + 重避让。 */
+ * 查询结果缓存在 LabelCache 里，视口位移超阈值或缩放导致跨度变化超 20%
+ * 才重新查 SQL；小幅平移时只重投影 + 重避让。 */
 
 typedef struct {
     char   name[64];
