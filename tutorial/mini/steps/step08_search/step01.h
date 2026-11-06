@@ -1,0 +1,58 @@
+/* tutorial/mini · 第 1 课新增：坐标系、1e7 度量化、墨卡托投影
+ *
+ * 对照 src/utils/geo.c、src/map/map_view.c、src/utils/datum.c。
+ * 真实工程里 lon/lat 存成 int32（1e7 度），这里保留同一个不变量。
+ */
+#ifndef MINI_STEP01_H
+#define MINI_STEP01_H
+
+#include <math.h>
+#include <stdint.h>
+
+#define MINI_PI 3.14159265358979323846
+
+static inline int32_t mini_geo_q(double deg) {
+    return (int32_t)(deg * 1e7 + (deg >= 0 ? 0.5 : -0.5));
+}
+
+static inline double mini_geo_unq(int32_t q) { return (double)q / 1e7; }
+
+/* 墨卡托 y（弧度制归一化的中间量），与 src/utils/geo.c 同公式 */
+static inline double mini_merc_y(double lat) {
+    double r = lat * MINI_PI / 180.0;
+    return log(tan(MINI_PI / 4.0 + r / 2.0));
+}
+
+/* 经纬度 → zoom z 的世界像素（Web Mercator，标准 256px 瓦片） */
+static inline void mini_project(double lon, double lat, int z, double *wx, double *wy) {
+    double s = (double)(1u << z) * 256.0;
+    *wx = (lon + 180.0) / 360.0 * s;
+    *wy = (1.0 - mini_merc_y(lat) / MINI_PI) / 2.0 * s;
+}
+
+static inline double mini_haversine_m(double lon1, double lat1, double lon2, double lat2) {
+    double p1 = lat1 * MINI_PI / 180.0, p2 = lat2 * MINI_PI / 180.0;
+    double dp = p2 - p1, dl = (lon2 - lon1) * MINI_PI / 180.0;
+    double a = sin(dp / 2) * sin(dp / 2)
+             + cos(p1) * cos(p2) * sin(dl / 2) * sin(dl / 2);
+    return 2.0 * 6371008.8 * asin(sqrt(a));
+}
+
+static void mini_step_01(MiniCtx *c) {
+    int32_t q = mini_geo_q(116.614105);
+    double wx = 0, wy = 0;
+    mini_project(116.614105, 40.4677234, 10, &wx, &wy);
+    MINI_ASSERT(c, q == 1166141050, "step01: 1e7 度量化不丢位");
+    MINI_ASSERT(c, wx > 0.0 && wy > 0.0 && wx < 262144.0 && wy < 262144.0,
+                "step01: z10 世界像素落在图幅内");
+    double one_deg = mini_haversine_m(0, 0, 0, 1);
+    MINI_ASSERT(c, one_deg > 110000.0 && one_deg < 112000.0,
+                "step01: 1 度纬度约 111km");
+    /* 在缓冲上【追加】一层浅灰经纬网，不擦第 0 课的十字与对角线 */
+    for (int x = 0; x < c->w; x += 40) mini_line(c, x, 0, x, c->h - 1, 0x00D6DBDEu);
+    printf("MINI-STEP-01-OK  q=%d world=(%.1f,%.1f) ink=%ld\n",
+           q, wx, wy, mini_ink(c));
+    c->step_count++;
+}
+
+#endif /* MINI_STEP01_H */

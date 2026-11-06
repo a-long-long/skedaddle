@@ -1,0 +1,46 @@
+/* tutorial/mini · 第 11 课新增：判据框架与「负向对照必须能失败」
+ *
+ * 对照 scripts/regress.sh、src/render/audit.c。项目铁律：只跑通正常路径不算验收，
+ * 必须证明「把改动改回去，新判据会 FAIL」。这里把这条纪律做成可调用的 API。
+ */
+#ifndef MINI_STEP11_H
+#define MINI_STEP11_H
+
+#include <stdio.h>
+
+typedef int (*MiniGateFn)(int);
+
+static int g_mini_thresh = 10;
+
+static inline int mini_gate_classify_ge(int x) { return x >= g_mini_thresh; }
+
+static inline int mini_gate_eval(MiniGateFn fn, int arg, const char *name, int *pass) {
+    int r = fn(arg) ? 1 : 0;
+    printf("  GATE %-30s %s\n", name, r ? "PASS" : "FAIL");
+    if (r && pass) (*pass)++;
+    return r;
+}
+
+/* 返回 1 = 这条已知坏输入确实让判据 FAIL（负向对照成立） */
+static inline int mini_gate_negative(MiniGateFn fn, int bad_arg, const char *name) {
+    int r = fn(bad_arg) ? 1 : 0;
+    printf("  NEG  %-30s %s (期望 FAIL)\n", name, r ? "PASS" : "FAIL");
+    return r == 0;
+}
+
+static void mini_step_11(MiniCtx *c) {
+    int pass = 0;
+    g_mini_thresh = 10;
+    int r1 = mini_gate_eval(mini_gate_classify_ge, 15, "classify(15) 属高类", &pass);
+    int neg = mini_gate_negative(mini_gate_classify_ge, 5, "classify(5) 应被挡下");
+    MINI_ASSERT(c, r1 == 1 && pass == 1, "step11: 正向判据通过并计数");
+    MINI_ASSERT(c, neg == 1, "step11: 负向对照能失败（不是假门禁）");
+    /* 追加：阈值条，蓝=低类 / 红=高类 */
+    for (int x = 0; x < 100; x++)
+        mini_fill_rect(c, 10 + x * 2, 222, 2, 4,
+                       x >= g_mini_thresh ? 0x00D04040u : 0x004080C0u);
+    printf("MINI-STEP-11-OK  gates=%d ink=%ld\n", pass, mini_ink(c));
+    c->step_count++;
+}
+
+#endif /* MINI_STEP11_H */

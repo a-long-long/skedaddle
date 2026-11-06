@@ -18,6 +18,12 @@
 > `14_i18n` ↔ `tutorial/14_i18n`，`15_platform` ↔ `tutorial/15_platform`，
 > `16_qt` ↔ `tutorial/16_qt`。读源码式讲义看"为什么这么写"，配套小程序看"怎么跑起来"。
 > **第 17 课是唯一例外**：以真实 `android/` 产品工程为配套（需 NDK / Gradle），不提供 `tutorial/17_android` 小程序。
+>
+> **演化链（2026-11-06 新增，第 3 份资料）**：讲义是「最终源码导读」、`tutorial/NN_*` 是「可独立编译的单课小程序」，
+> 两者都**不是**同一份代码逐步长大。要看「从最小框架开始 → 逐课累加 → 最后对上 `src/`」，走
+> [`tutorial/mini/README.md`](../../tutorial/mini/README.md)：18 个连续快照 + 17 个相邻 diff，
+> 末课 [`MAP.md`](../../tutorial/mini/MAP.md) 给 `mini/ ↔ src/` 逐模块合流对照。
+> 「只增不减」由 [`scripts/check_mini_chain.py`](../../scripts/check_mini_chain.py) 逐行验收。
 
 **课程总览与程序运行流程图见 [`00_overview.md`](00_overview.md)（第 0 课）——建议从这里开始读。**
 
@@ -58,3 +64,6 @@
 - 环境搭建与构建命令见 [`../teaching-plan.md`](../teaching-plan.md) 的「一、环境搭建」。
 - **讲义里的「完整体，逐字」代码块由 [`scripts/regen_tutorial_blocks.py`](../../scripts/regen_tutorial_blocks.py) 从当前源码生成**（第 16 课 `main_window.*`、第 11 课内嵌 `regress.sh`）：改完源码跑一次生成脚本，用 `--check` 确认没有过期副本。最近增补内容：第 7 课 §3.6 标注层、第 16 课 §3.10 无边框窗口、第 11 课 §3.7 新增判据。
 - 改完讲义编号 / 分类，跑 `python3 scripts/check_tutorial_tracks.py` 确认两段式分类与编号一致；跑 `bash scripts/check_doc_numbers.sh` 确认 H1 编号与文件名一致。
+- **要看代码怎么一课课长大**：`tutorial/mini/` 是第 3 份资料（18 个连续快照，每步都能编译跑出 BMP）；
+  改完 `_parts/` 跑 `python3 scripts/regen_mini_chain.py` 重新生成，再用 `python3 scripts/check_mini_chain.py`
+  验收累加不变量（含 `--self-test` 的 5 类负向对照）。该门禁与 `check_tutorial_tracks.py` 一样未接进 `regress.sh`。

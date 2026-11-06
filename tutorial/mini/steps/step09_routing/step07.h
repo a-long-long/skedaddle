@@ -1,0 +1,70 @@
+/* tutorial/mini · 第 7 课新增：一帧的 9 步管线编排
+ *
+ * 对照 src/ui/window.c:paint_frame、src/ui/chrome.c。真实工程里每一阶段都吃真实
+ * 图集并跨省统一分层；mini 只把「顺序 + 职责」钉住，阶段内容用前面的模块代跑。
+ *
+ * ★ 与真实工程唯一刻意的差别：mini 的 ① 底色阶段只校验、不重涂背景 ——
+ *   否则每跑一课就会把前几课画上去的要素擦掉，「同一份工程逐课长大」就不成立。
+ *   这点在 MAP.md 里如实列为 mini → src 的差距之一。
+ */
+#ifndef MINI_STEP07_H
+#define MINI_STEP07_H
+
+#include <stdint.h>
+
+#define MINI_STAGES 9
+
+static inline int mini_paint_frame(MiniCtx *c, const MiniView *v, int *stages) {
+    int k = 0;
+    /* ① 底色：只校验，不重涂 */
+    stages[k++] = 1;
+    /* ② 视口 bbox */
+    double lo0 = 0, la0 = 0, lo1 = 0, la1 = 0;
+    mini_view_bbox(v, &lo0, &la0, &lo1, &la1);
+    stages[k++] = 2;
+    /* ③ 按 bbox 决定图集进/出（mini 用 bbox 宽度当确定性替身） */
+    int visible_tiles = (int)((lo1 - lo0) * 1000.0);
+    stages[k++] = 3;
+    /* ④ 跨省统一分层：面 → 路 → 线 → 等高线，顺序固定 */
+    int layers[4] = { 1, 2, 3, 4 };
+    stages[k++] = 4;
+    /* ⑤ 光栅：用裁剪线画一条「路」 */
+    mini_raster_line(c, 210, 20, 300, 20, 0x00909090u);
+    stages[k++] = 5;
+    /* ⑥ 标注：用小方块代替字形 */
+    for (int i = 0; i < 3; i++) {
+        mini_fill_rect(c, 212 + i * 30, 26, 4, 4, 0x00E08020u);
+        c->labels++;
+    }
+    stages[k++] = 6;
+    /* ⑦ 叠加层：gpx → route → 车头 → 端点 → 解码占位 */
+    int overlay_order[5] = { 1, 2, 3, 4, 5 };
+    stages[k++] = 7;
+    /* ⑧ 昼夜蒙版：只在顶栏做一次半透明叠加，不改背景色约定 */
+    for (int x = 0; x < c->w; x += 2) {
+        uint32_t old = mini_at(c, x, 6);
+        mini_pp(c, x, 6, mini_blend(old, 0x00304060u, 64));
+    }
+    stages[k++] = 8;
+    /* ⑨ chrome 自绘界面 */
+    mini_fill_rect(c, 0, 0, c->w, 3, 0x003A4652u);
+    stages[k++] = 9;
+    return (visible_tiles > 0 && layers[0] == 1 && overlay_order[4] == 5) ? k : -1;
+}
+
+static void mini_step_07(MiniCtx *c) {
+    MiniView v;
+    mini_view_init(&v, c->w, c->h);
+    int stages[MINI_STAGES];
+    for (int i = 0; i < MINI_STAGES; i++) stages[i] = 0;
+    int k = mini_paint_frame(c, &v, stages);
+    int ordered = 1;
+    for (int i = 0; i < MINI_STAGES; i++) if (stages[i] != i + 1) ordered = 0;
+    MINI_ASSERT(c, k == MINI_STAGES && ordered, "step07: 9 个阶段按固定顺序执行");
+    MINI_ASSERT(c, mini_at(c, 0, 0) != c->bg, "step07: chrome 层最后盖上");
+    MINI_ASSERT(c, mini_ink(c) > 0, "step07: 一帧画完仍有内容");
+    printf("MINI-STEP-07-OK  stages=%d ink=%ld\n", k, mini_ink(c));
+    c->step_count++;
+}
+
+#endif /* MINI_STEP07_H */

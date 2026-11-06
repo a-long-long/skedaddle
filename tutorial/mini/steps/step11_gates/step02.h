@@ -1,0 +1,80 @@
+/* tutorial/mini · 第 2 课新增：PBF 流式解析（varint + 字段号/线型）
+ *
+ * 对照 src/pbf/pbf_decode.c。真实 OSM PBF 还有 zlib blob、StringTable、
+ * DenseNodes 与 delta 编码；这里只保留最核心的「tag = field<<3 | wire」机制，
+ * 用一段手写字节流演示，便于逐字节看懂。
+ */
+#ifndef MINI_STEP02_H
+#define MINI_STEP02_H
+
+#include <stdint.h>
+
+typedef struct {
+    int64_t id;
+    int32_t lon_q, lat_q;
+} MiniPbfNode;
+
+/* 手写 3 条节点记录，外层 field1(length-delimited)，内层 id/lon/lat(varint)。
+ * lon/lat 用缩小后的整数，避免手写 1e7 度的多字节 varint 淹没重点。 */
+static const uint8_t g_mini_blob[] = {
+    0x0A, 0x07, 0x08, 0x01, 0x10, 0x64, 0x18, 0xC8, 0x01,
+    0x0A, 0x07, 0x08, 0x02, 0x10, 0x6E, 0x18, 0xD2, 0x01,
+    0x0A, 0x07, 0x08, 0x03, 0x10, 0x78, 0x18, 0xDC, 0x01
+};
+
+static inline int mini_pbf_varint(const uint8_t *p, int n, int *pos, uint64_t *out) {
+    uint64_t v = 0;
+    int shift = 0;
+    for (int k = 0; k < 10 && *pos < n; k++) {
+        uint8_t b = p[(*pos)++];
+        v |= (uint64_t)(b & 0x7F) << shift;
+        if (!(b & 0x80)) { *out = v; return 0; }
+        shift += 7;
+    }
+    return -1;
+}
+
+static inline int mini_pbf_parse(const uint8_t *p, int n, MiniPbfNode *out, int cap) {
+    int pos = 0, cnt = 0;
+    while (pos < n && cnt < cap) {
+        uint64_t tag = 0, len = 0;
+        if (mini_pbf_varint(p, n, &pos, &tag) || tag != 0x0A) return -1;
+        if (mini_pbf_varint(p, n, &pos, &len)) return -1;
+        int end = pos + (int)len;
+        if (end > n) return -1;
+        MiniPbfNode nd;
+        nd.id = 0; nd.lon_q = 0; nd.lat_q = 0;
+        while (pos < end) {
+            uint64_t f = 0, v = 0;
+            if (mini_pbf_varint(p, n, &pos, &f)) return -1;
+            if (mini_pbf_varint(p, n, &pos, &v)) return -1;
+            if (f == 0x08) nd.id = (int64_t)v;
+            else if (f == 0x10) nd.lon_q = (int32_t)v;
+            else if (f == 0x18) nd.lat_q = (int32_t)v;
+        }
+        out[cnt++] = nd;
+        pos = end;
+    }
+    return cnt;
+}
+
+static void mini_step_02(MiniCtx *c) {
+    MiniPbfNode nodes[8];
+    int k = mini_pbf_parse(g_mini_blob, (int)sizeof g_mini_blob, nodes, 8);
+    uint64_t probe = 0;
+    int pp = 7;   /* 直接指向 200 的 varint：0xC8 0x01 */
+    int vr = mini_pbf_varint(g_mini_blob, (int)sizeof g_mini_blob, &pp, &probe);
+    MINI_ASSERT(c, vr == 0 && probe == 200, "step02: 多字节 varint 解码");
+    MINI_ASSERT(c, k == 3, "step02: 解析出 3 个节点");
+    MINI_ASSERT(c, k == 3 && nodes[0].id == 1 && nodes[2].id == 3
+                && nodes[2].lat_q == 220, "step02: 字段号与值归位");
+    for (int i = 0; i < k; i++) {
+        int x = 40 + i * 70, y = 30 + (nodes[i].lat_q - 200);
+        mini_fill_rect(c, x, y, 5, 5, 0x00C05621u);
+        c->labels++;
+    }
+    printf("MINI-STEP-02-OK  nodes=%d ink=%ld\n", k, mini_ink(c));
+    c->step_count++;
+}
+
+#endif /* MINI_STEP02_H */

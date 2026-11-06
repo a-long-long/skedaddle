@@ -1,0 +1,64 @@
+--- a/step15/main.c
++++ b/step16/main.c
+@@ -29,6 +29,7 @@
+ #include "step13.h"
+ #include "step14.h"
+ #include "step15.h"
++#include "step16.h"
+ /* @@INCLUDE@@ */
+ 
+ int main(void) {
+@@ -50,6 +51,7 @@
+     mini_step_13(&c);
+     mini_step_14(&c);
+     mini_step_15(&c);
++    mini_step_16(&c);
+     /* @@CALL@@ */
+     if (mini_write_bmp(&c, "mini_out.bmp") != 0) {
+         fprintf(stderr, "mini: write bmp failed\n");
+--- /dev/null
++++ b/step16/step16.h
+@@ -0,0 +1,43 @@
++/* tutorial/mini · 第 16 课新增：Qt 外壳（换壳不换核心，跨平台段第 2 课）
++ *
++ * 对照 src/ui_qt/map_canvas.cpp、src/ui/offscreen_shot.c:app_render_to_buf。
++ * ★ 本项目踩过的真实坑：C 光栅只写 RGB，缓冲恒为 0x00RRGGBB；
++ *   Wayland 按 ARGB8888 上传时 alpha=0 会整片透明/花屏 ⇒ 交回 Qt 前必须
++ *   把高字节置 0xFF。下面这一行就是那条修复的教学复刻。
++ */
++#ifndef MINI_STEP16_H
++#define MINI_STEP16_H
++
++#include <stdint.h>
++#include <stdlib.h>
++
++static inline int mini_front_render(const MiniCtx *c, uint32_t *dst, int w, int h) {
++    if (!dst || w != c->w || h != c->h) return -1;
++    for (int i = 0; i < w * h; i++) dst[i] = c->px[i] | 0xFF000000u;
++    return 0;
++}
++
++static void mini_step_16(MiniCtx *c) {
++    uint32_t *argb = (uint32_t *)malloc((size_t)c->w * c->h * sizeof(uint32_t));
++    int rc = mini_front_render(c, argb, c->w, c->h);
++    int alpha_ok = 1, rgb_ok = 1;
++    if (rc == 0 && argb) {
++        for (int i = 0; i < c->w * c->h; i++) {
++            if ((argb[i] >> 24) != 0xFFu) alpha_ok = 0;
++            if ((argb[i] & 0x00FFFFFFu) != (c->px[i] & 0x00FFFFFFu)) rgb_ok = 0;
++        }
++    } else {
++        alpha_ok = rgb_ok = 0;
++    }
++    int bad_size = mini_front_render(c, argb, c->w - 1, c->h);
++    MINI_ASSERT(c, rc == 0 && alpha_ok, "step16: 交付 Qt 前 alpha 全置 0xFF");
++    MINI_ASSERT(c, rgb_ok, "step16: 换壳不改一个 RGB 像素");
++    MINI_ASSERT(c, bad_size == -1, "step16: 尺寸不匹配直接拒绝");
++    free(argb);
++    /* 追加：无边框窗口的 10px 顶部拖动带（零可见控件，仅一条细线示意） */
++    mini_line(c, 0, 9, c->w - 1, 9, 0x00C0C8D0u);
++    printf("MINI-STEP-16-OK  argb8888=%dx%d ink=%ld\n", c->w, c->h, mini_ink(c));
++    c->step_count++;
++}
++
++#endif /* MINI_STEP16_H */

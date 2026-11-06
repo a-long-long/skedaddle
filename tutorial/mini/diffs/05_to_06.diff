@@ -1,0 +1,116 @@
+--- a/step05/main.c
++++ b/step06/main.c
+@@ -19,6 +19,7 @@
+ #include "step03.h"
+ #include "step04.h"
+ #include "step05.h"
++#include "step06.h"
+ /* @@INCLUDE@@ */
+ 
+ int main(void) {
+@@ -30,6 +31,7 @@
+     mini_step_03(&c);
+     mini_step_04(&c);
+     mini_step_05(&c);
++    mini_step_06(&c);
+     /* @@CALL@@ */
+     if (mini_write_bmp(&c, "mini_out.bmp") != 0) {
+         fprintf(stderr, "mini: write bmp failed\n");
+--- /dev/null
++++ b/step06/step06.h
+@@ -0,0 +1,95 @@
++/* tutorial/mini · 第 6 课新增：软件光栅增强（线段裁剪 / 多边形填充 / alpha 混合）
++ *
++ * 对照 src/render/raster.c、src/render/paint.c。真实版还有 LOD 档位、跨省统一
++ * 分层、bbox 缓存；这里把三个最底层原语单独拎出来，配确定性像素判据。
++ */
++#ifndef MINI_STEP06_H
++#define MINI_STEP06_H
++
++#include <stdint.h>
++
++static inline uint32_t mini_blend(uint32_t dst, uint32_t src, unsigned a) {
++    unsigned ia = 255u - a;
++    unsigned r = ((dst >> 16) & 0xFFu) * ia + ((src >> 16) & 0xFFu) * a;
++    unsigned g = ((dst >>  8) & 0xFFu) * ia + ((src >>  8) & 0xFFu) * a;
++    unsigned b = ( dst        & 0xFFu) * ia + ( src        & 0xFFu) * a;
++    return ((r / 255u) << 16) | ((g / 255u) << 8) | (b / 255u);
++}
++
++/* Liang–Barsky 参数裁剪；完全落在视口外返回 0 且一个像素都不写 */
++static inline int mini_clip_line(int *x0, int *y0, int *x1, int *y1, int W, int H) {
++    double t0 = 0.0, t1 = 1.0;
++    double dx = *x1 - *x0, dy = *y1 - *y0;
++    double p[4] = { -dx, dx, -dy, dy };
++    double q[4] = { (double)*x0, (double)(W - 1 - *x0),
++                    (double)*y0, (double)(H - 1 - *y0) };
++    for (int i = 0; i < 4; i++) {
++        if (p[i] == 0.0) { if (q[i] < 0.0) return 0; continue; }
++        double r = q[i] / p[i];
++        if (p[i] < 0.0) { if (r > t1) return 0; if (r > t0) t0 = r; }
++        else            { if (r < t0) return 0; if (r < t1) t1 = r; }
++    }
++    int ax = *x0, ay = *y0, bx = *x1, by = *y1;
++    if (t0 > 0.0) { ax = (int)(*x0 + t0 * dx + 0.5); ay = (int)(*y0 + t0 * dy + 0.5); }
++    if (t1 < 1.0) { bx = (int)(*x0 + t1 * dx + 0.5); by = (int)(*y0 + t1 * dy + 0.5); }
++    *x0 = ax; *y0 = ay; *x1 = bx; *y1 = by;
++    return 1;
++}
++
++static inline int mini_raster_line(MiniCtx *c, int x0, int y0, int x1, int y1, uint32_t col) {
++    if (!mini_clip_line(&x0, &y0, &x1, &y1, c->w, c->h)) return 0;
++    mini_line(c, x0, y0, x1, y1, col);
++    return 1;
++}
++
++/* 扫描线填充（凸/简单多边形），与 paint_areas 的同源思路 */
++static inline void mini_polyfill(MiniCtx *c, const int *xs, const int *ys, int n, uint32_t col) {
++    int ymin = ys[0], ymax = ys[0];
++    for (int i = 1; i < n; i++) {
++        if (ys[i] < ymin) ymin = ys[i];
++        if (ys[i] > ymax) ymax = ys[i];
++    }
++    for (int y = ymin; y <= ymax; y++) {
++        int hits[16], hn = 0;
++        for (int i = 0; i < n; i++) {
++            int j = (i + 1) % n;
++            int ya = ys[i], yb = ys[j];
++            if ((ya <= y && yb > y) || (yb <= y && ya > y)) {
++                int x = xs[i] + (int)((double)(y - ya) * (xs[j] - xs[i]) / (yb - ya));
++                if (hn < 16) hits[hn++] = x;
++            }
++        }
++        for (int a = 0; a < hn; a++)
++            for (int b = a + 1; b < hn; b++)
++                if (hits[b] < hits[a]) { int t = hits[a]; hits[a] = hits[b]; hits[b] = t; }
++        for (int a = 0; a + 1 < hn; a += 2)
++            for (int x = hits[a]; x <= hits[a + 1]; x++) mini_pp(c, x, y, col);
++    }
++    c->polys++;
++}
++
++static void mini_step_06(MiniCtx *c) {
++    long before = mini_ink(c);
++    int ax = -500, ay = -500, bx = -400, by = -400;
++    int outside = mini_raster_line(c, ax, ay, bx, by, 0x00FF0000u);
++    MINI_ASSERT(c, outside == 0 && mini_ink(c) == before,
++                "step06: 完全出界的线一个像素都不写");
++    int cx0 = -20, cy0 = 30, cx1 = 40, cy1 = 30;
++    /* C 是值传递：裁剪后端点不会写回调用方变量，所以判据看「画出来的像素」 */
++    int clipped = mini_raster_line(c, cx0, cy0, cx1, cy1, 0x00FF0000u);
++    MINI_ASSERT(c, clipped == 1 && mini_at(c, 0, 30) == 0x00FF0000u
++                && mini_at(c, 40, 30) == 0x00FF0000u,
++                "step06: 裁剪后只画视口内那一段");
++    uint32_t mix = mini_blend(0x00000000u, 0x00FFFFFFu, 128);
++    MINI_ASSERT(c, ((mix >> 16) & 0xFFu) == 128,
++                "step06: 半透明混合是确定性数值");
++    /* 追加：填充一块淡绿色多边形（面），演示 paint_areas */
++    int xs[4] = { 18, 96, 108, 26 }, ys[4] = { 46, 40, 78, 88 };
++    long pre_poly = mini_ink(c);
++    mini_polyfill(c, xs, ys, 4, 0x00D9E8CEu);
++    MINI_ASSERT(c, mini_ink(c) >= pre_poly, "step06: 面填充不减少已有要素");
++    printf("MINI-STEP-06-OK  ink=%ld\n", mini_ink(c));
++    c->step_count++;
++}
++
++#endif /* MINI_STEP06_H */

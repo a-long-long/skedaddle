@@ -1,0 +1,70 @@
+/* tutorial/mini · 第 3 课新增：自描述二进制与 section 表
+ *
+ * 对照 src/map/binfmt.c、src/map/mapset.c。真实图集用 header + 分区表 +
+ * 定长数组，让「读某一类数据」不需要知道文件总长；这里用一块内存模拟文件。
+ */
+#ifndef MINI_STEP03_H
+#define MINI_STEP03_H
+
+#include <stdint.h>
+#include <string.h>
+
+#define MINI_BIN_HDRSZ 8
+#define MINI_BIN_SECSZ 16
+
+static inline void mini_bin_put32(uint8_t *p, uint32_t v) { memcpy(p, &v, 4); }
+static inline uint32_t mini_bin_get32(const uint8_t *p) {
+    uint32_t v; memcpy(&v, p, 4); return v;
+}
+
+/* 写两张 section：tag1 = 3 个节点(esz8)，tag2 = 5 条边(esz4) */
+static inline int mini_bin_build(uint8_t *b, int cap) {
+    if (cap < 96) return -1;
+    memset(b, 0, (size_t)cap);
+    b[0] = 'S'; b[1] = 'K'; b[2] = 'M'; b[3] = 'B';
+    uint16_t ver = 1, nsec = 2;
+    memcpy(b + 4, &ver, 2);
+    memcpy(b + 6, &nsec, 2);
+    uint32_t off1 = MINI_BIN_HDRSZ + 2 * MINI_BIN_SECSZ;
+    uint32_t off2 = off1 + 3 * 8;
+    mini_bin_put32(b + 8,      1); mini_bin_put32(b + 12, 8);
+    mini_bin_put32(b + 16,     3); mini_bin_put32(b + 20, off1);
+    mini_bin_put32(b + 24,     2); mini_bin_put32(b + 28, 4);
+    mini_bin_put32(b + 32,     5); mini_bin_put32(b + 36, off2);
+    for (int i = 0; i < 3; i++) b[off1 + i * 8] = (uint8_t)(0xA0 + i);
+    for (int i = 0; i < 5; i++) b[off2 + i * 4] = (uint8_t)(0xB0 + i);
+    return 0;
+}
+
+static inline const uint8_t *mini_bin_locate(const uint8_t *b, uint32_t tag,
+                                             uint32_t *esz, uint32_t *count) {
+    uint16_t nsec;
+    memcpy(&nsec, b + 6, 2);
+    for (uint16_t i = 0; i < nsec; i++) {
+        const uint8_t *s = b + MINI_BIN_HDRSZ + i * MINI_BIN_SECSZ;
+        if (mini_bin_get32(s) != tag) continue;
+        *esz = mini_bin_get32(s + 4);
+        *count = mini_bin_get32(s + 8);
+        return b + mini_bin_get32(s + 12);
+    }
+    return NULL;
+}
+
+static void mini_step_03(MiniCtx *c) {
+    uint8_t b[96];
+    int rc = mini_bin_build(b, (int)sizeof b);
+    uint32_t esz = 0, cnt = 0;
+    const uint8_t *p1 = mini_bin_locate(b, 1, &esz, &cnt);
+    const uint8_t *p2 = mini_bin_locate(b, 2, &esz, &cnt);
+    const uint8_t *px = mini_bin_locate(b, 99, &esz, &cnt);
+    MINI_ASSERT(c, rc == 0 && memcmp(b, "SKMB", 4) == 0, "step03: magic 与版本头");
+    MINI_ASSERT(c, p1 && mini_bin_get32(b + 16) == 3, "step03: tag1 的节点数可自描述");
+    MINI_ASSERT(c, p2 && p1[0] == 0xA0 && px == NULL, "step03: 按 tag 定位 + 未知 tag 返回空");
+    /* 追加：把 section 表画成两个色块（示意「文件结构本身也是数据」） */
+    mini_fill_rect(c, 12, 12, 24, 6, 0x004A7FB5u);
+    mini_fill_rect(c, 40, 12, 40, 6, 0x00B57F4Au);
+    printf("MINI-STEP-03-OK  sections=2 ink=%ld\n", mini_ink(c));
+    c->step_count++;
+}
+
+#endif /* MINI_STEP03_H */

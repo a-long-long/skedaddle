@@ -63,6 +63,12 @@
 ## 坐标系（`src/utils/datum.c`）
 - CGCS2000 平移 0；北京1954=EPSG:4214 默认 TOWGS84；西安1980=全国 3 参数(−104.57,−45.94,+5.30)。"EPSG 没登记"≠"没参数"；两条独立证据互印才落值；分区参数已否决（选错代价 > 全国最大 14.7m）。
 
+## 教程三轨（2026-11-06）
+- ★ 三份资料并存：`docs/teaching/NN_*.md`（最终 `src/` 源码导读）、`tutorial/NN_*/`（各自独立小程序）、`tutorial/mini/`（**同一份工程 18 个连续快照 + 17 个相邻 diff**，真渐进式）。前两轨都不是「同一代码逐步长大」；第 3 轨补上「最小框架 → 逐课累加 → 末课对上最终代码」。分类重排（核心 00–14 / 跨平台 15–17）不变。
+- `tutorial/mini/_parts/` 是**唯一人写源**（`main.c.tpl` + 18 个 header-only `stepNN.h` + `chain.json`）；`scripts/regen_mini_chain.py` 生成 `steps/`+`diffs/`（224 文件，`--check` 过期 rc=1）；`scripts/check_mini_chain.py` 守「旧文件零删改（行子序列）+ 18 步 `-Werror` 编译运行 + gates/ink 确定性 + 5 类负向对照」，**未接 regress.sh**（与 `check_tutorial_tracks.py` 同理，保 87/0 与副机行为）。
+- 末课合流点 `tutorial/mini/MAP.md` = mini 模块 ↔ src 模块 18 行对照 + 差距清单；门禁会校验 MAP 引用的路径真实存在 ⇒ 改模块名/搬文件要重跑全链门禁。
+- ★ C 注释里写 `NN_*/` 会让 `*/` 提前闭合块注释、`src/x/*.c` 的 `/*` 触发 `-Wcomment` 炸 `-Werror`；写相对链接先数清层数（`steps/stepNN_slug/` 回 `docs/` 是 **4 层** `../../../../`）。负向对照想测 RUN 判据，改「被检查的数据」而不是把条件改成常量 0（后者让变量未使用，先被 BUILD 拦下）。
+
 ## 分层与模块边界
 - 终态依赖图纯 DAG 零环：`utils ← pbf ← map ← route ← render ← ui ← ui_qt`（search/settings 横切）。
 - ★★ `-Wl,--start-group` 已从 CMake 移除，新反向依赖立刻 undefined-reference（链接器第二道防线）。

@@ -1,0 +1,94 @@
+--- a/step04/main.c
++++ b/step05/main.c
+@@ -18,6 +18,7 @@
+ #include "step02.h"
+ #include "step03.h"
+ #include "step04.h"
++#include "step05.h"
+ /* @@INCLUDE@@ */
+ 
+ int main(void) {
+@@ -28,6 +29,7 @@
+     mini_step_02(&c);
+     mini_step_03(&c);
+     mini_step_04(&c);
++    mini_step_05(&c);
+     /* @@CALL@@ */
+     if (mini_write_bmp(&c, "mini_out.bmp") != 0) {
+         fprintf(stderr, "mini: write bmp failed\n");
+--- /dev/null
++++ b/step05/step05.h
+@@ -0,0 +1,73 @@
++/* tutorial/mini · 第 5 课新增：视口、投影到屏幕、瓦片键
++ *
++ * 对照 src/map/map_view.c、src/map/tileidx.c。真实工程里 mapset_set_view
++ * 就是拿这个 bbox 决定哪些省 / 哪些 disp tile 该进该出。
++ */
++#ifndef MINI_STEP05_H
++#define MINI_STEP05_H
++
++#include <math.h>
++#include <stdint.h>
++
++typedef struct {
++    double lon, lat;
++    int z, w, h;
++} MiniView;
++
++static inline void mini_view_init(MiniView *v, int w, int h) {
++    v->lon = 116.614105; v->lat = 40.4677234; v->z = 10;
++    v->w = w; v->h = h;
++}
++
++/* 中心点世界像素 → 屏幕中心偏移 */
++static inline void mini_view_screen(const MiniView *v, double lon, double lat,
++                                    int *sx, int *sy) {
++    double cwx = 0, cwy = 0, wx = 0, wy = 0;
++    mini_project(v->lon, v->lat, v->z, &cwx, &cwy);
++    mini_project(lon, lat, v->z, &wx, &wy);
++    *sx = (int)(v->w / 2 + (wx - cwx) + 0.5);
++    *sy = (int)(v->h / 2 + (wy - cwy) + 0.5);
++}
++
++static inline void mini_view_bbox(const MiniView *v,
++                                  double *lon0, double *lat0,
++                                  double *lon1, double *lat1) {
++    double s = (double)(1u << v->z) * 256.0;
++    double cwx = 0, cwy = 0;
++    mini_project(v->lon, v->lat, v->z, &cwx, &cwy);
++    double xa = (cwx - v->w / 2.0) / s * 360.0 - 180.0;
++    double xb = (cwx + v->w / 2.0) / s * 360.0 - 180.0;
++    double na = MINI_PI - 2.0 * MINI_PI * (cwy - v->h / 2.0) / s;
++    double nb = MINI_PI - 2.0 * MINI_PI * (cwy + v->h / 2.0) / s;
++    *lon0 = xa; *lon1 = xb;
++    *lat0 = 180.0 / MINI_PI * atan(0.5 * (exp(nb) - exp(-nb)));
++    *lat1 = 180.0 / MINI_PI * atan(0.5 * (exp(na) - exp(-na)));
++}
++
++static inline uint64_t mini_tile_key(int tx, int ty, int z) {
++    return ((uint64_t)z << 48) | ((uint64_t)(uint32_t)tx << 24) | (uint32_t)ty;
++}
++
++static void mini_step_05(MiniCtx *c) {
++    MiniView v;
++    mini_view_init(&v, c->w, c->h);
++    int sx = 0, sy = 0;
++    mini_view_screen(&v, v.lon, v.lat, &sx, &sy);
++    double lo0 = 0, la0 = 0, lo1 = 0, la1 = 0;
++    mini_view_bbox(&v, &lo0, &la0, &lo1, &la1);
++    MINI_ASSERT(c, sx == v.w / 2 && sy == v.h / 2, "step05: 中心经纬度落在屏幕中心");
++    MINI_ASSERT(c, lo0 < v.lon && v.lon < lo1 && la0 < v.lat && v.lat < la1,
++                "step05: 可见 bbox 包住中心点");
++    MINI_ASSERT(c, mini_tile_key(3, 4, 10) != mini_tile_key(3, 4, 11),
++                "step05: 瓦片键含 zoom 位");
++    /* 追加：画视口边框与瓦片格，颜色比路网更淡，后画但不覆盖旧要素的计数 */
++    mini_line(c, 2, 2, c->w - 3, 2, 0x00B0C4DEu);
++    mini_line(c, 2, c->h - 3, c->w - 3, c->h - 3, 0x00B0C4DEu);
++    mini_line(c, 2, 2, 2, c->h - 3, 0x00B0C4DEu);
++    mini_line(c, c->w - 3, 2, c->w - 3, c->h - 3, 0x00B0C4DEu);
++    printf("MINI-STEP-05-OK  center=(%d,%d) bbox=(%.4f,%.4f)-(%.4f,%.4f) ink=%ld\n",
++           sx, sy, lo0, la0, lo1, la1, mini_ink(c));
++    c->step_count++;
++}
++
++#endif /* MINI_STEP05_H */

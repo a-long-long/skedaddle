@@ -1,0 +1,52 @@
+/* tutorial/mini · 第 17 课新增：Android JNI 外壳（跨平台段第 3 课 / 演化链终点）
+ *
+ * 对照 android/app/src/main/cpp/skedaddle_jni.cpp、docs/android.md。
+ * mini 用 void* 代替真实 JNIEnv、用 int32_t* 代替 jintArray，不依赖 NDK；
+ * 契约一致：C 核心把像素写进调用方的缓冲，且必须补上 alpha=0xFF，
+ * 否则 Bitmap 在 ARGB_8888 下同样会全透明花屏。
+ *
+ * ★ 到这里 mini/ 与真实 src/ 的合流点见 tutorial/mini/MAP.md。
+ */
+#ifndef MINI_STEP17_H
+#define MINI_STEP17_H
+
+#include <stdint.h>
+#include <stdlib.h>
+
+static inline int mini_jni_render_frame(const MiniCtx *c, void *env_stub,
+                                        int32_t *java_px, int n) {
+    (void)env_stub;   /* 真实签名：JNIEnv*, jobject, jintArray */
+    if (!java_px || n != c->w * c->h) return -1;
+    for (int i = 0; i < n; i++) java_px[i] = (int32_t)(c->px[i] | 0xFF000000u);
+    return 0;
+}
+
+static void mini_step_17(MiniCtx *c) {
+    int n = c->w * c->h;
+    int32_t *java_px = (int32_t *)malloc((size_t)n * sizeof(int32_t));
+    int rc = mini_jni_render_frame(c, NULL, java_px, n);
+    int alpha_ok = 1, rgb_ok = 1;
+    if (rc == 0 && java_px) {
+        for (int i = 0; i < n; i++) {
+            if (((uint32_t)java_px[i] >> 24) != 0xFFu) alpha_ok = 0;
+            if (((uint32_t)java_px[i] & 0x00FFFFFFu) != (c->px[i] & 0x00FFFFFFu)) rgb_ok = 0;
+        }
+    } else {
+        alpha_ok = rgb_ok = 0;
+    }
+    int bad_n = mini_jni_render_frame(c, NULL, java_px, n - 1);
+    MINI_ASSERT(c, rc == 0 && alpha_ok, "step17: Bitmap 每像素 alpha=0xFF");
+    MINI_ASSERT(c, rgb_ok, "step17: 换壳不换核心，RGB 逐像素一致");
+    MINI_ASSERT(c, bad_n == -1, "step17: 数组长度不符直接拒绝");
+    free(java_px);
+    /* 追加：手机屏边框（示意第二个前端，C 核心一行未改） */
+    mini_line(c, 4, 26, 4, c->h - 5, 0x0090A0B0u);
+    mini_line(c, c->w - 5, 26, c->w - 5, c->h - 5, 0x0090A0B0u);
+    MINI_ASSERT(c, c->step_count == 17, "step17: 前 17 课全部仍在链上");
+    printf("MINI-STEP-17-OK  jni_px=%d ink=%ld\n", n, mini_ink(c));
+    printf("MINI-FINAL-OK    steps=%d gates=%d/%d → see ../MAP.md\n",
+           c->step_count + 1, c->gates_ok, c->gates_fail);
+    c->step_count++;
+}
+
+#endif /* MINI_STEP17_H */

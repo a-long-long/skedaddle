@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "note": "mini/ 演化链的元数据。每课的 C 代码在同目录 stepNN.h；本文件只描述编号、分类、对应讲义与真实 src 落点。由 scripts/regen_mini_chain.py 消费。",
+  "steps": [
+    {
+      "n": 0,
+      "slug": "frame",
+      "title": "最小框架：像素缓冲、Bresenham 与 BMP 写出",
+      "track": "核心代码",
+      "lesson": "00_overview.md",
+      "mini": "tutorial/00_minimal",
+      "src": ["src/render/raster.c", "src/ui/offscreen_shot.c"],
+      "adds": "MiniCtx 像素缓冲、mini_line / mini_pp / mini_fill_rect、24 位 BMP、统一判据宏 MINI_ASSERT"
+    },
+    {
+      "n": 1,
+      "slug": "coords",
+      "title": "坐标系：1e7 度量化与墨卡托投影",
+      "track": "核心代码",
+      "lesson": "01_coords.md",
+      "mini": "tutorial/01_coords",
+      "src": ["src/utils/geo.c", "src/map/map_view.c"],
+      "adds": "mini_geo_q / mini_merc_y / mini_project / mini_haversine_m，追加浅灰经纬网"
+    },
+    {
+      "n": 2,
+      "slug": "pbf",
+      "title": "PBF 流式解析：varint 与字段号",
+      "track": "核心代码",
+      "lesson": "02_pbf.md",
+      "mini": "tutorial/02_pbf",
+      "src": ["src/pbf/pbf_stream.c", "src/pbf/pbf_block.c"],
+      "adds": "mini_pbf_varint / mini_pbf_parse，解析手写 3 节点 blob 并画锚点"
+    },
+    {
+      "n": 3,
+      "slug": "binary",
+      "title": "自描述二进制：magic + section 表",
+      "track": "核心代码",
+      "lesson": "03_binary.md",
+      "mini": "tutorial/03_binary",
+      "src": ["src/map/binfmt.c", "src/map/mapset.c"],
+      "adds": "mini_bin_build / mini_bin_locate，按 tag 定位定长数组"
+    },
+    {
+      "n": 4,
+      "slug": "graph",
+      "title": "建图：节点与边 → 前向星邻接表",
+      "track": "核心代码",
+      "lesson": "04_graph.md",
+      "mini": "tutorial/04_graph",
+      "src": ["src/map/graph_build.c", "src/map/road_tags.c"],
+      "adds": "mini_graph_build / mini_graph_deg / mini_graph_reach，画出玩具路网"
+    },
+    {
+      "n": 5,
+      "slug": "viewport",
+      "title": "视口：可见 bbox、屏幕投影与瓦片键",
+      "track": "核心代码",
+      "lesson": "05_viewport.md",
+      "mini": "tutorial/05_viewport",
+      "src": ["src/map/map_view.c", "src/map/tileidx.c"],
+      "adds": "MiniView / mini_view_bbox / mini_view_screen / mini_tile_key，追加视口边框"
+    },
+    {
+      "n": 6,
+      "slug": "raster",
+      "title": "软件光栅：线段裁剪、扫描线填充、alpha 混合",
+      "track": "核心代码",
+      "lesson": "06_raster.md",
+      "mini": "tutorial/06_raster",
+      "src": ["src/render/raster.c", "src/render/paint.c"],
+      "adds": "mini_clip_line / mini_polyfill / mini_blend，配确定性像素判据"
+    },
+    {
+      "n": 7,
+      "slug": "pipeline",
+      "title": "渲染管线：一帧的 9 个阶段",
+      "track": "核心代码",
+      "lesson": "07_pipeline.md",
+      "mini": "tutorial/07_pipeline",
+      "src": ["src/ui/window.c", "src/render/paint.c", "src/ui/chrome.c"],
+      "adds": "mini_paint_frame 把前面 7 课编成固定顺序的 9 阶段，阶段号可验证"
+    },
+    {
+      "n": 8,
+      "slug": "search",
+      "title": "地名搜索：查询串 → 命中下标",
+      "track": "核心代码",
+      "lesson": "08_search.md",
+      "mini": "tutorial/08_search",
+      "src": ["src/search/search.c"],
+      "adds": "mini_search 子串匹配 + 命中锚点绘制"
+    },
+    {
+      "n": 9,
+      "slug": "routing",
+      "title": "跨省路由的骨架：Dijkstra 与路径回溯",
+      "track": "核心代码",
+      "lesson": "09_routing.md",
+      "mini": "tutorial/09_routing",
+      "src": ["src/route/route.c", "src/route/lmtable.c"],
+      "adds": "mini_route 在前向星上松弛、回溯，画出亮蓝最短路"
+    },
+    {
+      "n": 10,
+      "slug": "navvoice",
+      "title": "导航与语音：机动指令 + 15s 同文本冷却",
+      "track": "核心代码",
+      "lesson": "10_navvoice.md",
+      "mini": "tutorial/10_navvoice",
+      "src": ["src/route/maneuver.c", "src/route/voice.c", "src/ui/voice_wire.c"],
+      "adds": "mini_nav_build / mini_nav_say，画车头三角"
+    },
+    {
+      "n": 11,
+      "slug": "gates",
+      "title": "验收门禁：判据框架与负向对照",
+      "track": "核心代码",
+      "lesson": "11_gates.md",
+      "mini": "tutorial/11_gates",
+      "src": ["scripts/regress.sh", "src/ui/audit.c"],
+      "adds": "mini_gate_eval / mini_gate_negative，证明判据「能失败」"
+    },
+    {
+      "n": 12,
+      "slug": "capstone",
+      "title": "综合闭环：改一个点 + 加一条判据 + 负向对照",
+      "track": "核心代码",
+      "lesson": "12_capstone.md",
+      "mini": "tutorial/12_capstone",
+      "src": ["scripts/regress.sh", "scripts/bmpdiff.py"],
+      "adds": "不新增模块，只用第 11 课框架跑完整「改 → 测 → 守」三步"
+    },
+    {
+      "n": 13,
+      "slug": "datum",
+      "title": "大地基准：只换椭球不等于基准转换",
+      "track": "核心代码",
+      "lesson": "13_datum.md",
+      "mini": "tutorial/13_datum",
+      "src": ["src/utils/datum.c"],
+      "adds": "MiniDatum 表 + mini_datum_shift，平移前后两点对照"
+    },
+    {
+      "n": 14,
+      "slug": "i18n",
+      "title": "极简多语言：中文 msgid 是安全的",
+      "track": "核心代码",
+      "lesson": "14_i18n.md",
+      "mini": "tutorial/14_i18n",
+      "src": ["src/i18n/i18n.c", "lang/en.xml"],
+      "adds": "mini_tr 查表回退 + mini_xml_unescape，追加语言切换框"
+    },
+    {
+      "n": 15,
+      "slug": "platform",
+      "title": "平台抽象层：差异收拢到一处",
+      "track": "跨平台代码",
+      "lesson": "15_platform.md",
+      "mini": "tutorial/15_platform",
+      "src": ["src/utils/plat.c", "src/utils/plat.h"],
+      "adds": "mini_plat_sep / join / font_dir / now_ms —— 全链唯一允许 #if defined(_WIN32) 的文件"
+    },
+    {
+      "n": 16,
+      "slug": "qt",
+      "title": "Qt 外壳：换壳不换核心 + alpha=0xFF 修正",
+      "track": "跨平台代码",
+      "lesson": "16_qt.md",
+      "mini": "tutorial/16_qt",
+      "src": ["src/ui_qt/map_canvas.cpp", "src/ui/offscreen_shot.c"],
+      "adds": "mini_front_render 把 0x00RRGGBB 补成 ARGB8888，复刻 Wayland 透明花屏修复"
+    },
+    {
+      "n": 17,
+      "slug": "android",
+      "title": "Android JNI 外壳：第二个前端 / 演化链终点",
+      "track": "跨平台代码",
+      "lesson": "17_android.md",
+      "mini": "android/（真实产品工程，无 tutorial 小程序）",
+      "src": ["android/app/src/main/cpp/skedaddle_jni.cpp", "src/utils/plat.c"],
+      "adds": "mini_jni_render_frame 写入 jintArray 等价物并补 alpha；打印 MINI-FINAL-OK 指向 MAP.md"
+    }
+  ]
+}

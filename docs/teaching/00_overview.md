@@ -10,6 +10,13 @@
 > `13_datum`（基准数学与交叉验证）与 `tutorial/13_datum`（自包含重实现）是第 13 课的"概念 / 动手"一对；`14_i18n`（极简多语言）与 `tutorial/14_i18n`（自包含重实现）是第 14 课的"概念 / 动手"一对。
 
 > **第 17 课的配套例外**：`17_android` 以真实产品工程 `android/` 为配套（需 NDK/Gradle），没有 `tutorial/17_android` 小程序；00–16 课的「讲义 + 同号小程序」约定不变。
+>
+> **第 3 份资料 · 演化链（2026-11-06 新增）**：上面两份资料是「读成品源码」与「单课独立小程序」，
+> 都不演示「同一份工程从最小框架逐步长成最终形态」。[`tutorial/mini/`](../../tutorial/mini/README.md)
+> 补上这条链：`_parts/` 里每课一个 header-only 增量模块，生成 18 个**连续、只增不减**的可编译快照
+> 与 17 个相邻 diff；末课 [`MAP.md`](../../tutorial/mini/MAP.md) 是 `mini/ ↔ src/` 的合流点。
+> 顺序与本课课程表一致（先核心 00–14，最后跨平台 15–17），门禁见
+> [`scripts/check_mini_chain.py`](../../scripts/check_mini_chain.py)。
 
 ## ① 教学目的
 

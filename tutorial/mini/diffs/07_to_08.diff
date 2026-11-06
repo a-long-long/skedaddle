@@ -1,0 +1,64 @@
+--- a/step07/main.c
++++ b/step08/main.c
+@@ -21,6 +21,7 @@
+ #include "step05.h"
+ #include "step06.h"
+ #include "step07.h"
++#include "step08.h"
+ /* @@INCLUDE@@ */
+ 
+ int main(void) {
+@@ -34,6 +35,7 @@
+     mini_step_05(&c);
+     mini_step_06(&c);
+     mini_step_07(&c);
++    mini_step_08(&c);
+     /* @@CALL@@ */
+     if (mini_write_bmp(&c, "mini_out.bmp") != 0) {
+         fprintf(stderr, "mini: write bmp failed\n");
+--- /dev/null
++++ b/step08/step08.h
+@@ -0,0 +1,43 @@
++/* tutorial/mini · 第 8 课新增：地名搜索
++ *
++ * 对照 src/search/search.c。真实工程有 places_auto.db、拼音/前缀索引与多路召回；
++ * mini 只保留「查询串 → 命中下标」这一层契约，方便把搜索结果接到渲染上。
++ */
++#ifndef MINI_STEP08_H
++#define MINI_STEP08_H
++
++#include <string.h>
++
++static const char *g_mini_names[] = {
++    "北京市", "海淀区", "朝阳区", "中关村", "五道口", "天津市"
++};
++#define MINI_NAMES ((int)(sizeof g_mini_names / sizeof g_mini_names[0]))
++
++static inline int mini_search(const char *q, int *out, int cap) {
++    int k = 0;
++    for (int i = 0; i < MINI_NAMES; i++) {
++        if (strstr(g_mini_names[i], q) && k < cap) out[k++] = i;
++    }
++    return k;
++}
++
++static void mini_step_08(MiniCtx *c) {
++    int hit[8];
++    int n1 = mini_search("区", hit, 8);
++    int n2 = mini_search("中关村", hit, 8);
++    int n3 = mini_search("上海", hit, 8);
++    MINI_ASSERT(c, n1 == 2, "step08: 子串查询「区」命中 2 条");
++    MINI_ASSERT(c, n2 == 1 && hit[0] == 3, "step08: 精确子串命中与下标");
++    MINI_ASSERT(c, n3 == 0, "step08: 不存在的地名返回 0 条");
++    /* 追加：把命中项画成三个橙色锚点（真实工程里它们会带大字标签） */
++    int xs[3] = { 30, 150, 250 };
++    for (int i = 0; i < 3; i++) {
++        mini_fill_rect(c, xs[i], 208, 6, 6, 0x00E08020u);
++        mini_raster_line(c, xs[i] + 3, 208, xs[i] + 3, 196, 0x00E08020u);
++        c->labels++;
++    }
++    printf("MINI-STEP-08-OK  hits=%d/%d/%d ink=%ld\n", n1, n2, n3, mini_ink(c));
++    c->step_count++;
++}
++
++#endif /* MINI_STEP08_H */
