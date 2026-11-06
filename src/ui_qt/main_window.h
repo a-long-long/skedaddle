@@ -30,6 +30,8 @@
 #include <QMainWindow>
 #include <QMenu>
 #include <QList>
+#include <QPoint>
+#include <QRect>
 
 extern "C" {
 #include "ui/window.h"
@@ -154,6 +156,8 @@ private:
     void rebuildGridCtx();                /* 重建「坐标网」右键菜单（多语言文本） */
     void buildSearchOverlay();            /* 左上角：搜索按钮 + 搜索框浮层 */
     void buildRightCol();
+    void buildWindowDragStrip();          /* 无边框窗口：顶部透明拖动带（双击最大化） */
+    void toggleWindowMaximized();         /* 铺满可用区 / 还原（不依赖 WM 状态） */
     void buildStepsDock();
 
     void showSearch();                   /* 点搜索按钮 → 展开输入框并聚焦 */
@@ -192,6 +196,21 @@ private:
     QMenu        *m_menuMain = nullptr;  /* 右栏「菜单」按钮弹出的主菜单（同时挂在菜单栏） */
     QMenu        *m_setMenu  = nullptr;   /* 「设置」子菜单（地图信息显示开关集中地） */
     QWidget      *m_rightOverlay = nullptr; /* 右上角浮层容器（挂在画布上） */
+    /* ---- 无边框窗口（系统标题栏由 Qt::FramelessWindowHint 去掉）----
+     * ★ 2026-11-06 起不画最小化/最大化/关闭按钮：关闭走主菜单「退出」
+     *   (Ctrl+Q) 或 WM 的 Alt+F4，最小化/最大化交给 WM 快捷键。
+     *   只留一条**透明的顶部拖动带**（画布子控件，高 10px、零可见像素），
+     *   保住鼠标拖动窗口 + 双击最大化/还原；不占布局、不是 QToolBar。
+     * SKEDADDLE_FRAMELESS=0 可恢复系统标题栏（此时本浮层整体不建）。 */
+    bool          m_frameless  = true;
+    QWidget      *m_winStrip   = nullptr;  /* 顶部拖动带：容器自身即把手 */
+    QPoint        m_winDragOff;            /* 按下时光标相对窗口左上角的偏移 */
+    bool          m_winDragging = false;
+    /* ★ 最大化自己实现：QWidget::showMaximized() 在 UOS/Deepin WM 上对
+     *   FramelessWindowHint 窗口会把窗口置成 HIDDEN 且几何不变（实测），
+     *   所以改成记下原 geometry → setGeometry(可用区) → 再还原，跨平台一致。 */
+    bool          m_winMaxed    = false;
+    QRect         m_winNormalGeom;
     QToolButton  *m_gridBtn = nullptr;    /* 右栏「坐标网」按钮：左键循环切换坐标系，右键菜单精确选 + 开关网格 */
     QMenu        *m_gridCtx = nullptr;     /* 坐标网按钮右键菜单（显示网格 + 坐标系） */
     QAction      *m_gridShowAct = nullptr; /* 右键菜单「显示坐标网」勾选项 */

@@ -41,6 +41,9 @@ static QString trc(const char *zh) { return QString::fromUtf8(i18n_tr(zh)); }
 #include <QVBoxLayout>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QByteArray>    /* qgetenv：SKEDADDLE_FRAMELESS 回退开关 */
+#include <QtGlobal>      /* qgetenv / QT_VERSION_CHECK */
+#include <QDesktopWidget>/* 手动"最大化"用 availableGeometry */
 #include <QImage>
 #include <QDebug>
 #include <cmath>
@@ -108,6 +111,17 @@ MainWindow::MainWindow(App *a, QWidget *parent)
     m_lang = settings_get_int(m_a->cfg, "lang", 0);
     i18n_set_lang((I18nLang)m_lang);
 
+    /* ★ 无边框窗口：去掉 WM 提供的系统标题栏（白底 "Skedaddle" + − □ ×）。
+     *   地图 app 的惯例是让地图铺满窗口；标题栏那一行是纯装饰，白底还把
+     *   地图切出一条硬边。右上角也不再补自绘的最小化/最大化/关闭按钮
+     *   （2026-11-06 按需求去掉）：关闭走菜单「退出」/Ctrl+Q 或 Alt+F4。
+     *   只留 buildWindowDragStrip() 的透明顶部拖动带，拖动/双击最大化不丢。
+     *   ★ 必须在 show() 之前设：setWindowFlags 会重建 native window。
+     *   ★ 可回退：SKEDADDLE_FRAMELESS=0 → 保留系统标题栏（负向对照 / 旧习惯）。 */
+    m_frameless = (qgetenv("SKEDADDLE_FRAMELESS") != QByteArray("0"));
+    if (m_frameless)
+        setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+
     setWindowTitle(QStringLiteral("Skedaddle"));
     m_canvas = new MapCanvas(a, this);
     setCentralWidget(m_canvas);
@@ -115,6 +129,7 @@ MainWindow::MainWindow(App *a, QWidget *parent)
     buildMenus();
     buildSearchOverlay();
     buildRightCol();
+    buildWindowDragStrip();
     buildStepsDock();
 
     /* 卫星天顶图：从设置读初始开关态（持久化），同步按钮勾选。
@@ -908,6 +923,39 @@ int MainWindow::runUiSelfTest()
         app_persist_settings(m_a);
     }
 
+    /* ⑫ 无边框窗口：只留透明拖动带，最小化/最大化/关闭按钮全部去掉。
+     *   退出走主菜单「退出」(Ctrl+Q) / WM 的 Alt+F4，最小化/最大化交给 WM。
+     *   SKEDADDLE_FRAMELESS=0（系统标题栏模式）整段跳过，由 WM 提供这些能力。
+     *   ★ 放在所有几何相关断言之后：下面会临时改窗口几何再还原。 */
+    if (m_frameless) {
+        check((windowFlags() & Qt::FramelessWindowHint) != 0,
+              "无边框：未使用系统标题栏");
+        check(m_winStrip && m_winStrip->parentWidget() == m_canvas,
+              "顶部拖动带浮在画布上");
+        check(m_winStrip && m_winStrip->findChildren<QAbstractButton *>().isEmpty(),
+              "拖动带里没有窗口控制按钮");
+        /* 全窗口扫一遍悬停提示：按钮挂在别处也算没删干净（负向对照可失败） */
+        bool noWinBtns = true;
+        for (QAbstractButton *b : findChildren<QAbstractButton *>()) {
+            const QString t = b->toolTip();
+            if (t == QStringLiteral("最小化") || t == QStringLiteral("最大化") ||
+                t == QStringLiteral("还原")   || t == QStringLiteral("关闭"))
+                noWinBtns = false;
+        }
+        check(noWinBtns, "窗口里没有最小化/最大化/关闭按钮");
+        check(m_winStrip && m_winStrip->height() <= 10 && m_rightOverlay &&
+              m_winStrip->y() + m_winStrip->height() <= m_rightOverlay->y(),
+              "拖动带只有顶边一条且不压住右栏按钮");
+        /* 手动最大化/还原是纯 setGeometry 状态机，不依赖 WM ⇒ 可在自检里真跑 */
+        QRect g0 = geometry();
+        toggleWindowMaximized();
+        QApplication::processEvents();
+        check(m_winMaxed, "窗口控制：双击式的最大化状态切换");
+        toggleWindowMaximized();
+        QApplication::processEvents();
+        check(!m_winMaxed && geometry() == g0, "窗口控制：还原回到原几何");
+    }
+
     if (fail == 0) {
         printf("QT-UI-OK\n");
         return 0;
@@ -925,7 +973,46 @@ int MainWindow::runUiSelfTest()
  */
 bool MainWindow::eventFilter(QObject *obj, QEvent *ev)
 {
-    if (obj == m_canvas && ev->type() == QEvent::Resize) {
+    if (m_frameless && m_winStrip && obj == m_winStrip) {
+        /* 无边框窗口没有 WM 标题栏可抓，自己实现拖动/双击最大化。
+         * ★ press 不吞（返回 false），否则 Qt 的隐式鼠标 grab 不成立，
+         *   后续 MouseMove 不会再发到拖动带，拖动就断在第一次移动。
+         * ★ 只吞"正在拖动"的 move，其余事件照常。
+         * ★ Wayland 下 QWidget::move() 对顶层窗口无效（客户端不能自定位），
+         *   Qt 5.15+ 才有的 startSystemMove 本机 5.11 没有；X11/XWayland 正常。
+         *   这类平台可用 WM 的 Alt+拖动 兜底；关闭走菜单「退出」/Alt+F4。 */
+        if (ev->type() == QEvent::MouseButtonPress ||
+            ev->type() == QEvent::MouseMove     ||
+            ev->type() == QEvent::MouseButtonRelease ||
+            ev->type() == QEvent::MouseButtonDblClick) {
+            QMouseEvent *me = static_cast<QMouseEvent *>(ev);
+            switch (ev->type()) {
+            case QEvent::MouseButtonPress:
+                if (me->button() == Qt::LeftButton) {
+                    m_winDragging = true;
+                    m_winDragOff  = me->globalPos() - pos();
+                }
+                break;
+            case QEvent::MouseMove:
+                if (m_winDragging && (me->buttons() & Qt::LeftButton)) {
+                    if (!m_winMaxed) move(me->globalPos() - m_winDragOff);
+                    return true;
+                }
+                break;
+            case QEvent::MouseButtonRelease:
+                if (me->button() == Qt::LeftButton) m_winDragging = false;
+                break;
+            case QEvent::MouseButtonDblClick:
+                if (me->button() == Qt::LeftButton) {
+                    toggleWindowMaximized();
+                    m_winDragging = false;
+                    return true;
+                }
+                break;
+            default: break;
+            }
+        }
+    } else if (obj == m_canvas && ev->type() == QEvent::Resize) {
         layoutOverlays();
     } else if (obj == m_search && ev->type() == QEvent::KeyPress) {
         QKeyEvent *ke = static_cast<QKeyEvent *>(ev);
@@ -1534,6 +1621,53 @@ void MainWindow::buildRightCol()
     layoutOverlays();
 }
 
+/* ---------------- 无边框窗口：顶部透明拖动带 ----------------
+ *
+ * 系统标题栏被 FramelessWindowHint 去掉后，WM 不再给窗口提供可抓的边框。
+ * 这里在画布最顶端铺一条**完全透明、高 kDragStripH** 的细带当拖动把手：
+ *   · 按住拖动 → 移动窗口；双击 → 最大化 / 还原（见 eventFilter）。
+ *   · 零可见像素、不占布局、不是 QToolBar（UI 自检 ⑧ 要求没有工具条）。
+ *   · 与 y=margin(10) 起的搜索/右栏浮层不重叠，不吞地图按钮的点击。
+ * ★ 2026-11-06 起不再画最小化/最大化/关闭按钮：关闭走主菜单「退出」
+ *   (Ctrl+Q) 或 WM 的 Alt+F4，最小化/最大化交给 WM 快捷键。
+ */
+static const int kDragStripH = 10;      /* 顶边拖动带高度（右栏从 y=10 起，正好不重叠） */
+
+void MainWindow::buildWindowDragStrip()
+{
+    if (!m_frameless || !m_canvas) return;
+
+    m_winStrip = new QWidget(m_canvas);
+    m_winStrip->setObjectName(QStringLiteral("winStrip"));
+    m_winStrip->setAttribute(Qt::WA_TranslucentBackground);
+    m_winStrip->setAutoFillBackground(false);
+    m_winStrip->setCursor(Qt::SizeAllCursor);
+    m_winStrip->setMouseTracking(true);
+    m_winStrip->setToolTip(trc("按住拖动窗口（双击最大化 / 还原）"));
+    m_winStrip->setGeometry(0, 0, qMax(1, m_canvas->width()), kDragStripH);
+    m_winStrip->installEventFilter(this);
+    m_winStrip->raise();
+}
+
+void MainWindow::toggleWindowMaximized()
+{
+    /* ★ 不用 showMaximized()：UOS/Deepin WM 对 FramelessWindowHint 窗口的
+     *   _NET_WM_STATE_MAXIMIZED 请求会把窗口置成 HIDDEN 且几何不变（实测：
+     *   点按钮后 _NET_WM_STATE=_NET_WM_STATE_HIDDEN、geometry 仍 1280x800）。
+     *   自己记 geometry 再 setGeometry(可用区) 就不依赖 WM 实现，Windows/
+     *   X11/Wayland 表现一致。Resize 会触发 layoutOverlays 把浮层重新贴好。 */
+    if (m_winMaxed) {
+        setGeometry(m_winNormalGeom);
+        m_winMaxed = false;
+    } else {
+        if (isMaximized()) showNormal();   /* 外部 WM 已最大化时先回到普通态 */
+        m_winNormalGeom = geometry();
+        QRect av = QApplication::desktop()->availableGeometry(this);
+        if (av.isValid() && !av.isEmpty()) setGeometry(av);
+        m_winMaxed = true;
+    }
+}
+
 /* 两个浮层贴到画布上：搜索在**左上**，地图操作在**右上**。
  *
  * ★ 为什么展开搜索框不会移动右上角的按钮：两个浮层都是画布的**子控件**，
@@ -1564,7 +1698,13 @@ void MainWindow::layoutOverlays()
         }
     }
 
-    /* --- 地图操作浮层：右上 --- */
+    /* --- 无边框窗口拖动带：画布最顶端一条（透明，零可见像素） --- */
+    if (m_winStrip) {
+        int cw = m_canvas->width();
+        if (cw > 0) m_winStrip->setGeometry(0, 0, cw, kDragStripH);
+    }
+
+    /* --- 地图操作浮层：右上贴顶（窗口按钮已去掉，不必再让开一行） --- */
     if (m_rightOverlay) {
         m_rightOverlay->adjustSize();
         int w = m_rightOverlay->width();
@@ -1573,12 +1713,14 @@ void MainWindow::layoutOverlays()
         int ch = m_canvas->height();
         if (cw <= 0 || ch <= 0) return;
         int x = cw - w - margin;
-        int y = margin;                       /* 靠上 */
+        int y = margin;
         if (y + h > ch - margin)              /* 画布太矮时兜底贴底，别溢出 */
             y = qMax(margin, ch - h - margin);
         m_rightOverlay->move(x, y);
         m_rightOverlay->raise();
     }
+    /* 拖动带要在右栏之后抬一次：透明，但得留在最上层才收得到鼠标事件 */
+    if (m_winStrip) m_winStrip->raise();
 
     /* --- 轨迹面板：右栏左边一点（贴着按钮列，不挡地图主体） ---
      * ★ 用 !isHidden() 而不是 isVisible()：isVisible() 对"父窗口还没 show()
@@ -1616,6 +1758,9 @@ void MainWindow::layoutOverlays()
             m_viaPanel->raise();
         }
     }
+
+    /* 最后再抬一次：任何面板在小窗口里贴底兜底时都不会盖住拖动带 */
+    if (m_winStrip) m_winStrip->raise();
 }
 
 void MainWindow::locate()
@@ -2002,6 +2147,11 @@ void MainWindow::applyOverlayAlpha()
             if (auto *ib = dynamic_cast<IconButton *>(b)) ib->setOverlayPct(pr);
         }
     }
+
+    /* ★ 顶部拖动带不跟随 alpha_rcol：它零可见像素，本来就不需要淡。
+     *   原先的自绘窗口按钮（2026-11-06 已删除）也刻意不跟随，避免用户把
+     *   右栏调到 0% 时窗口关不掉；现在退出统一走菜单「退出」/Alt+F4，
+     *   与浮层透明度无关。 */
 
     /* --- 轨迹 / 收藏面板 --- */
     if (m_trackPanel) {
@@ -2773,6 +2923,9 @@ void MainWindow::retranslateUi()
     if (m_satBtn)  m_satBtn->setToolTip(trc("卫星天顶图（信号强弱 / 定位状态）"));
     if (m_extBtn)  m_extBtn->setToolTip(trc("外部信号（NMEA 定位接入）"));
     updateDatumTip();   /* 坐标网按钮提示随语言刷新 */
+
+    /* 无边框窗口顶部拖动带（只有去掉系统标题栏时才存在） */
+    if (m_winStrip) m_winStrip->setToolTip(trc("按住拖动窗口（双击最大化 / 还原）"));
 
     /* 搜索浮层 */
     if (m_searchBtn) {

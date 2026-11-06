@@ -27,14 +27,18 @@
 - ★★ checkable 按钮 `setChecked()` 会发 `toggled` ⇒ 递归 SIGSEGV，同步勾选态用 `QSignalBlocker`。
 - ★ `isVisible()` 对未 show() 子控件恒 false ⇒ 用 `!isHidden()`。**不要顶栏**（QToolBar 切高移画布），按钮一律画布子浮层。
 - ★★ `setWindowOpacity()` 仅顶层；子控件淡用 `QGraphicsOpacityEffect` 会连文字图标一起淡 ⇒ 弃用。浮层语义=只淡底板、前景清晰（IconButton 自绘 alpha + QSS rgba + viewport 透明）。
-- ★ `qobject_cast` 要求 `Q_OBJECT` ⇒ 自绘子类用 `dynamic_cast`。改 `.hpp` 后 ninja 不自动重编 ⇒ `touch` 对应 `.cpp`。C++ 用 C 数学须 `#include <cmath>` + `std::floor`。图标符号不能用字体字符 ⇒ `qt_icons.cpp` 自绘。
+- ★ `qobject_cast` 要求 `Q_OBJECT` ⇒ 自绘子类用 `dynamic_cast`。改 `.hpp` 后 ninja 不自动重编 ⇒ `touch` 对应 `.cpp`；**用 `cp -p` 备份/恢复源文件也会让 mtime 倒退、make 跳过重编**（负向对照撤销时踩过：`--ui-test` 仍报注入版的 2 项 FAIL）⇒ 恢复后必须 `touch` 再编。C++ 用 C 数学须 `#include <cmath>` + `std::floor`。图标符号不能用字体字符 ⇒ `qt_icons.cpp` 自绘。
+- ★ 无边框窗口（2026-11-06，二次改版后终态）：`MainWindow` 构造里 `setWindowFlags(windowFlags() | Qt::FramelessWindowHint)`（**必须在 show() 前**，会重建 native window），`SKEDADDLE_FRAMELESS=0` 回退。**最小化/最大化/关闭三个自绘按钮已按需求删除**：退出走主菜单「退出」(Ctrl+Q) 或 WM 的 Alt+F4（实测两条都能干净退出），最小化/最大化交给 WM 快捷键。只留 `buildWindowDragStrip()` 的**顶部 10px 全宽透明拖动带**（画布子控件、零可见像素、与 y=10 起的搜索/右栏浮层不重叠），保住拖动 + 双击最大化/还原。硬判据 `xprop _NET_FRAME_EXTENTS`：默认 `not found` / 回退 `0,0,40,0`（UOS 标题栏 40px）。
+- ★★ `showMaximized()` 在 UOS/Deepin WM 上对 frameless 窗口 ⇒ `_NET_WM_STATE_HIDDEN` 且几何不变（实测点按钮后仍 1280×800）⇒ **别依赖 WM 的 maximized 状态**；改成自己记 `geometry()` → `setGeometry(QApplication::desktop()->availableGeometry())` → 还原的状态机，X11/Wayland/Windows 一致。Wayland 下 `QWidget::move()` 对顶层窗口无效（Qt5.11 无 `startSystemMove`），拖动只在 X11/XWayland 生效，其余平台用 WM 的 Alt+拖动兜底。
+- ★ `regress.sh:qt_ovl_alpha` 的硬编码矩形是"每次 UI 改版重测"的活资产：自绘控制条时期右栏下移 34px ⇒ 高 430→470（否则判据 3「矩形外零变化」假红 996px）；按钮删除后右栏恢复贴顶 ⇒ 回到 `--rect=740,0,60,430`（负向对照：故意用 400 会漏 852px ⇒ FAIL）。顶部拖动带零可见像素、不跟随 `alpha_rcol`。
+- ★★ 无边框拖动 eventFilter：MouseButtonPress **不能吞**（吞了 Qt 隐式鼠标 grab 不成立、后续 MouseMove 收不到 ⇒ 假"拖动无效"），只吞 dragging 中的 move。xdotool 合成点击必须**分步 + 每步 sleep**：`mousemove X Y mousedown 1 mousemove ... mouseup 1` 链式会被引擎合并成一次 ⇒ 假"按钮无效"。
 
 ## 渲染边界（SDL 已彻底移除）
 - 交互前端唯一 `skedaddle`；离屏唯一 `src/ui/offscreen_shot.c`（零 SDL，malloc 缓冲 + 内建 BMP writer）。SDL 仅存于 `blend_equiv`/`clip_equiv` 门禁对照体。
 - ★★ 审计计数源走 C 核心缓冲（`offscreen_shot_main` 设 `a.qt_ui=0`）⇒ **不可删 `chrome.c`/`paint.c`/`navdraw.c`**。共享审计 = `src/render/audit.{c,h}`。
 - ★ `--shot=<png>` 不调用 `win.start()` ⇒ 画布定时 renderNow 不触发，PNG 只有 chrome 空白底（offscreen/xcb 皆然），**不是渲染 bug**；验证地图内容用 `--shot-offscreen`（C 核心缓冲）。状态栏现由 paintEvent 自动绘制，旧「须显式刷新」口径已过时。销毁 renderer 前 `font_drop_textures()`，**不能每帧调**（毁 CJK 缓存）。
 - ★★ 放大后地名消失（2026-11-05 修）：`labels.c:bbox_moved_far` 旧判据对**纯缩放**不敏感（角点位移/旧跨度恒 <0.2），z≥14 `kind_max` 恒 12 后缓存不重查，高 zoom 小视口裁光旧 Top-400 大地名 ⇒ 修法=加 bbox 跨度比（<0.8 或 >1.25 重查）。路名门槛同步 15→14（`paint.c` 三处 + `labels.c` 一处），500 米档才有路名。**只在同进程连续缩放中复现**，新进程 `--shot-offscreen` 首帧永远查得到 ⇒ 别用离屏单帧统计否认这个 bug。验收：连续缩放台架对拍 + z13/z15 像素 0% + z14 6.44% 全是新增文字 + regress 87/0。z17/18 仍稀疏属数据密度上限（路名只标 cls<=2）。
-- ★★ 中低 zoom「没有区域名/地名」（2026-11-05 修）：**不是缓存/数据 bug**——kind<=2 的市/区名和村名/POI 画成同一种 14px 小字+橙圈，没有视觉层级；加上路名门槛 14 让 1~10 公里档零路名。修法：`labels.c` 按 pt 缓存 `font_open_default(font_size*2)` 画 kind<=2 大字 + 白描边（★ 别复用 `a->font_big`：单文件 `font_open` 无 CJK 回退 ⇒ 中文方框），kind==3 加描边，按包围盒占格、冲突退回小字；路名门槛 14→12。**只在 z<14 生效** ⇒ z14/z15 像素 0.000%。项目无 area/boundary label 链路（`paint_areas` 无 Font、`AF_*` 无 name），按行政区面绘制需重抽数据。
+- ★★ 中低 zoom「没有区域名/地名」（2026-11-05 修）：**不是缓存/数据 bug**——kind<=2 的市/区名和村名/POI 画成同一种 14px 小字+橙圈，没有视觉层级；加上路名门槛 14 让 1~10 公里档零路名。修法：`labels.c` 按 pt 缓存 `font_open_default(font_size*2)` 画 kind<=2 大字 + 白描边（★ 别复用 `a->font_big`：单文件 `font_open` 无 CJK 回退 ⇒ 中文方框），kind==3 加描边，按包围盒占格、冲突退回小字；路名门槛 14→12。**分级显示（大字层）只在 z<14**；但 65bad95 起白描边/字形锐化已**全比例尺生效** ⇒ 「z14/z15 像素 0.000%」口径作废，负向对照改用 `SKEDADDLE_LABEL_HALO=0` + `SKEDADDLE_FONT_SHARP=1.0` 双关（11-06 起再加 `SKEDADDLE_POI_R=6` 三关，实测 0.000%）。项目无 area/boundary label 链路（`paint_areas` 无 Font、`AF_*` 无 name），按行政区面绘制需重抽数据。
 
 ## 判据纪律（最高价值）
 - 布尔判据用展开数/里程/像素，时间只兜底取多轮最小；渲染取第二帧、算路丢第 1 次。
@@ -44,6 +48,7 @@
 - ★★★ 「绘制数变了」先切加载路径、再谈数据（整省 nmbin < PBF 解码 < disp tile 跨边界重复 +2.3%）。顺序：①同数据切路径 ②同路径重抽对拍 ③才疑数据。
 - ★★ 浮层半透明后精确配色计数失效 ⇒ 数混合后颜色（有效 alpha 乘积 + 容差）；判"前景没被淡"须逐像素相同（文字用口径 b：相对底图偏离量 + `--fgrect` 框准）。
 - ★★★ 会写回配置的实验参数（`--ovl-alpha` 等）跑实验必须隔离配置（`XDG_CONFIG_HOME`+`APPDATA`），否则污染 `settings.ini` ⇒ 断言默认值用例假红。
+- ★★ **完整 `scripts/regress.sh` 本身也会把真实 `settings.ini` 的 `view_*` 写成默认 `30/110/z10`**（11-05、11-06 两次复现）⇒ 跑前先 `cp` 备份真实配置，跑完 diff 并恢复；用 `--ui-test` 时另用 `SKEDADDLE_SETTINGS` 指全新 ini 可避开 datum 假红。
 - ★★ UI 改版让像素判据硬编码坐标失效 ⇒ 坐标是"每次改版重测"的活资产。
 - ★★★ **教程/文档行号审计：并行多引用表格（一行多符号+多行号）工具必误判归属** ⇒ 工具报的"漂移"必须回源逐条核验（拿真实函数 span 对照），不能盲改（踩过：自动 fixer 把 `bbox_overlap` 行号改成了 `src_unload` 的）。同文件 `978-~1179` 这类带 `~` 近似引用要跳过。
 

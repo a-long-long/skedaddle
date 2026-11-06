@@ -105,6 +105,9 @@ static const TrPair TR[] = {
     { "重置全部",   "Reset all" },
     { "关闭",       "Close" },
 
+    /* 无边框窗口顶部透明拖动带（Qt 前端 buildWindowDragStrip） */
+    { "按住拖动窗口（双击最大化 / 还原）", "Drag to move (double-click to maximize/restore)" },
+
     /* ☰ 主菜单（buildMenus） */
     { "菜单(&M)",   "Menu(&M)" },
     { "搜索地点",   "Search place" },

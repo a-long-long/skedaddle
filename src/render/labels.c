@@ -5,6 +5,8 @@
 #include <string.h>
 #include <math.h>
 
+static int halo_enabled(void);   /* 定义见下；字形压实与描边共用同一负向对照开关 */
+
 /* ------------------------------------------------------------------ */
 /* 行政区名（区域名）分级显示 —— 低 zoom 专用                           */
 /* ------------------------------------------------------------------ */
@@ -38,7 +40,15 @@ static void font_draw_halo(Font *f, Raster *rs, int x, int y,
     static const int dy[8] = { -1,-1,-1,  0, 0,  1, 1, 1 };
     for (int i = 0; i < 8; i++)
         font_draw(f, rs, x + dx[i], y + dy[i], s, 255, 255, 255, 0);
+    /* ★ 白描边是拿同一个字形偏移 8 次叠出来的：14px CJK 笔画本身只有 1~2px
+     * 宽，邻近偏移的白会先铺到笔画核心上，主色再以覆盖率 alpha 混合就被
+     * 「洗淡」成灰字（z12 密集底图上尤其明显，观感就是模糊）。同色再绘一次
+     * 把有效覆盖率压回实心：1-(1-a)^2，例如 a=0.6 -> 0.84。描边隔离作用不变。 */
     font_draw(f, rs, x, y, s, r, g, b, 0);
+    /* 与描边共用一个总开关：SKEDADDLE_LABEL_HALO=0 时连字形压实一起关掉，
+     * 保证「双关 + SKEDADDLE_POI_R=6」能逐字节复现改动前的出图。 */
+    if (halo_enabled())
+        font_draw(f, rs, x, y, s, r, g, b, 0);
 }
 
 /* 白描边总开关：默认对所有比例尺生效。SKEDADDLE_LABEL_HALO=0 恢复旧的
@@ -340,6 +350,23 @@ static void shape_fill(Raster *rs, int x, int y, int t, PoiShape sh, uint32_t c)
     fill_poly(rs, px, py, 4, c);
 }
 
+/* POI 标记半径：默认 4（外径 2R+1=9~10px）。SKEDADDLE_POI_R=6 恢复 11-06
+ * 之前的尺寸，配合 SKEDADDLE_LABEL_HALO=0 + SKEDADDLE_FONT_SHARP=1.0 可
+ * 逐字节复现改动前的出图（跨端负向对照，别让基线悄悄作废）。
+ * 进程内只读一次环境变量，零逐帧开销。 */
+static int poi_radius(void)
+{
+    static int r = 0;
+    if (r == 0) {
+        const char *e = getenv("SKEDADDLE_POI_R");
+        int v = (e && *e) ? atoi(e) : 4;
+        if (v < 2) v = 2;
+        if (v > 12) v = 12;
+        r = v;
+    }
+    return r;
+}
+
 /* 画一个 POI 标记：深灰描边 + 白底 + 类别色芯，紧贴 (x,y) 坐标点。 */
 static void draw_poi_marker(Raster *rs, int x, int y, int kind)
 {
@@ -348,10 +375,14 @@ static void draw_poi_marker(Raster *rs, int x, int y, int kind)
     uint32_t dark  = raster_rgb(rs, 40, 42, 48);
     uint32_t white = raster_rgb(rs, 255, 255, 255);
     uint32_t col   = raster_rgb(rs, r, g, b);
-    int R = 6;
+    /* z12 一屏两三百个标记，旧外径 14px 会把小字压住、满屏彩色噪点。
+     * 缩到外径 10px（面积约减半），色芯保留 3px 仍能区分类别颜色/形状。
+     * R=6 时用旧的 R-2 色芯，保证旧基线逐字节可复现。 */
+    int R = poi_radius();
+    int core = (R >= 6) ? R - 2 : R - 1;
     shape_fill(rs, x, y, R + 1, sh, dark);
     shape_fill(rs, x, y, R,     sh, white);
-    shape_fill(rs, x, y, R - 2, sh, col);
+    shape_fill(rs, x, y, core,  sh, col);
 }
 
 void paint_place_labels(Raster *rs, const MapView *v,

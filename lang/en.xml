@@ -411,4 +411,6 @@ Recent:</en>
   </item>
   <item><zh>无法比对远端（%1）。为稳妥起见保留本地文件，跳过下载。</zh><en>Cannot compare with remote (%1). Keeping local file to be safe, skipping download.</en></item>
   <item><zh>（还没有途经点：面板开着时点地图添加；也可先设好起点和终点）</zh><en>(No via points yet: click the map with the panel open to add; or set start and end first)</en></item>
+  <!-- 无边框窗口顶部透明拖动带 -->
+  <item><zh>按住拖动窗口（双击最大化 / 还原）</zh><en>Drag to move (double-click to maximize/restore)</en></item>
 </translations>

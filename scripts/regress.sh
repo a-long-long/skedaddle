@@ -733,6 +733,11 @@ if [ -x "$BUILD/skedaddle.exe" ] || [ -x "$BUILD/skedaddle" ]; then
             --ovl-alpha=alpha_rcol=$pv --shot="$SHOTS/ovl_qt_$pv.bmp" \
             > "$SHOTS/ovl_qt_$pv.log" 2>&1
     done
+    # ★ 2026-11-06 二次更新：自绘窗口按钮（最小化/最大化/关闭）已按需求去掉，
+    #   右栏恢复贴顶（margin 10）⇒ 变化像素 y 范围回到 10..~420，
+    #   高度 470 → 430（矩形越紧，判据 3「矩形外零变化」越有鉴别力）。
+    #   ★ 顶部只剩透明拖动带（零可见像素、不跟随 alpha_rcol），不产生变化像素，
+    #     不必扩 x。坐标是"每次改版重测"的活资产。
     if python3 "$ROOT/scripts/ovl_px.py" "$SHOTS/ovl_qt_100.bmp" \
             "$SHOTS/ovl_qt_75.bmp" "$SHOTS/ovl_qt_0.bmp" \
             --rect=740,0,60,430 --pct=75 > "$SHOTS/ovl_qt.log" 2>&1; then
