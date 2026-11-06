@@ -327,7 +327,7 @@ fi
 
 # ---- docs/teaching/ 讲义编号一致性门禁 ----
 #
-# docs/teaching/ 与 tutorial/ 是同一套 00–14 编号的"概念 vs 动手"两份资料，
+# docs/teaching/ 与 tutorial/ 是同一套 00–16 编号的"概念 vs 动手"两份资料，
 # 每课讲义的首个 H1 标题必须声明与文件名前缀一致的「第 N 课」，防止再次漂移。
 # 详见 scripts/check_doc_numbers.sh（自带负向对照：改错位 H1 必 FAIL）。
 if [ -x "$ROOT/scripts/check_doc_numbers.sh" ]; then

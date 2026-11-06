@@ -23,61 +23,76 @@
 3. **依赖是纯 DAG**——`utils ← pbf ← map ← route ← render ← ui ← ui_qt`，反向依赖会立刻 `undefined-reference`。`scripts/check_layers.sh` 是守护门禁。
 4. **核心零 SDL**——`skedaddle_core` 连 SDL 的 include 都不给；SDL 仅残留在两个去 SDL 化对照体（`skedaddle_blend_equiv`/`skedaddle_clip_equiv`）里做"逐像素等价"验证。
 
-### 0.3 课程表（共 18 篇：第 0 课总览 → 第 14 课综合项目 → 第 15 课基准 → 第 16 课多语言 → 第 17 课 Android 前端，编号 00–17）
+### 0.3 课程表（共 18 篇：**先核心代码 00–14，最后跨平台 15–17**）
 
-> 课程统一编号为 **00–17**：第 0 课是总览（读源码讲义 `docs/teaching/00_overview.md`，与可运行小程序 `tutorial/00_minimal` 配套）；
-> 01–13 为主题课；14 为综合项目；15（坐标系基准 datum）、16（极简多语言 i18n）为两节进阶专题；17（Android 原生 JNI App）为「第二个前端」专题。**00–16 每课都有两份同号资料**——「读真实源码讲义 `docs/teaching/NN_*.md`」与「可独立编译运行的小程序 `tutorial/NN_*/`」；**第 17 课是唯一例外**，配套资料为真实产品工程 `android/`（需 NDK/Gradle），不提供小程序。
+> **两段式实现顺序（2026-11-06 重排）**：课程统一编号 **00–17**，但实现顺序不再等同于运行流程。
+> **先核心代码（第 0–14 课）**：平台无关的 C 核心 + 工程化配套，段内按运行流程排
+> （坐标 → 数据生产 → 每帧渲染 → 用户交互 → 门禁 / 综合项目 / 两节进阶专题）。
+> **最后跨平台代码（第 15–17 课）**：平台抽象层 `utils/plat`（第 15 课）、Qt 桌面前端 `ui_qt`（第 16 课）、
+> Android 原生 JNI App `android/`（第 17 课）。三者都是"换壳不换核心"，核心跑通之后统一实现。
+> 分类标签写在每篇讲义 H1 下方，由 `scripts/check_tutorial_tracks.py` 做机器判据。
+>
+> 第 0 课是总览（讲义 [`docs/teaching/00_overview.md`](teaching/00_overview.md) + 小程序 `tutorial/00_minimal`）；
+> 01–14 为核心段主题课、综合项目与进阶专题；15–17 为跨平台段。**00–16 每课都有两份同号资料**——
+> 「读真实源码讲义 `docs/teaching/NN_*.md`」与「可独立编译运行的小程序 `tutorial/NN_*/`」；
+> **第 17 课是唯一例外**，配套资料为真实产品工程 `android/`（需 NDK/Gradle），不提供小程序。
 
-| 课次 | 主题 | 对应模块 | 关键产出 | 配套资料 |
-|---|---|---|---|---|
-| 0 | 课程总览与程序运行流程 | 全局 | 程序运行流程图 | `docs/teaching/00_overview.md` + `tutorial/00_minimal` |
-| 1 | 世界观与坐标系 | `utils/geo`, `utils/datum` | 经纬度量化、投影、测距 | `docs/teaching/01_coords.md` + `tutorial/01_coords` |
-| 2 | 平台抽象层 | `utils/{plat,mem,strpool}` | 跨平台不写 `#ifdef` | `docs/teaching/02_platform.md` + `tutorial/02_platform` |
-| 3 | PBF 流式解析 | `pbf/*` | 解出 node/way/relation | `docs/teaching/03_pbf.md` + `tutorial/03_pbf` |
-| 4 | 自描述二进制与图集 | `map/{binfmt,mapset,namepool}` | 读 `*.nmbin` | `docs/teaching/04_binary.md` + `tutorial/04_binary` |
-| 5 | 建图：PBF→路网 | `map/{graph_build,road_tags}` | 生成 nodes/edges | `docs/teaching/05_graph.md` + `tutorial/05_graph` |
-| 6 | 视口、投影与瓦片键 | `map/{map_view,tileidx}` | 经纬度↔屏幕 | `docs/teaching/06_viewport.md` + `tutorial/06_viewport` |
-| 7 | 软件光栅与性能旋钮 | `render/{raster,paint,navdraw}` | `AREA_DOT_PX` 权衡 | `docs/teaching/07_raster.md` + `tutorial/07_raster` |
-| 8 | 渲染管线编排 | `ui/{window,chrome,offscreen_shot,audit}` | `paint_frame` 全貌 | `docs/teaching/08_pipeline.md` + `tutorial/08_pipeline` |
-| 9 | 地名搜索 | `search/*` | bigram 倒排 | `docs/teaching/09_search.md` + `tutorial/09_search` |
-| 10 | 路由算法 | `route/*` | 双向加权 A* | `docs/teaching/10_routing.md` + `tutorial/10_routing` |
-| 11 | 导航层与语音 | `route/{maneuver,navsim,voice}`, `ui/voice_wire` | 转向指令+播报 | `docs/teaching/11_navvoice.md` + `tutorial/11_navvoice` |
-| 12 | Qt 前端与边界 | `ui_qt/*` | 渐进式 Qt 化 | `docs/teaching/12_qt.md` + `tutorial/12_qt` |
-| 13 | 架构纪律与验收门禁 | `scripts/*` | 防回归 | `docs/teaching/13_gates.md` + `tutorial/13_gates` |
-| 14 | 综合项目 | 全程 | 改一个点 + 加一条判据 | `docs/teaching/14_capstone.md` + `tutorial/14_capstone` |
-| 15 | 坐标系基准（datum） | `utils/datum` | 三参数赫尔默特 + 交叉验证 | `docs/teaching/15_datum.md` + `tutorial/15_datum` |
-| 16 | 极简多语言（i18n） | `src/i18n`, `lang/*.xml` | zh 为 msgid + 缺译回退链 | `docs/teaching/16_i18n.md` + `tutorial/16_i18n` |
-| 17 | Android 原生 JNI App | `android/`, `utils/plat` 的 `__ANDROID__` 分支 | JNI 桥 + 30fps 渲染线程 + 增量更新/OTA | `docs/teaching/17_android.md` + `android/` 工程 + `docs/android.md` |
+| 课次 | 分类 | 主题 | 对应模块 | 关键产出 | 配套资料 |
+|---|---|---|---|---|---|
+| 0 | 核心代码 | 课程总览与程序运行流程（含运行流程图） | 全局 | 程序运行流程图 | `docs/teaching/00_overview.md` + `tutorial/00_minimal` |
+| 1 | 核心代码 | 坐标系与大地基准 | `utils/geo`, `utils/datum` | 经纬度量化、投影、测距 | `docs/teaching/01_coords.md` + `tutorial/01_coords` |
+| 2 | 核心代码 | PBF 流式解析 | `pbf/*` | 解出 node/way/relation | `docs/teaching/02_pbf.md` + `tutorial/02_pbf` |
+| 3 | 核心代码 | 自描述二进制与图集 | `map/{binfmt,mapset,namepool}` | 读 `*.nmbin` | `docs/teaching/03_binary.md` + `tutorial/03_binary` |
+| 4 | 核心代码 | 建图：PBF→路网 | `map/{graph_build,road_tags}` | 生成 nodes/edges | `docs/teaching/04_graph.md` + `tutorial/04_graph` |
+| 5 | 核心代码 | 视口、投影与瓦片键 | `map/{map_view,tileidx}` | 经纬度↔屏幕 | `docs/teaching/05_viewport.md` + `tutorial/05_viewport` |
+| 6 | 核心代码 | 软件光栅与性能旋钮 | `render/{raster,paint,navdraw}` | `AREA_DOT_PX` 权衡 | `docs/teaching/06_raster.md` + `tutorial/06_raster` |
+| 7 | 核心代码 | 渲染管线编排（含标注层：缓存 / 分级 / 字形） | `ui/{window,chrome,offscreen_shot,audit}`, `render/{labels,font}` | `paint_frame` 全貌 | `docs/teaching/07_pipeline.md` + `tutorial/07_pipeline` |
+| 8 | 核心代码 | 地名搜索 | `search/*` | bigram 倒排 | `docs/teaching/08_search.md` + `tutorial/08_search` |
+| 9 | 核心代码 | 跨省路由算法 | `route/*` | 双向加权 A* | `docs/teaching/09_routing.md` + `tutorial/09_routing` |
+| 10 | 核心代码 | 导航层与语音 | `route/{maneuver,navsim,voice}`, `ui/voice_wire` | 转向指令+播报 | `docs/teaching/10_navvoice.md` + `tutorial/10_navvoice` |
+| 11 | 核心代码 | 架构纪律与验收门禁 | `scripts/*`, `tools/*` | 防回归 | `docs/teaching/11_gates.md` + `tutorial/11_gates` |
+| 12 | 核心代码 | 综合项目（改一个点 + 加一条判据） | 全程 | 改一个点 + 加一条判据 | `docs/teaching/12_capstone.md` + `tutorial/12_capstone` |
+| 13 | 核心代码 | 坐标系基准（datum）：为什么只换椭球等于没转换 | `utils/datum` | 三参数赫尔默特 + 交叉验证 | `docs/teaching/13_datum.md` + `tutorial/13_datum` |
+| 14 | 核心代码 | 极简多语言（i18n）：为什么中文是 msgid 是安全的 | `src/i18n`, `lang/*.xml` | zh 为 msgid + 缺译回退链 | `docs/teaching/14_i18n.md` + `tutorial/14_i18n` |
+| 15 | 跨平台代码 | 平台抽象层 | `utils/{plat,mem,strpool}` | 跨平台不写 `#ifdef` | `docs/teaching/15_platform.md` + `tutorial/15_platform` |
+| 16 | 跨平台代码 | Qt 前端与边界（含无边框窗口） | `ui_qt/*` | 渐进式 Qt 化 | `docs/teaching/16_qt.md` + `tutorial/16_qt` |
+| 17 | 跨平台代码 | Android 原生 JNI App：把同一个 C 核心搬进手机 | `android/`, `utils/plat` 的 `__ANDROID__` 分支 | JNI 桥 + 30fps 渲染线程 + 增量更新/OTA | `docs/teaching/17_android.md` + `android/` 工程 + `docs/android.md` |
 
+> **对账补记（2026-11-06，补齐最近几轮代码改动 + 讲义块改为源码生成）**：
+> - **新增/扩写三节**：第 7 课 §3.6「标注层 `labels.c`」（缓存纯缩放 bug、区域名分级、白描边 / 字形锐化 / POI 与三关负向对照）；第 16 课 §3.10「无边框窗口」（`FramelessWindowHint`、顶部透明拖动带、几何状态机、退出路径、Wayland 限制）；第 11 课 §3.7「新增判据与讲义也要被验收」。
+> - **逐字块不再手工摘抄**：新增 [`scripts/regen_tutorial_blocks.py`](../scripts/regen_tutorial_blocks.py)，按**方法定义边界**从当前源码生成第 16 课 `main_window.h` 全文 + 4 个 cpp 块（合计 68 个方法，不重不漏）、以及第 11 课内嵌的 `regress.sh` 全文（839 行）。`--check` 可当讲义同步门禁，脚本自带幂等自检。
+> - **锚点回源逐个校正**：`window.c` +1（`paint_frame` 1190、`app_render_to_buf` 1456、`if(a->font)` 1303）、`i18n.c` +3（`TR[]` 57-449、`i18n_load` 573、`tr_lookup` 628、`i18n_tr` 638、`xml_decode` 476 等）、`qt_main.cpp` 68→69、`map_canvas.cpp` 53→55 / 145→184 / 242→281、`main_window.cpp` 1203→100、`qt_icons.cpp` 191→240；`regress.sh` 834→839 行；顺手修掉 `qt_ui=2` 的笔误（源码只设 1）。
+> - **判据口径同步**：`qt_ovl_alpha` 矩形 470→430（按钮去掉、右栏贴顶）、`--ui-test` 默认 121/0 与 `SKEDADDLE_FRAMELESS=0` 114/0、注入假按钮的负向对照、C 核心出图对拍 0.000%。回归基线仍 **87 通过 / 0 失败**。
+>
 > **对账补记（2026-11-05，合并远端 5 提交后逐字块全量对账）**：
 > - 判据用的是「源码切片 vs 讲义代码块」**逐字比对**，不是按插入行数估算位移；工具报的多行号表格漂移一律回源核验后才改：
->   `05_graph.md` 的 `write_spatial_index` 标注 `1305-1475` → 实际 `1230-1400`；`04_binary.md` 的 `mapset_load`
->   标注 `693-766` → 实际 `674-747`；`13_gates.md` / `14_capstone.md` 五处「整文件范围」尾行各多算 1 行；
->   `14_capstone.md` 两处把 CMake target 名当成文件名（`skedaddle_graph_extract.c` / `skedaddle_route_cli.c`
+>   `04_graph.md` 的 `write_spatial_index` 标注 `1305-1475` → 实际 `1230-1400`；`03_binary.md` 的 `mapset_load`
+>   标注 `693-766` → 实际 `674-747`；`11_gates.md` / `12_capstone.md` 五处「整文件范围」尾行各多算 1 行；
+>   `12_capstone.md` 两处把 CMake target 名当成文件名（`skedaddle_graph_extract.c` / `skedaddle_route_cli.c`
 >   → `tools/graph_extract.c` / `tools/route_cli.c`）。
-> - **第 12 课四个「完整体，逐字」大块按当前源码重新生成**：`main_window.cpp` 三段真实区间
+> - **第 16 课四个「完整体，逐字」大块按当前源码重新生成**：`main_window.cpp` 三段真实区间
 >   `239-917` / `919-1225` / `1920-2591`，`download_dialog.cpp` 一段 `104-774`。Qt 前端在此期间新增了
 >   卫星天顶图自检、菜单构建调整、`trc()` → `QStringLiteral()`、省份名 `i18n_tr()` 包裹等，旧副本已非逐字。
-> - `05_graph.md` 里 5 行讲义自写注记原先混在「逐字」代码块内，已移到块外作正文，恢复代码块逐字承诺。
+> - `04_graph.md` 里 5 行讲义自写注记原先混在「逐字」代码块内，已移到块外作正文，恢复代码块逐字承诺。
 > - 第 17 课补 `Prefs.java`（配置中枢）进功能构成表与 §3.5：9 个 Java 类此前只列了 8 个。
 > - 纪律复核：`versionCode` 仍是 1（`build.gradle:28`），讲义「下个版本用 2」**正确**，直觉怀疑但未回源前不改。
 >
 > **对账补记（2026-11-04，远端 Android 前端落地）**：
-> - 新增 `android/` 原生 JNI App（3 个提交 / 42 文件）与 `src/utils/plat.{c,h}` 的 `__ANDROID__` 分支，已补入第 17 课 [`17_android.md`](teaching/17_android.md)；第 2 课新增 3.5 节讲目录注入，第 2/11 课的 TTS 逐字副本已同步 Android 分支。
+> - 新增 `android/` 原生 JNI App（3 个提交 / 42 文件）与 `src/utils/plat.{c,h}` 的 `__ANDROID__` 分支，已补入第 17 课 [`17_android.md`](teaching/17_android.md)；第 15 课（平台抽象层）新增 3.5 节讲目录注入，第 15/10 课的 TTS 逐字副本已同步 Android 分支。
 > - `plat.c` +67 行、`plat.h` +16 行导致两课全部 `plat.c:` / `plat.h:` 锚点后移，已按行级 diff 精确重映射（含逗号列表与区间两端）。
 > - 第 17 课无 `tutorial/` 小程序：它要跑的是产品工程本身，构建/部署/自托管命令见 [`docs/android.md`](android.md)。
 
 > **对账补记（2026-11-03 完整对账，当日补齐 i18n 课次）**：
-> - 上面 **00–16 课**已逐课对照当前代码。已修正的过时项集中在第 4/5 课与建图/显示层：
+> - 上面 **00–16 课**已逐课对照当前代码。已修正的过时项集中在第 3/4 课与建图/显示层：
 >   整省三件套（areas/lines/polyrefs.bin）的 **nmbin 读取路径已彻底断根**（`mapset.c` 不再打开、构建不再生成、`disp_tile_selftest` 改为统一以 PBF 解码作基准）；`osmid.bin` 已删；SDL 已从核心彻底移除（仅剩两个去 SDL 化对照体 `skedaddle_blend_equiv`/`skedaddle_clip_equiv` 做逐像素等价验证）。回归基线现为 **87 通过 / 0 失败**。
-> - **i18n 缺口已补齐**：`src/i18n/`（多语言系统，配 7 套非中文语言包）现已有第 16 课 [`16_i18n.md`](teaching/16_i18n.md) + `tutorial/16_i18n` 配套小程序；第 15 课 datum（`15_datum.md`）此前漏列于本表，已补入。
+> - **i18n 缺口已补齐**：`src/i18n/`（多语言系统，配 7 套非中文语言包）现已有第 14 课 [`14_i18n.md`](teaching/14_i18n.md) + `tutorial/14_i18n` 配套小程序；第 13 课 datum（`13_datum.md`）此前漏列于本表，已补入。
 > - 个别行号锚点（如 `paint_frame` 的 `dup_of` 跳过、`i18n.c` 的各函数区间）已按当前源码校正；其余函数级锚点经核对仍然有效。
 
 > **对账补记（2026-11-03 二次补齐，对应提交 `6f1de61`）**：
 > - 上一轮完整对账后，又落地了两类"显示路径健壮性"修复，本次补齐进文档：
->   **① Wayland 透明花屏**——地图画布缓冲 alpha 字节恒为 0（`raster_rgb` 只写 R/G/B），Deepin Wayland 按 ARGB8888 上传导致地图区透出桌面乱色；修复在 `map_canvas.cpp:75-76`（`m_px[i] |= 0xFF000000u`），xcb/离屏无副作用。已在第 12 课"边界原则 ③"与第 8 课 `if(a->font)` 门控处记录，并附 `QT_QPA_PLATFORM=xcb` 对照诊断。
->   **② 字体失败静默丢字**——`paint_frame` 的 `if(a->font)` 门控在 `font_open_default` 返回 NULL 时会静默丢弃全部地名/路名；修复在 `app_init`（`window.c:141-158`）置位 `a->font_missing` 并打响亮 stderr 告警。已补进第 12 课"边界原则 ④"与第 8 课门控处，并标注 `skedaddle_font_probe` / 离屏诊断 `font (已加载|★加载失败)` 两条离线确认手段。
-> - 第 12 课教学目的、演示、练习、验收均已同步这四点（含 Wayland 负向对照实验）。
+>   **① Wayland 透明花屏**——地图画布缓冲 alpha 字节恒为 0（`raster_rgb` 只写 R/G/B），Deepin Wayland 按 ARGB8888 上传导致地图区透出桌面乱色；修复在 `map_canvas.cpp:75-76`（`m_px[i] |= 0xFF000000u`），xcb/离屏无副作用。已在第 16 课"边界原则 ③"与第 7 课 `if(a->font)` 门控处记录，并附 `QT_QPA_PLATFORM=xcb` 对照诊断。
+>   **② 字体失败静默丢字**——`paint_frame` 的 `if(a->font)` 门控在 `font_open_default` 返回 NULL 时会静默丢弃全部地名/路名；修复在 `app_init`（`window.c:141-158`）置位 `a->font_missing` 并打响亮 stderr 告警。已补进第 16 课"边界原则 ④"与第 7 课门控处，并标注 `skedaddle_font_probe` / 离屏诊断 `font (已加载|★加载失败)` 两条离线确认手段。
+> - 第 16 课教学目的、演示、练习、验收均已同步这四点（含 Wayland 负向对照实验）。
 
 ---
 
@@ -129,7 +144,11 @@ cmake --build build_rel -j$(nproc)
 
 ---
 
-## 二、分课教案
+## 二、分课教案 · 核心代码段（第 1–11 课）
+
+> **本段先做**：平台无关的 C 核心，按运行流程实现（坐标 → 数据生产 → 每帧渲染 → 用户交互 → 门禁）。
+> 跨平台段（第 15–17 课）见本教案「四」，**必须在核心段全部实现、`scripts/regress.sh` 87/0 全绿之后**才动手。
+> 每节完整讲义见 `docs/teaching/NN_*.md`，可运行小程序见 `tutorial/NN_*/`。
 
 ---
 
@@ -159,31 +178,7 @@ cmake --build build_rel -j$(nproc)
 
 ---
 
-### 第 2 课 · 平台抽象层（utils）
-
-**课时目标**：理解"平台差异 100% 收口到 `plat.c`"这件事为什么重要。
-
-**必读代码**
-- `src/utils/plat.h` / `plat.c`：`SkMutex`/`SkCond`/`SkProc`/`SkDir`、`sk_thread_spawn`、`sk_now_ms/us`、`sk_tts_speak`、`sk_font_candidates`（中文字体候选链）。
-- `src/utils/mem.h` / `mem.c`：`sk_mmap_file`（钉死 glibc `mmap_threshold` 避免主堆崩溃）。
-- `src/utils/strpool.h`：`StrPool` + `sp_intern/sp_get`（路名去重池，id 0 = "无名"）。
-
-**核心讲解**
-1. **业务代码零 `#ifdef _WIN32`**：所有"换个平台就不成立"的调用都只在 `plat.c` 里出现。这是**可移植性 / 依赖倒置**的范本。
-2. **链接纪律**：`plat.c` 的线程用 pthread 实现，故 `-pthread` 由 `skedaddle_plat` 库统一承载（CMakeLists.txt:213-222）。漏挂会在链接 `skedaddle_tts_selftest` 时报 `pthread_create` 未定义。
-
-**课堂演示**
-```bash
-./build_rel/skedaddle_plat_selftest        # 平台层全接口自验收（正反双向）
-```
-
-**练习**：在 `plat.c` 里加一个 `sk_sleep_ms`（用 `usleep`/`Sleep` 适配），并在一个 selftest 里调用它。
-
-**验收**：能在不碰任何业务 `.c` 的前提下，新增一个跨平台小工具函数。
-
----
-
-### 第 3 课 · PBF 流式解析
+### 第 2 课 · PBF 流式解析
 
 **课时目标**：读懂 OSM PBF 的块结构，并避开最经典的坑——stringtable 不是 NUL 结尾。
 
@@ -207,7 +202,7 @@ cmake --build build_rel -j$(nproc)
 
 ---
 
-### 第 4 课 · 自描述二进制与图集
+### 第 3 课 · 自描述二进制与图集
 
 **课时目标**：理解"为什么不用 8 字节头+定长记录，而要做自描述格式"，以及多省图集如何按需加载。
 
@@ -233,7 +228,7 @@ cmake --build build_rel -j$(nproc)
 
 ---
 
-### 第 5 课 · 建图：PBF → 路网
+### 第 4 课 · 建图：PBF → 路网
 
 **课时目标**：理解从原始 OSM 要素到可导航图（CSR 边 + 限制）的抽取过程。
 
@@ -259,7 +254,7 @@ cmake --build build_rel -j$(nproc)
 
 ---
 
-### 第 6 课 · 视口、投影与瓦片键
+### 第 5 课 · 视口、投影与瓦片键
 
 **课时目标**：打通"地理坐标 ↔ 屏幕像素"的转换，理解视口驱动按需加载与瓦片空间索引。
 
@@ -283,7 +278,7 @@ cmake --build build_rel -j$(nproc)
 
 ---
 
-### 第 7 课 · 软件光栅与性能旋钮
+### 第 6 课 · 软件光栅与性能旋钮
 
 **课时目标**：理解自写光栅的动机，以及"画质 ↔ 帧时间"如何用确定性量来权衡。
 
@@ -312,21 +307,22 @@ python3 scripts/bmpdiff.py z9_a.bmp z9_b.bmp    # 看丢了多少要素（要素
 
 ---
 
-### 第 8 课 · 渲染管线编排
+### 第 7 课 · 渲染管线编排
 
 **课时目标**：看懂一帧是怎么从"图集+视口"变成"像素缓冲"的，以及 Qt 与离屏两套前端如何共用同一入口。
 
 **必读代码**
-- `src/ui/window.h` / `window.c`：`App` 状态机、`paint_frame`（`window.c:1189`，渲染编排）、`app_render_to_buf`（`window.c:1455`，绑定 `Raster` 后调 `paint_frame`）。
+- `src/ui/window.h` / `window.c`：`App` 状态机、`paint_frame`（`window.c:1190`，渲染编排）、`app_render_to_buf`（`window.c:1456`，绑定 `Raster` 后调 `paint_frame`）。
 - `src/ui/offscreen_shot.c` / `offscreen_shot.h`：`offscreen_shot_main`（`skedaddle --shot-offscreen` 单一可信源；纯内存缓冲 `0x00RRGGBB` + 内建 24 位 BMP 写出，零 SDL）。
 - `src/ui/chrome.c` / `chrome.h`：`ChromeID`/`paint_chrome`/`chrome_hit`/`chrome_act`（自绘标题栏/顶栏/右栏/菜单/面板）。
 - `src/ui/audit.c` / `audit.h`：`app_offscreen_audit`（像素计数 + 断言共享模块）。
+- `src/render/labels.c` / `font.c`：地名/POI/路名标注的 SQL 缓存、行政区名分级、白描边与字形锐化（第 7 课 §3.6）。
 
 **核心讲解**
 1. **`paint_frame` 的 9 步**：背景 → 视口 bbox → `mapset_set_view`（进省加载/离省卸载）→ 分阶段跨省统一层级（先所有省的面、再所有省的路）→ 标注 → 叠加层（GPX/路线/车头）→ 昼夜蒙版 → 面板/chrome。
 2. **★ `app_render_to_buf` 是唯一渲染入口**：Qt 把缓冲包成 `QImage::Format_RGB32`，离屏通道额外 `write_bmp24` + `app_offscreen_audit`。C 核心一行不动。
 3. **分阶段计时**：`TICK(ms_bg)` 等是定位帧时间瓶颈的唯一手段——没有它就会去优化"投影贵"这种猜错的方向。
-
+4. **★ 标注层（§3.6）**：`paint_frame` 第 6 步的"字"全在 C 核心。三个真实案例：① 纯缩放骗过 `bbox_moved_far`（跨度比判据）⇒ 500 米以下没字；② 中低 zoom 把市/区名画成和 POI 一样的小字 ⇒ "没有区域名"，修法是 `admin_font` 大字分级（必须 `font_open_default` 才有 CJK 回退）；③ 14px CJK 无 hinting + 白描边洗淡主色 ⇒ z12 字发灰，修法是 `glyph_sharpen` + 主色二次绘制。**负向对照要三关齐关**（`SKEDADDLE_LABEL_HALO=0` + `SKEDADDLE_FONT_SHARP=1.0` + `SKEDADDLE_POI_R=6`）。
 **课堂演示**
 ```bash
 ./build_rel/skedaddle --shot-offscreen --graph=products/graph/beijing \
@@ -334,13 +330,13 @@ python3 scripts/bmpdiff.py z9_a.bmp z9_b.bmp    # 看丢了多少要素（要素
 # 看 stdout 里 ms_bg/ms_areas/ms_roads/ms_lines/ms_labels 的分阶段耗时
 ```
 
-**练习**：在 `paint_frame` 里新加一个 `TICK(ms_mystage)`，包住某段代码，看耗时出现在哪。
+**练习**：在 `paint_frame` 里新加一个 `TICK(ms_mystage)`，包住某段代码，看耗时出现在哪；再用三关旧路径出一张 z12 图跑 `scripts/bmpdiff.py`，确认能逐字节复现改动前出图。
 
-**验收**：能口述一帧的渲染顺序，并说明"为什么 Qt 前端和离屏共用 `app_render_to_buf`"。
+**验收**：能口述一帧的渲染顺序，并说明"为什么 Qt 前端和离屏共用 `app_render_to_buf`"；能说清"没字"的四步排查顺序（字体 → 缓存 → 阈值/避让 → 数据）。
 
 ---
 
-### 第 9 课 · 地名搜索
+### 第 8 课 · 地名搜索
 
 **课时目标**：理解用 bigram 倒排索引替代 `LIKE '%x%'` 全表扫描的经典索引设计。
 
@@ -364,7 +360,7 @@ python3 scripts/bmpdiff.py z9_a.bmp z9_b.bmp    # 看丢了多少要素（要素
 
 ---
 
-### 第 10 课 · 路由算法（核心）
+### 第 9 课 · 路由算法（核心）
 
 **课时目标**：读懂跨省双向加权 A* 的全过程，以及坐标键接边、Landmark 下界、转向限制的配合。
 
@@ -400,7 +396,7 @@ python3 scripts/bmpdiff.py z9_a.bmp z9_b.bmp    # 看丢了多少要素（要素
 
 ---
 
-### 第 11 课 · 导航层与语音
+### 第 10 课 · 导航层与语音
 
 **课时目标**：理解从"一条路线"到"可播报的导航"的最后一公里。
 
@@ -429,35 +425,7 @@ SKEDADDLE_TTS_DRYRUN=/tmp/tts.txt ./build_rel/skedaddle_voice_e2e   # 端到端�
 
 ---
 
-### 第 12 课 · Qt 前端与边界原则
-
-**课时目标**：理解"遗留 C 系统如何渐进式 Qt 化"——核心一行不动，只换缓冲归属与叠加层。
-
-**必读代码**
-- `src/ui_qt/qt_main.cpp`：**唯一的 GUI 进程入口**（`int main` 在 `qt_main.cpp:68`）。
-- `src/ui_qt/map_canvas.h` / `map_canvas.cpp`：`MapCanvas`（`tick()`/`renderNow()`/`paintEvent`）；`m_px` 自持 `uint32_t` 缓冲，`app_render_to_buf` 画进它再包成 `QImage::Format_RGB32`（**踩过坑：RGBA8888→黑屏、RGBX8888→红蓝互换，用 RGB32 最稳**）；`drawScaleBar/drawCompass/drawGraticule/cursorCoordsText`（坐标网叠加层）。
-- `src/ui_qt/main_window.cpp` / `download_dialog.cpp`：主窗口、下载对话框。
-- `src/ui_qt/qt_icons.cpp` / `qt_icon_button.hpp`：图标自绘（字体字符 `inFont()` 全 false ⇒ 自绘路径）、`IconButton`（自绘底板按系数算 alpha）。
-
-**核心讲解**
-1. **边界原则**：C 渲染核心一行不动，只换"缓冲归属 + 叠加层由 QPainter 画"。`qt_ui=1` 时 `paint_frame` 跳过 C 自绘 chrome/搜索框/面板（由 Qt 真控件承担），但地图渲染保留。
-2. **浮层透明度语义**：只淡底板、文字/图标保持清晰（`IconButton` 自绘底板按 pct 算 alpha；`QGraphicsOpacityEffect` 已否——它会把文字一起淡掉）。
-3. **★ 地图缓冲 alpha 字节必须置 0xFF（Wayland 透明花屏）**：`app_render_to_buf` 传 `amask=0`，光栅器只写 R/G/B ⇒ 缓冲恒 `0x00RRGGBB`；Deepin Wayland 按 ARGB8888 上传 ⇒ alpha=0 全透明、地图区透出桌面乱色（"双击一片花"）。修复在 `map_canvas.cpp:75-76` 渲染后 `m_px[i] |= 0xFF000000u`；xcb/离屏无副作用。
-4. **★ 字体加载失败要响亮告警**：`paint_frame` 的 `if(a->font)` 门控（`window.c:1302`）一旦 `font_open_default` 返回 NULL，所有文字静默丢弃、几何照常（`a->font_missing` 置位 + 响亮 stderr 告警在 `window.c:141-158`）。离线用 `skedaddle_font_probe` 或离屏诊断 `font (已加载|★加载失败)` 确认。
-
-**课堂演示**
-```bash
-./build_rel/skedaddle --graph=products/graph/beijing
-# 在 GUI 里缩放/平移/搜索/起终点导航，肉眼确认交互
-```
-
-**练习**：在 `map_canvas.cpp` 的 `paintEvent` 里加一行 `QPainter` 叠加（如在角落画个 FPS 文本），确认不影响 C 核心。
-
-**验收**：能说清"Qt 前端改了什么、C 核心为什么完全没动"。
-
----
-
-### 第 13 课 · 架构纪律与验收门禁
+### 第 11 课 · 架构纪律与验收门禁
 
 **课时目标**：理解"为什么这个工程敢改"——因为有一整套防回归门禁。
 
@@ -468,16 +436,20 @@ SKEDADDLE_TTS_DRYRUN=/tmp/tts.txt ./build_rel/skedaddle_voice_e2e   # 端到端�
 - `tools/blend_equiv.c` / `tools/clip_equiv.c`：自写光栅 vs SDL 软渲染逐像素等价对照体（SDL 在这里合法）。
 - `scripts/bmpdiff.py`：逐字节比对两张 BMP（要素色→背景色=丢要素）。
 - `scripts/ovl_px.py`：半透明比率判定（`|M−H| / |O−H| == pct/100`）。
+- `scripts/check_doc_numbers.sh`：讲义 H1 编号与文件名一致（自带负向对照）。**当前无执行位**，`regress.sh` 的 `[ -x ]` 守卫会跳过它，需 `bash scripts/check_doc_numbers.sh` 手动跑。
+- `scripts/regen_tutorial_blocks.py --check`：讲义逐字块 / 内嵌脚本与当前源码同步（幂等 + 能失败）。
 
 **核心讲解**
 1. **分层门禁是第二道防线**：链接器单趟解析（不用 `--start-group`）是第一道，`-Wl,--start-group` 已移除——它会让链接器多轮扫描悄悄补上反向依赖，边界形同虚设。
 2. **确定性量 > 时间**：时间判据 flaky（机器负载放大一个数量级），所以用 `areas_dotted`、像素计数这类确定性量守 LOD。
 3. **负向对照必须能失败**：任何判据都要注入一个"必失败"的改动来验证它真的在起作用（如 `skedaddle_heap_selftest --expect-fail`、`voice_neg.sh`）。
+4. **★ 判据与讲义都是活资产（§3.7）**：UI 一改版，硬编码矩形坐标就会假红（`qt_ovl_alpha` 高度 420→470→430 三次重测），讲义逐字块也会悄悄过期。`regen_tutorial_blocks.py --check` 把"文档同步"变成退出码；`--ovl-alpha` 之类**会写回配置**的实验参数必须用 `XDG_CONFIG_HOME` + `APPDATA` 隔离，否则污染 `settings.ini` 让默认值用例假红。
 
 **课堂演示**
 ```bash
 ./scripts/check_layers.sh     # 故意在一个 .c 里加 #include "ui/window.h" 到 map 模块，看它 FAIL
-./scripts/regress.sh          # 全量回归，看基线
+./scripts/regress.sh          # 全量回归，看基线 87 通过 / 0 失败
+python3 scripts/regen_tutorial_blocks.py --check   # 讲义逐字块同步
 ```
 
 **练习**：在 `src/render/paint.h` 里把 `AREA_DOT_PX` 改到 8，跑 `regress.sh` 的 `area_lod_tier`，确认它被抓出来；再改回 4。
@@ -486,9 +458,9 @@ SKEDADDLE_TTS_DRYRUN=/tmp/tts.txt ./build_rel/skedaddle_voice_e2e   # 端到端�
 
 ---
 
-## 三、综合项目（第 14 课 / Capstone）
+## 三、综合项目与进阶专题（第 12–14 课）
 
-> 逐课展开版见 [`docs/teaching/14_capstone.md`](teaching/14_capstone.md)，可运行小程序见 `tutorial/14_capstone/`。
+> 逐课展开版见 [`docs/teaching/12_capstone.md`](teaching/12_capstone.md)，可运行小程序见 `tutorial/12_capstone/`。
 > 两者同号，配套完成"改一个点 + 加一条判据"的闭环。
 
 **目标**：独立完成"改一个点 + 加一条判据"，体验完整的"改 → 测 → 守"闭环。
@@ -506,7 +478,128 @@ SKEDADDLE_TTS_DRYRUN=/tmp/tts.txt ./build_rel/skedaddle_voice_e2e   # 端到端�
 
 ---
 
-## 四、附录
+> 以下两节是核心段的进阶专题，仍属「核心代码」，排在综合项目之后、跨平台段之前。
+
+### 第 13 课 · 坐标系基准（datum）：为什么"只换椭球"等于没转换
+
+**课时目标**：讲清 `datum.c` 的数学——只换椭球不等于坐标转换；三参数赫尔默特变换与两条独立证据交叉验证。
+
+**必读代码**：`src/utils/datum.{c,h}`、`tutorial/13_datum/`（自包含重实现，可独立 `gcc` 跑）；完整讲义 [`docs/teaching/13_datum.md`](teaching/13_datum.md)。
+
+**核心讲解**：内部几何永远是 WGS84（OSM PBF 原生），坐标系只影响显示读数，不重投影底图；西安 1980 用全国 3 参数 (−104.57, −45.94, +5.30)，分区参数已否决（选错代价 > 全国最大 14.7 m）。
+
+**课堂演示**：`cd tutorial/13_datum && gcc -std=c11 -O2 -Wall -o tut main.c -lm && ./tut`，看交叉验证"命中/命中"与 `datum.bmp`（灰直 / 蓝弯 / 红点）。
+
+**验收**：能解释"EPSG 没登记 ≠ 没参数"，以及为什么两条独立证据互印才落值。
+
+---
+
+### 第 14 课 · 极简多语言（i18n）：为什么"中文是 msgid"是安全的
+
+**课时目标**：默认 zh 模式等于"没装 i18n"——既有像素 / UI 自检（断言中文串、中文渲染）行为与接入前逐字节一致，这是它能无侵入挂进已有一整套回归的工程里的根本原因。
+
+**必读代码**：`src/i18n/i18n.{c,h}`、`lang/*.xml`、`tutorial/14_i18n/`；完整讲义 [`docs/teaching/14_i18n.md`](teaching/14_i18n.md)。
+
+**课堂演示**：`cd tutorial/14_i18n && gcc -std=c11 -O2 -Wall -o tut main.c && ./tut`，看 [A]–[E] 五场景（中文原样 / 内置英文兜底 / 文件覆盖 / 缺译回退 / 只译部分）。
+
+**练习**：补一条 `skedaddle_i18n_selftest`，断言 `i18n_tr("设置")` 在 zh 模式 `== "设置"`、en 模式 `== "Settings"`。
+
+**验收**：能说清 `skedaddle_i18n` 为何是叶子库、没有在 `utils/map/route/render` 与 `ui_qt` 之间引入反向依赖。
+
+---
+
+## 四、分课教案 · 跨平台代码段（第 15–17 课 · 最后实现）
+
+> **本段最后做**：核心代码跑通、回归全绿之后，才依次实现平台抽象层、Qt 桌面前端、Android 原生 JNI App。
+> 三节共同的不变量是「**C 核心一行不改**」——边界原则见第 16 课，分层门禁见第 11 课。
+> 注意分类 ≠ 依赖顺序：`utils/plat` 是纯 DAG 的最底端叶子（全程底座），但它的**实现**刻意留到最后，
+> 因为核心段先用 POSIX 路径跑通即可，平台分支是补上去的，不是前置条件。
+
+---
+
+### 第 15 课 · 平台抽象层（utils）
+
+**课时目标**：理解"平台差异 100% 收口到 `plat.c`"这件事为什么重要。
+
+**必读代码**
+- `src/utils/plat.h` / `plat.c`：`SkMutex`/`SkCond`/`SkProc`/`SkDir`、`sk_thread_spawn`、`sk_now_ms/us`、`sk_tts_speak`、`sk_font_candidates`（中文字体候选链）。
+- `src/utils/mem.h` / `mem.c`：`sk_mmap_file`（钉死 glibc `mmap_threshold` 避免主堆崩溃）。
+- `src/utils/strpool.h`：`StrPool` + `sp_intern/sp_get`（路名去重池，id 0 = "无名"）。
+
+**核心讲解**
+1. **业务代码零 `#ifdef _WIN32`**：所有"换个平台就不成立"的调用都只在 `plat.c` 里出现。这是**可移植性 / 依赖倒置**的范本。
+2. **链接纪律**：`plat.c` 的线程用 pthread 实现，故 `-pthread` 由 `skedaddle_plat` 库统一承载（CMakeLists.txt:213-222）。漏挂会在链接 `skedaddle_tts_selftest` 时报 `pthread_create` 未定义。
+
+**课堂演示**
+```bash
+./build_rel/skedaddle_plat_selftest        # 平台层全接口自验收（正反双向）
+```
+
+**练习**：在 `plat.c` 里加一个 `sk_sleep_ms`（用 `usleep`/`Sleep` 适配），并在一个 selftest 里调用它。
+
+**验收**：能在不碰任何业务 `.c` 的前提下，新增一个跨平台小工具函数。
+
+---
+
+### 第 16 课 · Qt 前端与边界原则
+
+**课时目标**：理解"遗留 C 系统如何渐进式 Qt 化"——核心一行不动，只换缓冲归属与叠加层。
+
+**必读代码**
+- `src/ui_qt/qt_main.cpp`：**唯一的 GUI 进程入口**（`int main` 在 `qt_main.cpp:69`）。
+- `src/ui_qt/map_canvas.h` / `map_canvas.cpp`：`MapCanvas`（`tick()`/`renderNow()`/`paintEvent`）；`m_px` 自持 `uint32_t` 缓冲，`app_render_to_buf` 画进它再包成 `QImage::Format_RGB32`（**踩过坑：RGBA8888→黑屏、RGBX8888→红蓝互换，用 RGB32 最稳**）；`drawScaleBar/drawCompass/drawGraticule/cursorCoordsText`（坐标网叠加层）。
+- `src/ui_qt/main_window.cpp` / `download_dialog.cpp`：主窗口、下载对话框；`main_window.{h,cpp}` 还含**无边框窗口**的 `m_frameless` / `m_winStrip` / `m_winNormalGeom`（§3.10）。
+- `src/ui_qt/qt_icons.cpp` / `qt_icon_button.hpp`：图标自绘（字体字符 `inFont()` 全 false ⇒ 自绘路径）、`IconButton`（自绘底板按系数算 alpha）。
+- `scripts/regen_tutorial_blocks.py`：从源码生成讲义 §3.4/§3.5 的逐字块，改完 `main_window.*` 记得跑。
+
+**核心讲解**
+1. **边界原则**：C 渲染核心一行不动，只换"缓冲归属 + 叠加层由 QPainter 画"。`qt_ui=1` 时 `paint_frame` 跳过 C 自绘 chrome/搜索框/面板（由 Qt 真控件承担），但地图渲染保留。
+2. **浮层透明度语义**：只淡底板、文字/图标保持清晰（`IconButton` 自绘底板按 pct 算 alpha；`QGraphicsOpacityEffect` 已否——它会把文字一起淡掉）。
+3. **★ 地图缓冲 alpha 字节必须置 0xFF（Wayland 透明花屏）**：`app_render_to_buf` 传 `amask=0`，光栅器只写 R/G/B ⇒ 缓冲恒 `0x00RRGGBB`；Deepin Wayland 按 ARGB8888 上传 ⇒ alpha=0 全透明、地图区透出桌面乱色（"双击一片花"）。修复在 `map_canvas.cpp:75-76` 渲染后 `m_px[i] |= 0xFF000000u`；xcb/离屏无副作用。
+4. **★ 字体加载失败要响亮告警**：`paint_frame` 的 `if(a->font)` 门控（`window.c:1303`）一旦 `font_open_default` 返回 NULL，所有文字静默丢弃、几何照常（`a->font_missing` 置位 + 响亮 stderr 告警在 `window.c:141-158`）。离线用 `skedaddle_font_probe` 或离屏诊断 `font (已加载|★加载失败)` 确认。
+5. **★ 无边框窗口（§3.10，2026-11-06）**：`FramelessWindowHint` 去掉系统标题栏（**必须在 `show()` 前**，`SKEDADDLE_FRAMELESS=0` 可回退）；三个自绘控制按钮按需求移除后，退出走菜单「退出」(Ctrl+Q) / Alt+F4，最小化/最大化交给 WM 快捷键；只留画布顶部 10px 全宽**透明拖动带**做拖动 + 双击最大化。**不要 `showMaximized()`**（UOS/Deepin 会把无边框窗口置 HIDDEN 且几何不变），用自存 `QRect` + `setGeometry(availableGeometry())` 状态机；纯 Wayland 下 `QWidget::move()` 无效、Qt 5.11 无 `startSystemMove`，靠 WM Alt+拖动兜底。`--ui-test` ⑫ 断言「窗口里没有控制按钮」，注入假按钮必须让它 FAIL。
+
+**课堂演示**
+```bash
+./build_rel/skedaddle --graph=products/graph/beijing
+# 在 GUI 里缩放/平移/搜索/起终点导航，肉眼确认交互
+SKEDADDLE_FRAMELESS=0 ./build_rel/skedaddle --ui-test   # 对照：系统标题栏模式 114 OK / 0 FAIL
+python3 scripts/regen_tutorial_blocks.py --check        # 讲义逐字块是否与源码同步
+```
+
+**练习**：在 `map_canvas.cpp` 的 `paintEvent` 里加一行 `QPainter` 叠加（如在角落画个 FPS 文本），确认不影响 C 核心；再往拖动带注入一个假「最小化」按钮，确认 `--ui-test` 立刻 FAIL。
+
+**验收**：能说清"Qt 前端改了什么、C 核心为什么完全没动"，以及去掉系统标题栏后每一项窗口能力的落点。
+
+---
+
+### 第 17 课 · Android 原生 JNI App：把同一个 C 核心搬进手机
+
+**课时目标**：理解"换壳不换核心"在移动端的落点——C 核心零改动，平台差异全收在 `plat.c` 的 `__ANDROID__` 分支。
+
+**必读代码**
+- `android/app/src/main/cpp/skedaddle_jni.cpp`：`app_render_to_buf` 画进 Bitmap，每帧后 `px[i] |= 0xFF000000u`（复刻第 16 课 Wayland alpha 教训）。
+- `src/utils/plat.{c,h}` 的 `__ANDROID__` 分支：`sk_android_set_paths` / `font_dir` 必须在 `app_init` **之前**注入。
+- Java 侧 `Skedaddle.java` / `MapView.java` / `DownloadActivity.java` / `Prefs.java` / `UpdateChecker.java`：省图增量更新与 OTA 清单。
+
+**核心讲解**
+1. JNI 桥只把 C 像素缓冲交给 Android Bitmap，不重写渲染；`libskedaddle.so` 由 NDK CMake 直接复用 `src/` 核心。
+2. 第三方 `sqlite3` / `protobuf-c` 必须 vendor（NDK 不自带），取源命令见 [`docs/android.md`](android.md) §4。
+3. 本机无 NDK 时的契约校验法：用忠实复刻 NDK 的 `jni.h` 垫片 + 真实 `src/` 头做 `-fsyntax-only`（真实 JDK 头不足以校验 Android `env->Method()` 写法）。
+
+**课堂演示**
+```bash
+# 构建 / 部署 / 自托管命令见 docs/android.md
+adb push products/graph /sdcard/Android/data/com.skedaddle.android/files/
+```
+
+**练习**：去掉 `skedaddle_jni.cpp` 的 `|= 0xFF000000u`，观察整屏花屏，与第 16 课 Wayland alpha 教训对照。
+
+**验收**：能说清"Android 改了什么、C 核心为什么一行未动"，以及 `plat.c` 为何是唯一的平台差异收拢点。完整讲义见 [`docs/teaching/17_android.md`](teaching/17_android.md)。
+
+---
+
+## 五、附录
 
 ### A. CLI 工具速查（按"演示什么"分类）
 

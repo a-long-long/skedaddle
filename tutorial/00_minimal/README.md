@@ -1,4 +1,5 @@
 # 第 0 课 · 最小框架（地基）
+> 分类：核心代码
 
 > 📖 配套读源码讲义：[`docs/teaching/00_overview.md`](../../docs/teaching/00_overview.md)（读源码式讲解，讲清楚“为什么这么写”；与本科小程序同号对应）
 

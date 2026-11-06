@@ -32,7 +32,7 @@ static double hav_m(double la1, double lo1, double la2, double lo2) {
 }
 
 /* —— 把经纬度投到画布：视框 [lon0,lon1]×[lat0,lat1] 线性映射到 [0,W]×[0,H] ——
- * 这是 mv_project 的"最小版"：先理解线性映射，第 6 课才引入墨卡托与投影缓存。 */
+ * 这是 mv_project 的"最小版"：先理解线性映射，第 5 课才引入墨卡托与投影缓存。 */
 static double LON0 = 73.0, LON1 = 135.0;   /* 视框经度范围（中国大致范围） */
 static double LAT0 = 18.0, LAT1 = 54.0;    /* 视框纬度范围 */
 static int proj_x(double lon) { return (int)((lon - LON0) / (LON1 - LON0) * (W - 1)); }

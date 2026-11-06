@@ -50,7 +50,9 @@
 - ★★★ 会写回配置的实验参数（`--ovl-alpha` 等）跑实验必须隔离配置（`XDG_CONFIG_HOME`+`APPDATA`），否则污染 `settings.ini` ⇒ 断言默认值用例假红。
 - ★★ **完整 `scripts/regress.sh` 本身也会把真实 `settings.ini` 的 `view_*` 写成默认 `30/110/z10`**（11-05、11-06 两次复现）⇒ 跑前先 `cp` 备份真实配置，跑完 diff 并恢复；用 `--ui-test` 时另用 `SKEDADDLE_SETTINGS` 指全新 ini 可避开 datum 假红。
 - ★★ UI 改版让像素判据硬编码坐标失效 ⇒ 坐标是"每次改版重测"的活资产。
-- ★★★ **教程/文档行号审计：并行多引用表格（一行多符号+多行号）工具必误判归属** ⇒ 工具报的"漂移"必须回源逐条核验（拿真实函数 span 对照），不能盲改（踩过：自动 fixer 把 `bbox_overlap` 行号改成了 `src_unload` 的）。同文件 `978-~1179` 这类带 `~` 近似引用要跳过。
+- ★★★ **教程/文档行号审计：并行多引用表格（一行多符号+多行号）工具必误判归属** ⇒ 工具报的"漂移"必须回源逐条核验（拿真实函数 span 对照），不能盲改（踩过：自动 fixer 把 `bbox_overlap` 行号改成了 `src_unload` 的）。同文件 `978-~1179` 这类带 `~` 近似引用要跳过。历史补记里「旧→新」别写成 `file:N` 形式，会被锚点扫描误判成有效引用。
+- ★★ **讲义逐字块已改为源码生成**：`scripts/regen_tutorial_blocks.py` 按方法定义边界生成 `16_qt.md` 的 `main_window.h` 全文 + 4 个 cpp 块（68 方法不重不漏）与 `11_gates.md` 内嵌 `regress.sh` 全文；改 `main_window.*` / `regress.sh` 后跑一次，`--check` 讲义过期 **rc=1**（注入一行实测能失败）。Python 读写一律 `newline=''`（autocrlf 假 M）。`check_doc_numbers.sh` 是 644、`regress.sh` 用 `[ -x ]` 守卫 ⇒ **doc_numbers 用例在本机被跳过**，87 个用例不含它，需 `bash scripts/check_doc_numbers.sh` 手动跑。
+- ★★★ **教程物理重编号 = 两段式（2026-11-06）**：`docs/teaching/NN_*` 与 `tutorial/NN_*` 同号对应不变，课次改为 **核心代码 00–14 / 跨平台代码 15–17**。映射：旧 02_platform→15、旧 12_qt→16、旧 17_android→17（不变）、旧 03–11 各减 1、旧 13_gates→11、旧 14_capstone→12、旧 15_datum→13、旧 16_i18n→14。**别只改文件名**：全仓「第 N 课」/ `L` 简写 / `NN_slug.md` / `tutorial/NN` 共 4 类引用都要按映射一次性回调替换（串行 replace 会二次污染）；范围叙述（`第 1–12 课`、`L10–L12`）与并列（`第 7/8 课`）必须人工重写语义。`scripts/check_tutorial_tracks.py` 守 `> 分类：` 标签 + 两张课程表 0..17 严格递增（改分类/调行实测 rc=1）。三条讲义门禁均**未接 regress**（保 87/0 与副机行为）。
 
 ## 语音播报
 - 分层：`voice.c` 决定"说什么"，`plat.c:sk_tts_speak()` 发声；**接线唯一** `voice_wire.c:nav_voice_frame()`（生产与 `voice_e2e.c` 共用）。`say()` 是所有播报唯一出口（15s 同文本冷却）。顺序：到达帧先播报后置 `sim_paused=1`，收尾语单独判不受 paused 挡。判真实发声：`SKEDADDLE_TTS_DRYRUN=<文件>`。

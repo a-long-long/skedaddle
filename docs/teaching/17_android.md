@@ -1,12 +1,13 @@
 # 第 17 课 · Android 原生 JNI App：把同一个 C 核心搬进手机
+> 分类：跨平台代码
 
 > 模块：`android/`（Gradle + NDK）、`src/utils/plat.{c,h}` 的 `__ANDROID__` 分支
 > 配套：**`android/` 真实工程本身**——本机 ARM64 Linux 已实测编出 `libskedaddle.so`（1.86 MB）
 > 与 `app-debug.apk`（11.4 MB）；本课是**第一门不配 `tutorial/NN_xxx` 小程序**的课，因为
 > 它要跑的正是产品工程，而不是一个自包含玩具。构建/部署/自托管命令见 [`../android.md`](../android.md)，
 > 本课只讲「为什么这么设计」。
-> 前置：第 2 课平台抽象层（尤其 3.5 Android 分支）、第 8 课渲染管线（`app_render_to_buf`）、
-> 第 12 课 Qt 前端（alpha 教训）、第 13 课分层门禁。
+> 前置：第 15 课平台抽象层（尤其 3.5 Android 分支）、第 7 课渲染管线（`app_render_to_buf`）、
+> 第 16 课 Qt 前端（alpha 教训）、第 11 课分层门禁。
 
 ## ① 教学目的
 
@@ -15,9 +16,9 @@
 本工程选的是另一条路：**C 核心一行不改，只换壳**。学完本课应能说清三件事：
 
 1. **边界在哪**：Java 与 C 之间只有一个类（`Skedaddle`，13 个 `native` 方法）和一个文件
-   （`skedaddle_jni.cpp`，13 个 `JNIEXPORT`）；核心仍走第 8 课已经暴露好的 `app_*` 缓冲渲染 API。
+   （`skedaddle_jni.cpp`，13 个 `JNIEXPORT`）；核心仍走第 7 课已经暴露好的 `app_*` 缓冲渲染 API。
 2. **平台差异怎么进来的**：Android 没有 `$HOME` / `XDG` / `TMP`，也没有「可执行文件」，
-   全部靠 JNI 在 `app_init` **之前**注入目录（第 2 课 3.5）。顺序错了，症状不是崩溃，而是
+   全部靠 JNI 在 `app_init` **之前**注入目录（第 15 课 3.5）。顺序错了，症状不是崩溃，而是
    「有图无线无字」——静默失败最难查。
 3. **为什么不破坏分层**：`android/` 是 `ui_qt` 的**同级替代前端**，不是新的一层；
    `utils ← pbf ← map ← route ← render ← ui` 这条 DAG 一个箭头都没改。
@@ -31,7 +32,7 @@
 | `java/.../MapView.java` | `SurfaceView` + 30 fps 渲染线程 + 平移/双指缩放/双击/点选反投影 | `MapView.java:27,179-205` |
 | `java/.../MainActivity.java` | 抽 `assets/fonts/` 字体到 files 目录、搜索面板、导航按钮 | `MainActivity.java:42,82-90,276` |
 | `cpp/CMakeLists.txt` | 复用仓库 `src/` 全部核心源码：`skedaddle_core STATIC` → `skedaddle SHARED` | `CMakeLists.txt:114-127` |
-| `src/utils/plat.c` | Android 目录注入 + TTS/exe/temp/config/font 平台分支 | `plat.c:1205-1244`（详见第 2 课 3.5） |
+| `src/utils/plat.c` | Android 目录注入 + TTS/exe/temp/config/font 平台分支 | `plat.c:1205-1244`（详见第 15 课 3.5） |
 | `java/.../Prefs.java` | `SharedPreferences` 配置中枢：服务器地址 / 自动更新开关 / 每日检查时间戳 / 三个显示开关统一存取 | `Prefs.java:13-75`（键名 16-21） |
 | `java/.../Downloader.java` | HTTP 下载 + zip 解包（地图包与 APK 共用） | `Downloader.java:20,34,80` |
 | `java/.../Manifests.java` | 解析 `map/manifest.json` 与 `app/update.json` | `Manifests.java:18,34,63` |
@@ -77,13 +78,13 @@ int rc = app_init(&g_app, gdir ? gdir : "", (int)w, (int)h, fp, fs, nullptr);  /
 **为什么顺序是硬约束**：`app_init` 内部会读配置目录、建字体，`plat.c` 的
 `sk_config_dir` / `get_font_dir` 在 Android 上唯一的数据来源就是这两个全局量；
 注入晚了，`get_font_dir` 会静默失败 ⇒ `font_open_default()` 返回 NULL ⇒
-`paint_frame` 的 `if(a->font)` 把文字全丢掉。第 12 课记过这条门控，这里就是它的触发路径。
+`paint_frame` 的 `if(a->font)` 把文字全丢掉。第 16 课记过这条门控，这里就是它的触发路径。
 
 #### 3.2.1 `init` 失败时：检测 → 引导下载 → 自动重载
 
 把失败只写进 Log 是不够的：用户看到的是一块永远写着「正在加载图集…」的黑屏，
 既不知道原因，也找不到入口。`app_init → mapset_load` 在 `graphDir` 不存在、
-或没有含 `manifest.txt` 的省目录时返回 -1（第 5 课），JNI `init` 于是返回 false。
+或没有含 `manifest.txt` 的省目录时返回 -1（第 4 课），JNI `init` 于是返回 false。
 现在这个结果被接成一条**可操作的路径**：
 
 | 环节 | 落点 |
@@ -158,7 +159,7 @@ for (long i = 0; i < n; i++) p[i] |= 0xFF000000u;
 ```
 
 C 软件光栅 `raster_rgb` 只写 RGB，缓冲恒为 `0x00RRGGBB`；`Bitmap` 按 ARGB_8888 上传时
-alpha=0 ⇒ **整屏全透明花屏**。这与第 12 课 Wayland 下 `map_canvas::renderNow` 必须
+alpha=0 ⇒ **整屏全透明花屏**。这与第 16 课 Wayland 下 `map_canvas::renderNow` 必须
 `OR 0xFF000000` 是同一个坑，只是从 `QImage` 换成了 `Bitmap`。凡是把 `app_render_to_buf`
 接到新的显示后端，这一行都是必带项。
 
@@ -177,7 +178,7 @@ target_link_libraries(skedaddle PRIVATE skedaddle_core log)
 
 `SK_SRC` 指向仓库根（`CMakeLists.txt:4`，从 cpp 目录向上 5 级），所以**核心源码只有一份**，
 Android 工程里没有任何 `src/` 的拷贝。编成单个 STATIC 再链进 SHARED，是为了避开桌面端
-多库链接顺序问题（第 13 课记过 `-Wl,--start-group` 被移除的历史）。
+多库链接顺序问题（第 11 课记过 `-Wl,--start-group` 被移除的历史）。
 
 > **宿主判据别写成 `WIN32`**（`CMakeLists.txt:19-42`）：protobuf-c 绑定由 host 工具
 > 生成，而 Android 是交叉编译——CMake 的 `WIN32` 描述的是 **target**（这里是
@@ -205,29 +206,29 @@ Android 工程里没有任何 `src/` 的拷贝。编成单个 STATIC 再链进 S
 
 两者共用 `Downloader.download` + `Downloader.extractZip`（`Downloader.java:34,80`）。
 两者还共用 `Prefs`（`server_base` / `auto_update` / `last_update_check` 等键，见 `Prefs.java:16-21`）：服务器地址留空就不发网络请求，勾选自动更新才每日最多查一次——配置集中在一处，新增开关不必散落到各 `Activity`。
-判据用的是**纯十进制整数版本号**，不是时间戳也不是文件大小——与第 13 课「布尔判据用
+判据用的是**纯十进制整数版本号**，不是时间戳也不是文件大小——与第 11 课「布尔判据用
 展开数/里程/像素，时间只兜底」同一条纪律。发新版必须递增 `versionCode`，否则设备永远
 判定「无需更新」（`build.gradle:29` 的注释专门提醒了下个版本用 2）。
 
-### 3.6 分层纪律复核（第 13 课）
+### 3.6 分层纪律复核（第 11 课）
 
 `android/` 与 `ui_qt/` 是**并列的两种前端**，都只调 `ui/` 暴露的 `app_*` API：
 `app_init` / `app_render_to_buf` / `app_nav_*` / `app_search_query` / `mv_*`。
-平台差异全在 `plat.c` 的 `__ANDROID__` 分支里（第 2 课 3.5），业务代码
+平台差异全在 `plat.c` 的 `__ANDROID__` 分支里（第 15 课 3.5），业务代码
 **零 `#ifdef __ANDROID__`**。所以 `./scripts/check_layers.sh` 的依赖图完全不受影响——
 新增一个前端并没有往 DAG 里加边，只是换了个调用者。
 
 ## ④ 与其他功能的联系
 
-- **上游 · 第 2 课 / 第 8 课**：`plat.c` 的目录注入（3.5）是 Android 能启动的前提；
-  `app_render_to_buf`（第 8 课为离屏截图加的缓冲渲染入口）在这里被复用成主渲染路径——
+- **上游 · 第 15 课 / 第 7 课**：`plat.c` 的目录注入（3.5）是 Android 能启动的前提；
+  `app_render_to_buf`（第 7 课为离屏截图加的缓冲渲染入口）在这里被复用成主渲染路径——
   当初为审计做的接口，如今直接撑起了第二个前端。
-- **横切 · 第 11 课语音**：`voice_wire → say_dup → sk_tts_speak` 的接线不变，但
+- **横切 · 第 10 课语音**：`voice_wire → say_dup → sk_tts_speak` 的接线不变，但
   `plat.c:1137` 的 Android 分支让它**只走 DRYRUN、不发声**（SELinux 禁 fork/exec、
   无 espeak）。所以 `SKEDADDLE_TTS_DRYRUN` 仍是验证接线通不通的可用判据，只是听不到声音。
-- **横切 · 第 12 课字体 / alpha**：`if(a->font)` 文字门控、Wayland alpha 教训都在本课
+- **横切 · 第 16 课字体 / alpha**：`if(a->font)` 文字门控、Wayland alpha 教训都在本课
   以 Android 形态复现了一次（3.2、3.3）。同一条根因在两个平台上换皮出现，值得记成判据。
-- **下游 · 第 13 课门禁**：本工程未改 `src/`，regress 判据完全不受影响；这也解释了为什么
+- **下游 · 第 11 课门禁**：本工程未改 `src/`，regress 判据完全不受影响；这也解释了为什么
   Android 的验收要另立一套（APK 能否出、符号是否齐、JNI 契约是否对），见下方演示。
 
 ## 演示、练习与验收
@@ -242,7 +243,7 @@ Android 工程里没有任何 `src/` 的拷贝。编成单个 STATIC 再链进 S
 - **练习**：
   ① **负向对照**：注释掉 `skedaddle_jni.cpp:51` 的 `sk_android_set_paths`，重跑——
      应出现「有图无字」或 `settings.ini` 落到错误目录，用可见现象证明注入承重；
-  ② 去掉 `skedaddle_jni.cpp:107` 的 `|= 0xFF000000u`，观察整屏花屏，与第 12 课 Wayland
+  ② 去掉 `skedaddle_jni.cpp:107` 的 `|= 0xFF000000u`，观察整屏花屏，与第 16 课 Wayland
      截图对照（同一根因，两个后端）；
   ③ **契约自检**：本机无 NDK 时，用忠实复刻 NDK 的 `jni.h` 垫片（C++ `JNIEnv_` struct +
      inline 转发 `functions->X(this,...)`）配真实 `src/` 头，跑
