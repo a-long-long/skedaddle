@@ -848,7 +848,7 @@ static int bbox_moved_far(const double *a, const double *b)
 - **定位结论：不是缓存、也不是数据缺失**。kind≤2 的市 / 区名过去和村名 / POI 画成同一种 14px 小字 + 橙圈，没有视觉层级；加上路名门槛 14 让 1~10 公里档一条路名都没有 ⇒ 用户看到的就是"只有一堆小字，没有区域名"。
 - **修法**：`admin_font(pt = font_size*2)`（`labels.c:19-33`）新开一份大字 Font，z<14 对 kind≤2 用大字 + 白描边 + 小定位点，kind==3 镇名加白描边形成第二级；按**文字包围盒占格**、冲突时退回普通小字（固定占 3×3 会平白挤掉十几个小地名）。路名门槛 14→12。
 - **★ 字体坑**：`admin_font` 必须走 `font_open_default()`（多面候选链 + CJK 回退）。**不能复用 `a->font_big`**：单文件 `font_open` 没有 CJK 回退，中文全变方框 —— 与第 16 课 `qt_font.cpp` 注册 CJK 字体是同一类问题。
-- **数据上限（别误当 bug）**：项目里**没有 area / boundary 标注链路**（`paint_areas` 不接 `Font`、`AF_*` 无 name 字段），"按行政区面绘制名称"需要重抽数据；z17/18 仍稀疏是数据密度上限（路名只标 `cls<=2`）。
+- **数据上限（别误当 bug）**：项目里**没有 area / boundary 标注链路**（`paint_areas` 不接 `Font`、`AF_*` 无 name 字段），"按行政区面绘制名称"需要重抽数据。路名等级按 zoom 放开（`paint.c` 三处统一走 `road_name_cls_max()`：z12 主干 cls≤2、z14 次干 cls≤3、z16 支路/胡同 cls≤4，2026-11-06）；z17 仍偏稀是视口内要素本身少（~1 km²），不是门槛截断。
 
 #### 6.4 案例 C：POI 过大、z12 字发灰、下半屏没字
 

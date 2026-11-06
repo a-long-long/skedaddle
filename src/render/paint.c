@@ -239,6 +239,17 @@ static void tile_dir(const NMBinFile *tiles, const TileRange *tr, int tx, int ty
     *cnt = sk_get_u32(dir + TF_EDGE_CNT);
 }
 
+/* 路名等级门槛：cls 越小道路等级越高（与 paint_roads_tiled 里的 eff_max
+ * LOD 同序）。z12 起主干(cls<=2)；z14 起次干(cls<=3)；z16 起支路/胡同
+ * (cls<=4)。★ 之前恒为 cls<=2：z14 后视口里主干道渐少，路名从 125 条
+ * 掉到 z17 只剩 3 条，"放大反而更空"——违背"比例尺越大越详细"。 */
+static int road_name_cls_max(double zoom)
+{
+    if (zoom < 14.0) return 2;
+    if (zoom < 16.0) return 3;
+    return 4;
+}
+
 /* tile 驱动路径：只遍历视口覆盖的 tile（±1 格 margin）。 */
 static void paint_roads_tiled(Raster *rs, const MapView *v,
                               const NMBinFile *nodes, const NMBinFile *edges,
@@ -350,7 +361,7 @@ static void paint_roads_tiled(Raster *rs, const MapView *v,
                     raster_thick_line(rs, x0, y0, x1, y1, width,
                                       ccls[cls > 4 ? 4 : cls]);
 
-                    if (cls <= 2 && zoom >= 12.0 &&
+                    if (cls <= road_name_cls_max(zoom) && zoom >= 12.0 &&
                         x0 >= 0 && x0 < W && y0 >= 0 && y0 < H) {
                         uint32_t eidx = sk_get_u32(xl + XL2_EDGE);
                         if ((uint64_t)eidx < ne) {
@@ -421,7 +432,7 @@ static void paint_roads_tiled(Raster *rs, const MapView *v,
                 st->drawn++;
 
                 uint32_t nid = sk_get_u32(er + EF_NAME_ID);
-                if (nid && cls <= 2 && zoom >= 12.0 &&
+                if (nid && cls <= road_name_cls_max(zoom) && zoom >= 12.0 &&
                     x0 >= 0 && x0 < W && y0 >= 0 && y0 < H)
                     road_labels_add(np, nid, (x0 + x1) / 2, (y0 + y1) / 2);
             }
@@ -524,9 +535,9 @@ void paint_roads(Raster *rs, const MapView *v,
                               raster_rgb(rs, s->r, s->g, s->b));
             st->drawn++;
 
-            /* 顺带收集路名锚点：主干以上、有名、屏幕内（z12 起） */
+            /* 顺带收集路名锚点：等级随 zoom 放开（road_name_cls_max）、有名、屏幕内（z12 起） */
             uint32_t nid = sk_get_u32(er + EF_NAME_ID);
-            if (nid && cls <= 2 && v->zoom >= 12.0 &&
+            if (nid && cls <= road_name_cls_max(v->zoom) && v->zoom >= 12.0 &&
                 x0 >= 0 && x0 < W && y0 >= 0 && y0 < H)
                 road_labels_add(np, nid, (x0 + x1) / 2, (y0 + y1) / 2);
         }

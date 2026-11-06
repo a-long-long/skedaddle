@@ -38,7 +38,7 @@
 - 交互前端唯一 `skedaddle`；离屏唯一 `src/ui/offscreen_shot.c`（零 SDL，malloc 缓冲 + 内建 BMP writer）；SDL 仅存于 `blend_equiv`/`clip_equiv` 门禁对照体。
 - ★★ 审计计数源走 C 核心缓冲（`offscreen_shot_main` 设 `a.qt_ui=0`）⇒ **不可删 `chrome.c`/`paint.c`/`navdraw.c`**；共享审计 = `src/render/audit.{c,h}`。
 - ★ `--shot=<png>` 不调用 `win.start()` ⇒ PNG 只有 chrome 空白底（**不是渲染 bug**）；验证地图内容用 `--shot-offscreen`。状态栏由 paintEvent 自动绘制；销毁 renderer 前 `font_drop_textures()`，**不能每帧调**（毁 CJK 缓存）。
-- ★★ 放大后地名消失（11-05 修）：`bbox_moved_far` 对纯缩放不敏感、z≥14 缓存不重查 ⇒ 加 bbox 跨度比（<0.8 或 >1.25 重查）+ 路名门槛 15→14。**只在同进程连续缩放复现**，别用离屏单帧否认；z17/18 稀疏属数据密度上限。
+- ★★ 放大后地名消失（11-05 修）：`bbox_moved_far` 对纯缩放不敏感、z≥14 缓存不重查 ⇒ 加 bbox 跨度比（<0.8 或 >1.25 重查）+ 路名门槛 15→14。**只在同进程连续缩放复现**，别用离屏单帧否认；路名等级按 zoom 放开（`road_name_cls_max`：z12 主干/z14 次干/z16 支路，11-06，z15 路名 60→268、z16 13→113）；z17 仍偏稀是视口内要素少，非门槛截断。
 - ★★ 中低 zoom「没有区域名」不是缓存/数据 bug，是 kind<=2 市/区名与 POI 同为 14px 小字无层级 ⇒ `labels.c` 缓存 `font_open_default(font_size*2)` 画大字 + 白描边（★ 别复用 `a->font_big`：无 CJK 回退 ⇒ 方框），kind==3 加描边、冲突退回小字；路名门槛 14→12。**大字分级只在 z<14**；65bad95 起白描边/锐化**全比例尺生效** ⇒ 「z14/z15 像素 0.000%」作废，负向对照改 `SKEDADDLE_LABEL_HALO=0` + `SKEDADDLE_FONT_SHARP=1.0`（11-06 起再加 `SKEDADDLE_POI_R=6` 三关，实测 0.000%）。无 area/boundary label 链路，按行政区面绘制需重抽数据。
 
 ## 判据纪律（最高价值）
