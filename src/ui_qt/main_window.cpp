@@ -43,7 +43,12 @@ static QString trc(const char *zh) { return QString::fromUtf8(i18n_tr(zh)); }
 #include <QMouseEvent>
 #include <QByteArray>    /* qgetenv：SKEDADDLE_FRAMELESS 回退开关 */
 #include <QtGlobal>      /* qgetenv / QT_VERSION_CHECK */
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 #include <QDesktopWidget>/* 手动"最大化"用 availableGeometry */
+#else
+#include <QGuiApplication>  /* Qt6: primaryScreen() fallback */
+#include <QScreen>         /* Qt6: availableGeometry() */
+#endif
 #include <QImage>
 #include <QDebug>
 #include <cmath>
@@ -1662,7 +1667,13 @@ void MainWindow::toggleWindowMaximized()
     } else {
         if (isMaximized()) showNormal();   /* 外部 WM 已最大化时先回到普通态 */
         m_winNormalGeom = geometry();
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
         QRect av = QApplication::desktop()->availableGeometry(this);
+#else
+        QScreen *scr = screen();  /* widget screen = Qt5 availableGeometry(this) */
+        if (!scr) scr = QGuiApplication::primaryScreen();
+        QRect av = scr ? scr->availableGeometry() : QRect();
+#endif
         if (av.isValid() && !av.isEmpty()) setGeometry(av);
         m_winMaxed = true;
     }
