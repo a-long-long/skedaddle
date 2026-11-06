@@ -166,7 +166,7 @@ int label_nearest_admin(LabelCache *lc, double lat, double lon,
 
 /* zoom → 地名等级上限。kind 语义按抽取约定：数值小 = 行政级别高。
  * 2026-10-24 调整：把 POI（kind 11）的可见起点从 z15 下探到 z13，
- * 让"POI 图标"在城区尺度就能看到（此前只在 z15 才画到，基本看不见）。 */
+ * 让"POI 显示"在城区尺度就能看到（此前只在 z15 才画到，基本看不见）。 */
 static int kind_max_for_zoom(double zoom)
 {
     if (zoom < 6)  return 1;
@@ -201,7 +201,7 @@ static int bbox_moved_far(const double *a, const double *b)
     return d > 0.2;
 }
 
-static int refresh_items(LabelCache *lc, const MapView *v)
+static int refresh_items(LabelCache *lc, const MapView *v, int show_poi)
 {
     double bb[4];
     mv_visible_bbox(v, bb);
@@ -210,6 +210,7 @@ static int refresh_items(LabelCache *lc, const MapView *v)
     lc->loaded = 1;
     lc->cached_kindmax = kind_max;
     lc->cached_zoom = v->zoom;
+    lc->cached_poi = show_poi;
     memcpy(lc->cached_bb, bb, sizeof(bb));
     if (!lc->db) { lc->n_items = 0; return 0; }
 
@@ -220,6 +221,7 @@ static int refresh_items(LabelCache *lc, const MapView *v)
     const char *sql =
         "SELECT name,lat,lon,kind,weight FROM place "
         "WHERE lat BETWEEN ?1 AND ?2 AND lon BETWEEN ?3 AND ?4 AND kind<=?5 "
+        "AND (?7 OR kind<>11) "
         "ORDER BY weight DESC LIMIT ?6";
     sqlite3_stmt *st = NULL;
     if (sqlite3_prepare_v2(lc->db, sql, -1, &st, NULL) != SQLITE_OK) return -1;
@@ -232,6 +234,9 @@ static int refresh_items(LabelCache *lc, const MapView *v)
      * z<14 放宽到 1200；z>=14（500 米档）维持 400，出图逐字节不变。 */
     sqlite3_bind_int(st, 5, kind_max);
     sqlite3_bind_int(st, 6, v->zoom < 14.0 ? 1200 : 400);
+    /* POI 总开关关闭时把 kind 11（设施 POI）从 SQL 层排除：Top-N 名额
+     * 不再被 POI 占用，让给真正的行政地名 / 村名 / 小区。 */
+    sqlite3_bind_int(st, 7, show_poi ? 1 : 0);
 
     lc->n_items = 0;
     while (sqlite3_step(st) == SQLITE_ROW) {
@@ -398,8 +403,9 @@ void paint_place_labels(Raster *rs, const MapView *v,
      * 旧视口的 Top-N，投影到新视口就整体偏到一边。 */
     if (!lc->loaded || lc->cached_kindmax != kind_max ||
         fabs(v->zoom - lc->cached_zoom) >= 0.25 ||
+        lc->cached_poi != show_poi ||               /* 面板/菜单开关切换须重查 */
         bbox_moved_far(lc->cached_bb, bb)) {
-        if (refresh_items(lc, v) != 0) return;
+        if (refresh_items(lc, v, show_poi) != 0) return;
     }
 
     memset(g_grid, 0, sizeof(g_grid));
@@ -423,6 +429,9 @@ void paint_place_labels(Raster *rs, const MapView *v,
     if (small_ch <= 0) small_ch = 14;
     for (int i = 0; i < lc->n_items; i++) {
         LabelItem *it = &lc->items[i];
+        /* POI 总开关：kind 11（设施）的图标与名称都不画、不占避让格。
+         * SQL 已排除，这里兜底防任何残留缓存路径。 */
+        if (!show_poi && it->kind == 11) continue;
         int x, y;
         mv_project(v, it->lat, it->lon, &x, &y);
         if (x < 0 || y < 0 || x >= v->w || y >= v->h) continue;

@@ -64,7 +64,7 @@ static const TrPair TR[] = {
     /* 设置面板（SETTINGS_SCHEMA 的 label） */
     { "昼夜模式",   "Day/Night" },
     { "导航面板",   "Nav panel" },
-    { "POI 图标",   "POI icons" },
+    { "POI 显示",   "POI display" },
     { "地名标注",   "Place labels" },
     { "等高线",     "Contours" },
     { "网格细分刻度", "Grid subdivision" },

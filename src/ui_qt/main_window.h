@@ -221,7 +221,7 @@ private:
     QAction      *m_dayNightAutoAct = nullptr; /* 设置菜单「自动（日出日落）」勾选项 */
     /* 设置菜单里的地图信息显示 / 播报开关（原 SDL 设置面板承载的开关，#88 拆 SDL 壳后由 Qt 菜单接管） */
     QAction      *m_voiceAct  = nullptr;   /* 「语音播报」（与 V 键同步） */
-    QAction      *m_poiAct    = nullptr;   /* 「POI 图标」 */
+    QAction      *m_poiAct    = nullptr;   /* 「POI 显示」 */
     QAction      *m_labelsAct = nullptr;   /* 「地名标注」 */
     QAction      *m_subdivAct = nullptr;   /* 「网格细分刻度」（无快捷键，仅『设置』菜单切换） */
     QList<QAction*> m_gridTypeActs;        /* 「设置 ▸ 网格类型」里的 经纬网/方里格 动作（与悬停提示同步） */

@@ -11,7 +11,7 @@ const SettingMeta SETTINGS_SCHEMA[] = {
     { "lang",        "语言",       ST_INT,  0, 0, 7, 1, "中文\0English\0Français\0Deutsch\0Español\0Português\0Italiano\0日本語\0" },
     { "day_night",   "昼夜模式",   ST_INT,  2, 0, 2, 1, "白天\0夜间\0自动(日出日落)\0" },
     { "show_panel",  "导航面板",   ST_BOOL, 1, 0, 1, 1, NULL },
-    { "show_poi",    "POI 图标",   ST_BOOL, 1, 0, 1, 1, NULL },
+    { "show_poi",    "POI 显示",   ST_BOOL, 1, 0, 1, 1, NULL },
     { "show_labels", "地名标注",   ST_BOOL, 1, 0, 1, 1, NULL },
     { "show_contours", "等高线",   ST_BOOL, 1, 0, 1, 1, NULL },
     { "grid_subdiv",   "网格细分刻度", ST_BOOL, 0, 0, 1, 1, NULL },

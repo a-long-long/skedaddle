@@ -184,7 +184,7 @@ typedef struct {
      * cfg 在 app_init 载入、app_shutdown 写回；show_poi/show_labels 是本次新增的
      * 显示开关（受 Qt 『设置』菜单控制）；settings_* 是 chrome 设置面板的命中结果，
      * 由 chrome.c 写入、window.c 的 chrome_act 消费。 */
-    int           show_poi;        /* POI 图标开关 */
+    int           show_poi;        /* POI 显示开关（关：kind 11 图标+名称都不画） */
     int           show_labels;     /* 地名标注开关 */
     int           show_contours;   /* 等高线开关（SRTM 生成，受『视图』菜单 / O 键控制） */
     int           grid_subdiv;     /* 坐标网细分刻度线开关（每格 5 等分；受『设置』菜单控制，随网格开关生效） */

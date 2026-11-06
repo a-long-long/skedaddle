@@ -18,7 +18,7 @@
     <string name="route_ok">里程 %.1f km · 预计 %.0f 分</string>
 
     <string name="settings_title">设置</string>
-    <string name="opt_poi">POI 图标</string>
+    <string name="opt_poi">POI 显示</string>
     <string name="opt_labels">地名标注</string>
     <string name="opt_contours">等高线</string>
 

@@ -50,8 +50,8 @@ add("昼夜模式", fr="Mode jour/nuit", de="Tag/Nacht", es="Modo día/noche",
 add("导航面板", fr="Panneau de navigation", de="Navigationsbereich",
     es="Panel de navegación", pt="Painel de navegação",
     it="Pannello di navigazione", ja="ナビパネル")
-add("POI 图标", fr="Icônes POI", de="POI-Symbole", es="Iconos POI",
-    pt="Ícones POI", it="Icone POI", ja="POI アイコン")
+add("POI 显示", fr="Affichage POI", de="POI anzeigen", es="Mostrar POI",
+    pt="Exibir POI", it="Mostra POI", ja="POI 表示")
 add("地名标注", fr="Étiquettes de lieux", de="Ortsnamen", es="Etiquetas de lugares",
     pt="Rótulos de lugares", it="Etichette dei luoghi", ja="地名ラベル")
 add("等高线", fr="Courbes de niveau", de="Höhenlinien", es="Curvas de nivel",

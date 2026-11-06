@@ -25,13 +25,16 @@ typedef struct {
     double     cached_bb[4];
     double     cached_zoom;
     int        cached_kindmax;
+    int        cached_poi;       /* 上次查询时 show_poi 的值 */
     int        loaded;
 } LabelCache;
 
 int  label_cache_init(LabelCache *lc, const char *db_path);
 void label_cache_free(LabelCache *lc);
-/* show_poi / show_labels：分别控制"矢量图标"与"文字标签"是否绘制
- * （受 Qt『设置』菜单里的 POI 图标 / 地名标注 开关控制）。二者独立，共用一个避让格。
+/* show_poi / show_labels：show_poi 是 POI 总开关——关闭时设施类 POI（kind 11）
+ * 的图标与名称都不画、不占避让格，SQL 也把 Top-N 名额让给行政地名；其余类别的
+ * 矢量图标仍由它控制。show_labels 控制"文字标签"是否绘制（受 Qt『设置』菜单 /
+ * C 设置面板的 POI 显示 / 地名标注 开关控制）。二者独立，共用一个避让格。
  *
  * zoom<14 时额外分两级画「区域名」：kind<=2 的市/区名用 ×2 大字号 + 白描边，
  * kind==3 的镇名加白描边，其余 POI 小字保持原样。font_size 是基础字号(pt)，

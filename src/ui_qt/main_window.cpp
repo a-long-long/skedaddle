@@ -813,7 +813,7 @@ int MainWindow::runUiSelfTest()
      *          的项现已收进「设置」(父菜单 == m_setMenu)；勾选态初始与运行时值一致。 */
     {
         check(m_subdivAct   != nullptr, "显示开关：网格细分刻度存在");
-        check(m_poiAct      != nullptr, "显示开关：POI 图标存在");
+        check(m_poiAct      != nullptr, "显示开关：POI 显示存在");
         check(m_labelsAct   != nullptr, "显示开关：地名标注存在");
         check(m_contourAct  != nullptr, "显示开关：等高线存在");
         check(m_dayNightAct != nullptr, "显示开关：夜间模式存在");
@@ -1194,7 +1194,7 @@ void MainWindow::buildMenus()
         }
     }
     {
-        QAction *act = mset->addAction(trc("POI 图标"));
+        QAction *act = mset->addAction(trc("POI 显示"));
         act->setCheckable(true);
         act->setChecked(m_a->show_poi);
         connect(act, &QAction::triggered, this, [this, act]() {
