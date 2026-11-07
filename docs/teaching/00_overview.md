@@ -145,7 +145,7 @@ qt_main main()                       ┐ 程序入口（第 16 课）
 | [04_graph.md](04_graph.md) | 4 | 核心代码 | 建图：PBF→路网 | `map/{graph_build,road_tags}` | `04_graph` |
 | [05_viewport.md](05_viewport.md) | 5 | 核心代码 | 视口、投影与瓦片键 | `map/{map_view,tileidx}` | `05_viewport` |
 | [06_raster.md](06_raster.md) | 6 | 核心代码 | 软件光栅与性能旋钮 | `render/{raster,paint,navdraw}` | `06_raster` |
-| [07_pipeline.md](07_pipeline.md) | 7 | 核心代码 | 渲染管线编排（含标注层：缓存 / 分级 / 字形） | `ui/{window,chrome,offscreen_shot,audit}`, `render/{labels,font}` | `07_pipeline` |
+| [07_pipeline.md](07_pipeline.md) | 7 | 核心代码 | 渲染管线编排（含标注层：缓存 / 分级 / 字形 / 显示开关） | `ui/{window,chrome,offscreen_shot,audit}`, `render/{labels,font}` | `07_pipeline` |
 | [08_search.md](08_search.md) | 8 | 核心代码 | 地名搜索 | `search/*` | `08_search` |
 | [09_routing.md](09_routing.md) | 9 | 核心代码 | 跨省路由算法 | `route/*` | `09_routing` |
 | [10_navvoice.md](10_navvoice.md) | 10 | 核心代码 | 导航层与语音 | `route/{maneuver,navsim,voice}`, `ui/voice_wire` | `10_navvoice` |
@@ -154,7 +154,7 @@ qt_main main()                       ┐ 程序入口（第 16 课）
 | [13_datum.md](13_datum.md) | 13 | 核心代码 | 坐标系基准（datum）：为什么只换椭球等于没转换 | `utils/datum` | `13_datum` |
 | [14_i18n.md](14_i18n.md) | 14 | 核心代码 | 极简多语言（i18n）：为什么中文是 msgid 是安全的 | `src/i18n`, `lang/*.xml` | `14_i18n` |
 | [15_platform.md](15_platform.md) | 15 | 跨平台代码 | 平台抽象层 | `utils/{plat,mem,strpool}` | `15_platform` |
-| [16_qt.md](16_qt.md) | 16 | 跨平台代码 | Qt 前端与边界（含无边框窗口） | `ui_qt/*` | `16_qt` |
+| [16_qt.md](16_qt.md) | 16 | 跨平台代码 | Qt 前端与边界（含无边框窗口、Qt5/Qt6 兼容） | `ui_qt/*` | `16_qt` |
 | [17_android.md](17_android.md) | 17 | 跨平台代码 | Android 原生 JNI App：把同一个 C 核心搬进手机 | `android/`, `utils/plat` 的 `__ANDROID__` 分支 | `android/ 真实工程（无 `tutorial/` 小程序）` |
 
 ## 阅读建议
@@ -164,5 +164,5 @@ qt_main main()                       ┐ 程序入口（第 16 课）
 - 每课"④ 与其他功能的联系"一节都标了上游与下游，建议对照本课的流程图一起读。
 - 先读本课流程图，建立"主干"；再逐课下钻"枝叶"。
 - 第 17 课是「换壳不换核心」的收尾：`ui_qt` 的同级替代前端，依赖图一个箭头都没改（见第 11 课门禁）。
-- **本轮补齐的章节导航**：第 7 课 §3.6 标注层（缓存 / 分级 / 字形）、第 16 课 §3.10 无边框窗口、第 11 课 §3.7 新增判据与讲义同步门禁；逐字块生成脚本见 `scripts/regen_tutorial_blocks.py`。
+- **本轮补齐的章节导航**：第 7 课 §3.6 标注层（缓存 / 分级 / 字形，含 §6.5 POI 总开关、§6.6 路名等级 LOD）、第 16 课 §3.10 无边框窗口与 Qt6 可用区兼容、第 11 课 §3.7 新增判据与讲义同步门禁；逐字块生成脚本见 `scripts/regen_tutorial_blocks.py`。
 - 分类由 `scripts/check_tutorial_tracks.py` 验收：第 0–14 课必须是「核心代码」，第 15–17 课必须是「跨平台代码」。

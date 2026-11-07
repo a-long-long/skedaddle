@@ -66,6 +66,7 @@
 
 ## 教程三轨（11-06）
 - ★ 三轨并存：`docs/teaching/NN_*.md`（最终 src 导读）、`tutorial/NN_*/`（各自独立小程序）、`tutorial/mini/`（同一份工程 18 快照 + 17 相邻 diff）；前两轨不是「同一代码逐步长大」。
+- ★ `check_tutorial_tracks.py` 用 `tutorial.glob("NN_*")` **排序取第一个**目录 ⇒ 重编号残留的旧编号目录（只装 `out.bmp`/`tut.exe`）会顶掉同号真目录，报「README 不存在」的假 FAIL；删残留即恢复（11-07，清 12 个）。
 - `tutorial/mini/_parts/` 唯一人写源；`regen_mini_chain.py` 生成 steps/diffs（224 文件，`--check` 过期 rc=1）；`check_mini_chain.py` 守编译运行 + gates + 5 类负向对照，未接 regress。末课 MAP.md 是 mini ↔ src 18 行对照（有门禁）。
 - ★ C 注释里 `NN_*/` 会提前闭合块注释、`src/x/*.c` 的 `/*` 炸 -Werror；`steps/stepNN_slug/` 回 `docs/` 是 4 层 `../../../../`。负向对照测 RUN 要改「被检查的数据」，别把条件改常量 0。
 

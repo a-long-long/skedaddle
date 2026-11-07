@@ -38,7 +38,7 @@
 | [04_graph.md](04_graph.md) | 4 | 核心代码 | 建图：PBF→路网 | `04_graph` |
 | [05_viewport.md](05_viewport.md) | 5 | 核心代码 | 视口、投影与瓦片键 | `05_viewport` |
 | [06_raster.md](06_raster.md) | 6 | 核心代码 | 软件光栅与性能旋钮 | `06_raster` |
-| [07_pipeline.md](07_pipeline.md) | 7 | 核心代码 | 渲染管线编排（含标注层：缓存 / 分级 / 字形） | `07_pipeline` |
+| [07_pipeline.md](07_pipeline.md) | 7 | 核心代码 | 渲染管线编排（含标注层：缓存 / 分级 / 字形 / 显示开关） | `07_pipeline` |
 | [08_search.md](08_search.md) | 8 | 核心代码 | 地名搜索 | `08_search` |
 | [09_routing.md](09_routing.md) | 9 | 核心代码 | 跨省路由算法 | `09_routing` |
 | [10_navvoice.md](10_navvoice.md) | 10 | 核心代码 | 导航层与语音 | `10_navvoice` |
@@ -47,7 +47,7 @@
 | [13_datum.md](13_datum.md) | 13 | 核心代码 | 坐标系基准（datum）：为什么只换椭球等于没转换 | `13_datum` |
 | [14_i18n.md](14_i18n.md) | 14 | 核心代码 | 极简多语言（i18n）：为什么中文是 msgid 是安全的 | `14_i18n` |
 | [15_platform.md](15_platform.md) | 15 | 跨平台代码 | 平台抽象层 | `15_platform` |
-| [16_qt.md](16_qt.md) | 16 | 跨平台代码 | Qt 前端与边界（含无边框窗口） | `16_qt` |
+| [16_qt.md](16_qt.md) | 16 | 跨平台代码 | Qt 前端与边界（含无边框窗口、Qt5/Qt6 兼容） | `16_qt` |
 | [17_android.md](17_android.md) | 17 | 跨平台代码 | Android 原生 JNI App：把同一个 C 核心搬进手机 | `android/ 真实工程（无 `tutorial/` 小程序）` |
 
 > 表中第 0–14 课为**核心代码**、第 15–17 课为**跨平台代码**；这就是本教程的实现顺序。
@@ -62,7 +62,7 @@
 - 每课都可在 `tutorial/NN_xxx/` 找到同号、可独立编译运行的小程序（第 17 课除外），建议"先读源码讲义、再跑小程序"。
 - 第 17 课是「第二个前端」：与 `16_qt` 并列，C 核心一行未改；动手环节就是 `android/` 工程的编译与部署，命令见 [`../android.md`](../android.md)。
 - 环境搭建与构建命令见 [`../teaching-plan.md`](../teaching-plan.md) 的「一、环境搭建」。
-- **讲义里的「完整体，逐字」代码块由 [`scripts/regen_tutorial_blocks.py`](../../scripts/regen_tutorial_blocks.py) 从当前源码生成**（第 16 课 `main_window.*`、第 11 课内嵌 `regress.sh`）：改完源码跑一次生成脚本，用 `--check` 确认没有过期副本。最近增补内容：第 7 课 §3.6 标注层、第 16 课 §3.10 无边框窗口、第 11 课 §3.7 新增判据。
+- **讲义里的「完整体，逐字」代码块由 [`scripts/regen_tutorial_blocks.py`](../../scripts/regen_tutorial_blocks.py) 从当前源码生成**（第 16 课 `main_window.*`、第 11 课内嵌 `regress.sh`）：改完源码跑一次生成脚本，用 `--check` 确认没有过期副本。最近增补内容：第 7 课 §3.6 标注层（新增 §6.5 POI 总开关、§6.6 路名等级 LOD）、第 16 课 §3.10 无边框窗口与 Qt6 可用区兼容、第 11 课 §3.7 新增判据。
 - 改完讲义编号 / 分类，跑 `python3 scripts/check_tutorial_tracks.py` 确认两段式分类与编号一致；跑 `bash scripts/check_doc_numbers.sh` 确认 H1 编号与文件名一致。
 - **要看代码怎么一课课长大**：`tutorial/mini/` 是第 3 份资料（18 个连续快照，每步都能编译跑出 BMP）；
   改完 `_parts/` 跑 `python3 scripts/regen_mini_chain.py` 重新生成，再用 `python3 scripts/check_mini_chain.py`
