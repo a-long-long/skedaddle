@@ -99,6 +99,7 @@ struct Font {
     unsigned char **files;  /* 各面的原始文件数据（本结构持有，关闭时释放） */
     int        nfiles;
     int        ptsize;     /* 打开时给定的字号（像素高） */
+    SkMutex   *glyph_lock; /* 字形缓存懒插入的互斥锁；NULL=分配失败（仅单线程可用） */
 };
 
 static unsigned glyph_hash(uint32_t cp)
@@ -159,6 +160,7 @@ Font *font_open_ex(const char *path, int ptsize, int face_index)
     f->files[0] = data;
     f->nfiles = 1;
     f->ptsize = ptsize;
+    f->glyph_lock = sk_mutex_create();
     return f;
 }
 
@@ -211,6 +213,7 @@ Font *font_open_default(int ptsize)
     f->files = files;
     f->nfiles = nfiles;
     f->ptsize = ptsize;
+    f->glyph_lock = sk_mutex_create();
     fprintf(stderr, "[font] 默认字体集合：载入 %d 个面（首面 %s）\n",
             cnt, n ? cands[0] : "(空)");
     return f;
@@ -280,18 +283,52 @@ static void glyph_build(Glyph *g, Font *f, uint32_t cp, int face)
 static Glyph *glyph_get(Font *f, uint32_t cp)
 {
     unsigned h = glyph_hash(cp);
+    /* ★ 多线程（标注分带并行）下懒插入是竞态：命中路径只读链表，但另一条
+       线程可能同时在头插同一桶 ⇒ 查找与插入都进临界区。命中时锁内的开销
+       只有一次哈希 + 短链表走链，真正的逐像素混合（blit_glyph）在锁外。 */
+    if (f->glyph_lock) sk_mutex_lock(f->glyph_lock);
     for (Glyph *g = f->buckets[h]; g; g = g->next)
-        if (g->cp == cp) return g;
+        if (g->cp == cp) {
+            if (f->glyph_lock) sk_mutex_unlock(f->glyph_lock);
+            return g;
+        }
 
     int face = glyph_face(f, cp);
     Glyph *g = (Glyph *)calloc(1, sizeof(Glyph));
-    if (!g) return NULL;
+    if (!g) {
+        if (f->glyph_lock) sk_mutex_unlock(f->glyph_lock);
+        return NULL;
+    }
     g->cp = cp;
     g->face = face;
     glyph_build(g, f, cp, face);
     g->next = f->buckets[h];
     f->buckets[h] = g;
+    if (f->glyph_lock) sk_mutex_unlock(f->glyph_lock);
     return g;
+}
+
+/* 只读查找（无锁）：仅当调用期间没有任何线程会插缓存时安全（分带渲染
+ * 前由主线程 font_warm_text 预热 ⇒ worker 全命中、无人写）。 */
+static Glyph *glyph_find(Font *f, uint32_t cp)
+{
+    unsigned h = glyph_hash(cp);
+    for (Glyph *g = f->buckets[h]; g; g = g->next)
+        if (g->cp == cp) return g;
+    return NULL;
+}
+
+void font_warm_text(Font *f, const char *utf8)
+{
+    if (!f || !utf8) return;
+    const char *p = utf8;
+    while (*p) {
+        int len;
+        uint32_t cp = utf8_next(p, &len);
+        if (len <= 0) break;
+        glyph_get(f, cp);   /* 主线程独占：命中即返回，未命中才建 */
+        p += len;
+    }
 }
 
 /* 把字形 alpha 按颜色 (r,g,b,a) 合成进 Raster（带阴影偏移）。 */
@@ -338,11 +375,62 @@ void font_draw_a(Font *f, Raster *rs, int x, int y,
     }
 }
 
+void font_draw_a_pre(Font *f, Raster *rs, int x, int y,
+                     const char *utf8, uint8_t cr, uint8_t cg, uint8_t cb,
+                     int shadow, uint8_t a)
+{
+    if (!f || !utf8 || !rs) return;
+    const char *p = utf8;
+    int cx = x;
+    while (*p) {
+        int len;
+        uint32_t cp = utf8_next(p, &len);
+        if (len <= 0) break;
+        Glyph *g = glyph_find(f, cp);   /* 无锁只读，见函数头注释 */
+        if (g && g->alpha && g->w && g->h) {
+            if (shadow)
+                blit_glyph(rs, g, cx + 1, y + 1, 0, 0, 0,
+                           (uint8_t)((200u * a) / 255u));
+            blit_glyph(rs, g, cx, y, cr, cg, cb, a);
+        }
+        cx += g ? g->advance : (f->ptsize / 2);
+        p += len;
+    }
+}
+
 void font_draw(Font *f, Raster *rs, int x, int y,
                const char *utf8, uint8_t cr, uint8_t cg, uint8_t cb,
                int shadow)
 {
     font_draw_a(f, rs, x, y, utf8, cr, cg, cb, shadow, 255);
+}
+
+/* 文字垂直包围盒：取所有面的 ascent/descent 最大值（per-glyph 回退意味着
+ * 同一字符串的码点可能来自不同面，取最大才安全）。加 1 行余量。 */
+void font_vbox(Font *f, int *up, int *down)
+{
+    int u = 8, d = 3;   /* 拿不到 metrics 时的保守缺省 */
+    if (f) {
+        for (int i = 0; i < f->n; i++) {
+            int ascent = 0, descent = 0, lg = 0;
+            stbtt_GetFontVMetrics(&f->faces[i].info, &ascent, &descent, &lg);
+            int pu = (int)(f->faces[i].scale * ascent + 0.5f);
+            int pd = (int)(-f->faces[i].scale * descent + 0.5f);
+            if (pu > u) u = pu;
+            if (pd > d) d = pd;
+            /* ★ hhea ascent 不是字形包围盒的可信上界：CJK 字形（尤其
+               DroidSansFallback 这类 fallback 面）常画到 metrics ascent 之外
+               —— 28px 大字实测字形顶高出基线 22 行，而 metrics 只给 12。
+               字形顶按 0.9×ptsize 兜底（ptsize = ScaleForPixelHeight 的
+               像素高，字形不会超出 em 方块太多），下探按 ptsize/4 兜底。 */
+            int lim_u = (int)(f->ptsize * 0.9f) + 2;
+            int lim_d = f->ptsize / 4 + 2;
+            if (lim_u > u) u = lim_u;
+            if (lim_d > d) d = lim_d;
+        }
+    }
+    if (up)   *up   = u + 1;
+    if (down) *down = d + 1;
 }
 
 int font_text_w(Font *f, const char *utf8)
@@ -440,6 +528,7 @@ void font_close(Font *f)
 {
     if (!f) return;
     font_drop_textures(f);
+    if (f->glyph_lock) sk_mutex_destroy(f->glyph_lock);
     if (f->faces) {
         for (int i = 0; i < f->n; i++) free(f->faces[i].path);
         free(f->faces);

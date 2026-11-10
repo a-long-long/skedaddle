@@ -38,6 +38,21 @@ void font_draw_a(Font *f, Raster *rs, int x, int y,
 
 /* 文本像素宽度（含字间距，不含阴影偏移） */
 int font_text_w(Font *f, const char *utf8);
+/* 文字的垂直包围盒（相对绘制原点 y = 基线）：*up = 字形最高能高出 y 多少行，
+ * *down = 最低能低于 y 多少行（均含 1 行余量）。font_draw 的 y 是基线，
+ * CJK 大字的字形顶能高出 y 一整个 ascent（28px 字实测 22 行）——调用方据
+ * 此算"分带归属"的行包围盒，估小了会缺字。 */
+void font_vbox(Font *f, int *up, int *down);
+/* 预热：把 utf8 的全部码点字形建进缓存（**主线程串行**调用）。分带渲染前
+ * 调它，worker 才能用 font_draw_a_pre 的无锁只读查找 —— 字形缓存是懒插入的
+ * 共享哈希，8 条线程直接 glyph_get 会把互斥锁打成热点（实测标注阶段
+ * 21ms -> 129ms）。稳态下缓存已热，预热只是每码点一次哈希查找。 */
+void font_warm_text(Font *f, const char *utf8);
+/* 同 font_draw_a，但字形查找**无锁只读**：仅限 font_warm_text 预热过的文本，
+ * 且调用期间不得有其他线程插缓存（分带 worker 满足）。未命中码点跳过。 */
+void font_draw_a_pre(Font *f, Raster *rs, int x, int y,
+                     const char *utf8, uint8_t cr, uint8_t cg, uint8_t cb,
+                     int shadow, uint8_t a);
 
 /* 作废全部字形缓存（释放 alpha 位图内存；与渲染目标生命周期无关，可随时调）。 */
 void font_drop_textures(Font *f);

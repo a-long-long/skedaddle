@@ -1,4 +1,5 @@
 #include "render/labels.h"
+#include "render/band.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -390,6 +391,121 @@ static void draw_poi_marker(Raster *rs, int x, int y, int kind)
     shape_fill(rs, x, y, core,  sh, col);
 }
 
+/* ------------------------------------------------------------------ */
+/* 标注命令：串行决策、分带绘制                                          */
+/* ------------------------------------------------------------------ */
+/* 网格避让是"先到先得"的链式决策（第 i 个能不能画取决于前 i-1 个占了哪些格），
+ * 这部分必须串行；但真正贵的是绘制——白描边 = 同一段文字按 8 邻域偏移画 10 遍，
+ * 逐像素 alpha 混合。拆成两段：决策期只算位置/颜色/占格，把绘制压成命令；
+ * 执行期按扫描带并行，每条命令交给所有与它像素行有交集的带（clip 过滤）。
+ *
+ * ★ 逐字节一致的论证：每个像素 p 属于唯一一条带；串行序中所有覆盖 p 的命令，
+ *   其行包围盒都覆盖 p 所在行 ⇒ 它们必然都被分给这条带，且带内按命令序执行
+ *   ——与串行对 p 的写入序完全相同（font_draw 是纯函数，无隐藏状态）。
+ * ★ 文字行包围盒取 [y-PAD, y+ch+PAD]，PAD=16：stbtt 的 yoff 可为负（数字/
+ *   字母的字形顶能高出 y 5~7 行，实测 z15 每条带边界上方 6 行缺字 ⇒ 4 行
+ *   余量不够），白描边再 ±1。宁多分一条带（多画几行被 clip 滤掉，纯浪费
+ *   几十次混合），不可漏分（漏分 = 缺字）。 */
+
+enum { LCMD_HALO, LCMD_SHADOW, LCMD_POI, LCMD_DOT };
+
+typedef struct {
+    uint8_t      type;      /* LCMD_* */
+    uint8_t      r, g, b;
+    int16_t      poi_kind;  /* LCMD_POI 用 */
+    const char  *text;      /* LCMD_HALO/SHADOW 用（指向 lc->items / np->blob） */
+    Font        *font;      /* 小字 or 区名大字 */
+    int          x, y;
+    int          ylo, yhi;  /* 像素占用行范围（含），分带归属判据 */
+} LabelCmd;
+
+static LabelCmd *s_lcmd;
+static int       s_lcmd_cap;
+static int       s_lcmd_n;
+
+/* 走并行的最小命令数：标注阶段整体才 2~7ms，命令太少时起线程纯亏。 */
+#define SK_BAND_MIN_LABELS 96
+
+static int lcmd_push(uint8_t type, Font *font, const char *text,
+                     int x, int y, int ylo, int yhi,
+                     uint8_t r, uint8_t g, uint8_t b, int poi_kind)
+{
+    if (s_lcmd_n >= s_lcmd_cap) {
+        int nc = s_lcmd_cap ? s_lcmd_cap * 2 : 512;
+        LabelCmd *q = (LabelCmd *)realloc(s_lcmd, (size_t)nc * sizeof(LabelCmd));
+        if (!q) return -1;
+        s_lcmd = q;
+        s_lcmd_cap = nc;
+    }
+    LabelCmd *c = &s_lcmd[s_lcmd_n++];
+    c->type = type; c->font = font; c->text = text;
+    c->x = x; c->y = y; c->ylo = ylo; c->yhi = yhi;
+    c->r = r; c->g = g; c->b = b; c->poi_kind = (int16_t)poi_kind;
+    return 0;
+}
+
+static const int dx8[8] = { -1, 0, 1, -1, 1, -1, 0, 1 };
+static const int dy8[8] = { -1,-1,-1,  0, 0,  1, 1, 1 };
+
+typedef struct {
+    BandView *bv;
+    LabelCmd *cmd;
+    int       n;
+} LabelJob;
+
+static void label_task(void *arg, int tid)
+{
+    LabelJob *j = (LabelJob *)arg;
+    Raster *rs = &j->bv->band[tid];
+    int b_lo = rs->clip.y, b_hi = b_lo + rs->clip.h;
+    for (int i = 0; i < j->n; i++) {
+        const LabelCmd *c = &j->cmd[i];
+        if (c->yhi < b_lo || c->ylo >= b_hi) continue;
+        switch (c->type) {
+        case LCMD_HALO:
+            for (int k = 0; k < 8; k++)
+                font_draw_a_pre(c->font, rs, c->x + dx8[k], c->y + dy8[k],
+                                c->text, 255, 255, 255, 0, 255);
+            /* 同色再绘两次把覆盖率压回实心（1-(1-a)^2），与串行 font_draw_halo
+               的 2 次主色完全一致 —— 顺序与次数都不能变。 */
+            font_draw_a_pre(c->font, rs, c->x, c->y, c->text, c->r, c->g, c->b, 0, 255);
+            font_draw_a_pre(c->font, rs, c->x, c->y, c->text, c->r, c->g, c->b, 0, 255);
+            break;
+        case LCMD_SHADOW:
+            font_draw_a_pre(c->font, rs, c->x, c->y, c->text, c->r, c->g, c->b, 1, 255);
+            break;
+        case LCMD_POI:
+            draw_poi_marker(rs, c->x, c->y, c->poi_kind);
+            break;
+        case LCMD_DOT:
+            fill_disc(rs, c->x, c->y, 2, raster_rgb(rs, c->r, c->g, c->b));
+            break;
+        }
+    }
+}
+
+/* 决策完的命令一次性执行：带数由 SKEDADDLE_BANDS 决定（0/不足阈值 = 串行，
+ * 但走的仍是同一条命令路径 ⇒ 与旧逐条绘制逐字节一致）。 */
+static void label_flush(Raster *rs)
+{
+    int n = s_lcmd_n;
+    s_lcmd_n = 0;
+    if (n <= 0) return;
+    /* ★ 预热（主线程串行）：执行器用无锁只读查找的前提是"全部字形已在
+       缓存"——串行（单带）路径同样走 glyph_find，不预热首帧会整段缺字。
+       首帧建字形（stbtt 光栅化）就发生在这一步；稳态帧缓存已热，这里只剩
+       每码点一次哈希。不预热的话 8 线程直接 glyph_get 会把字形锁打成热点
+       （实测 21ms -> 129ms，比串行还慢 6 倍）。 */
+    for (int i = 0; i < n; i++)
+        if (s_lcmd[i].text) font_warm_text(s_lcmd[i].font, s_lcmd[i].text);
+    int nband = (n >= SK_BAND_MIN_LABELS) ? band_pick_count() : 1;
+    BandView bv;
+    band_init(&bv, rs, nband);
+    LabelJob j;
+    j.bv = &bv; j.cmd = s_lcmd; j.n = n;
+    band_run(&bv, label_task, &j);
+}
+
 void paint_place_labels(Raster *rs, const MapView *v,
                         LabelCache *lc, Font *font, int font_size, PaintStats *st,
                         int show_poi, int show_labels)
@@ -410,6 +526,11 @@ void paint_place_labels(Raster *rs, const MapView *v,
 
     memset(g_grid, 0, sizeof(g_grid));
     grid_for_font(font, v->w, v->h);
+    s_lcmd_n = 0;                 /* 命令缓冲每帧重用 */
+    /* 懒初始化的静态量必须在决策期（主线程）先踩一遍：worker 线程里首调
+       是"读 env → 写 static"的竞态。halo_enabled 在下方本来就会调；
+       poi_radius 只有 draw_poi_marker 里会碰，这里显式预热。 */
+    if (show_poi) (void)poi_radius();
 
     /* ★ 1/2/5/10 公里等中低 zoom 才有「区域名」层：市/区名用大字、镇名加白描边，
      *   与 POI 小字拉开视觉层级。旧实现把 kind 1~2 的行政区名和村名/POI 画成
@@ -417,7 +538,11 @@ void paint_place_labels(Raster *rs, const MapView *v,
      *   z>=14 不做分级显示（无大字层），但文字同样走白描边。 */
     int  admin_on = (v->zoom < 14.0 && show_labels);
     int  halo_on  = halo_enabled();   /* 清晰度逻辑与分级显示解耦 */
+    /* 文字垂直包围盒（y=基线，字形向上伸约 ascent）：分带归属用 */
+    int up_s = 0, dn_s = 0, up_b = 0, dn_b = 0;
+    font_vbox(font, &up_s, &dn_s);
     Font *big = admin_on ? admin_font(font_size > 0 ? font_size * 2 : 28) : NULL;
+    if (big) font_vbox(big, &up_b, &dn_b);
     int  big_ch = big ? font_text_w(big, "\xe4\xb8\xad") : 0;   /* "中" ≈ 字高 */
     if (big_ch <= 0) big_ch = 26;
 
@@ -478,9 +603,17 @@ void paint_place_labels(Raster *rs, const MapView *v,
             for (int yy = agy0; yy <= agy1; yy++)
                 for (int xx = agx0; xx <= agx1; xx++)
                     g_grid[yy * GRID_COLS + xx] = 1;
-            font_draw_halo(big, rs, ax0, ay0, it->name, 30, 44, 76);
+            if (lcmd_push(LCMD_HALO, big, it->name, ax0, ay0,
+                          ay0 - up_b - 3, ay0 + dn_b + 3,
+                          30, 44, 76, 0) != 0)
+                goto oom;
             /* 小小定位点取代 POI 圆圈：区名代表"一片地方"而非一个设施 */
-            fill_disc(rs, x, ay0 + big_ch + 3, 2, raster_rgb(rs, 30, 44, 76));
+            {
+                int dy = ay0 + big_ch + 3;
+                if (lcmd_push(LCMD_DOT, NULL, NULL, x, dy,
+                              dy - 2, dy + 2, 30, 44, 76, 0) != 0)
+                    goto oom;
+            }
             drawn++;
             continue;
         }
@@ -489,25 +622,45 @@ void paint_place_labels(Raster *rs, const MapView *v,
         g_grid[gy * GRID_COLS + gx] = 1;
         if (admin_on && it->kind == 3) {
             /* 镇名：普通字号 + 白描边深色字，形成第二级层次 */
-            font_draw_halo(font, rs, tx, ty, it->name, 38, 42, 54);
+            if (lcmd_push(LCMD_HALO, font, it->name, tx, ty,
+                          ty - up_s - 3, ty + dn_s + 3,
+                          38, 42, 54, 0) != 0)
+                goto oom;
             drawn++;
-            if (show_poi) { draw_poi_marker(rs, x, y, it->kind); icons++; }
+            if (show_poi) {
+                if (lcmd_push(LCMD_POI, NULL, NULL, x, y,
+                              y - 13, y + 13, 0, 0, 0, it->kind) != 0)
+                    goto oom;
+                icons++;
+            }
             continue;
         }
 
         /* 图标与标签独立开关，但共用一个避让格（任一个显示就占格，避免重叠） */
-        if (show_poi)   { draw_poi_marker(rs, x, y, it->kind); icons++; }
+        if (show_poi) {
+            if (lcmd_push(LCMD_POI, NULL, NULL, x, y,
+                          y - 13, y + 13, 0, 0, 0, it->kind) != 0)
+                goto oom;
+            icons++;
+        }
         if (show_labels){
             /* 全比例尺统一白描边：1px 黑影会把小字糊成一团，500 米 /
              * 200 米档同样如此。SKEDADDLE_LABEL_HALO=0 恢复旧黑影路径，
              * 配合 SKEDADDLE_FONT_SHARP=1.0 做逐字节负向对照。 */
-            if (halo_on)
-                font_draw_halo(font, rs, tx, ty, it->name, 46, 48, 56);
-            else
-                font_draw(font, rs, tx, ty, it->name, 46, 48, 56, 1);
+            if (lcmd_push(halo_on ? LCMD_HALO : LCMD_SHADOW, font, it->name,
+                          tx, ty, ty - up_s - 3, ty + dn_s + 3,
+                          46, 48, 56, 0) != 0)
+                goto oom;
             drawn++;
         }
     }
+    label_flush(rs);
+    if (st) { st->labels_drawn = drawn; st->poi_icons = icons; }
+    return;
+oom:
+    /* 命令缓冲 OOM：已决策的照常执行，剩下的标签这帧丢弃（与旧实现
+       "realloc 失败即不画" 同口径）。 */
+    label_flush(rs);
     if (st) { st->labels_drawn = drawn; st->poi_icons = icons; }
 }
 
@@ -528,6 +681,10 @@ void paint_road_labels(Raster *rs, const MapView *v, Font *font,
 
     memset(g_grid, 0, sizeof(g_grid));
     grid_for_font(font, v->w, v->h);
+    s_lcmd_n = 0;
+    int halo_on = halo_enabled();          /* 预热：worker 里首调会竞态 */
+    int up_s = 0, dn_s = 0;
+    font_vbox(font, &up_s, &dn_s);         /* 行包围盒：y 是基线，见 place 侧说明 */
 
     /* 同名只标一次（哈希位图）。注意 name_id 只在本省 names.bin 内唯一，
        不同省的同名路（如"建设路"）各自带着自己的池，哈希到同一位会互相
@@ -559,11 +716,12 @@ void paint_road_labels(Raster *rs, const MapView *v, Font *font,
 
         /* 路名用深蓝灰，与地名黑灰区分；同样全比例尺走白描边，
          * 否则深蓝灰小字 + 1px 黑影仍是发虚的一批。 */
-        if (halo_enabled())
-            font_draw_halo(font, rs, x, y, s, 70, 80, 110);
-        else
-            font_draw(font, rs, x, y, s, 70, 80, 110, 1);
+        if (lcmd_push(halo_on ? LCMD_HALO : LCMD_SHADOW, font, s,
+                      x, y, y - up_s - 3, y + dn_s + 3,
+                      70, 80, 110, 0) != 0)
+            break;                          /* OOM：这帧余下路名不画 */
         drawn++;
     }
+    label_flush(rs);
     if (st) st->road_labels_drawn = drawn;
 }
