@@ -19,6 +19,10 @@ const SettingMeta SETTINGS_SCHEMA[] = {
     { "mode",        "默认页签",   ST_INT,  0, 0, 1, 1, "浏览\0导航\0" },
     { "font_size",   "字号(pt)",   ST_INT, 14, 8, 32, 1, NULL },
     { "max_class",   "道路细节",   ST_INT,  4, 0, 4, 1, NULL },
+    /* ★ 缺省 4 必须与 render/paint.h 的 AREA_DOT_PX 逐字一致——settings 在
+       分层 DAG 里位于 render 下游，不能 include 它拿常量（check_layers 会拦）。
+       改默认值时两处要一起改。 */
+    { "lod_area",    "小面简化",   ST_INT,  4, 2, 12, 1, NULL },
     { "datum",       "坐标系",     ST_INT,  0, 0, 3, 1, "WGS84\0CGCS2000\0北京1954\0西安1980\0" },
     { "grid_type",   "网格类型",   ST_INT,  0, 0, 1, 1, "经纬网\0方里格\0" },
 };

@@ -51,6 +51,15 @@ void road_labels_add(const NamePool *np, uint32_t name_id, int x, int y)
      每省调一次；而 g_last_px 跨帧不清会出 holes——背景每帧重刷，上一帧
      写过的像素这帧是空的，若拿上一帧的状态去判"已写过"就会漏画。 */
 static __thread int g_last_px = -1, g_last_tag = -1;
+
+/* 小面画点阈值的运行时档位。缺省 = 编译期 AREA_DOT_PX，逐字节兼容旧出图。 */
+static int g_area_dot_px = AREA_DOT_PX;
+void paint_set_area_dot_px(int px)
+{
+    if (px < 2)  px = 2;
+    if (px > 12) px = 12;
+    g_area_dot_px = px;
+}
 void paint_roadpix_begin(void) { g_last_px = -1; g_last_tag = -1; }
 
 /* 路面配色：高等级路更醒目，低等级路压暗 */
@@ -1133,7 +1142,7 @@ static void area_emit(Raster *rs, const AreaCtx *c, uint64_t i,
         mv_proj_e7(c->P, bb[2], bb[3], &xb, &yb);
         int aw = xa > xb ? xa - xb : xb - xa;
         int ah = ya > yb ? ya - yb : yb - ya;
-        if ((aw > ah ? aw : ah) < AREA_DOT_PX) {
+        if ((aw > ah ? aw : ah) < g_area_dot_px) {
             raster_point(rs, (xa + xb) / 2, (ya + yb) / 2, c->afill[kind]);
             dst->areas_drawn++;
             dst->areas_dotted++;

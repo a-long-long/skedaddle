@@ -76,6 +76,7 @@ typedef struct {
     int           quit;
     int           need_redraw;
     int           max_class;     /* LOD：当前画到哪一级道路 */
+    int           lod_area;      /* LOD：小面画点阈值（设置 lod_area，2~12） */
     int           dragging;
     int           last_x, last_y;
     int           down_x, down_y;

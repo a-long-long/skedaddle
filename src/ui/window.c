@@ -61,6 +61,8 @@ int app_init(App *a, const char *graph_dir, int w, int h,
     if (a->cfg) settings_load(a->cfg, NULL);
     i18n_set_lang((I18nLang)settings_get_int(a->cfg, "lang", 0));
     a->max_class = settings_get_int(a->cfg, "max_class", 4);
+    a->lod_area  = settings_get_int(a->cfg, "lod_area", 4);
+    paint_set_area_dot_px(a->lod_area);   /* 面要素 LOD 档位（渲染静态档） */
     a->need_redraw = 1;
     a->show_panel = settings_get_bool(a->cfg, "show_panel", 1);
     {
@@ -335,6 +337,8 @@ void app_apply_settings(App *a)
     a->grid_subdiv   = settings_get_bool(a->cfg, "grid_subdiv", 0);
     a->mode         = settings_get_int(a->cfg, "mode", 0);
     a->max_class    = settings_get_int(a->cfg, "max_class", 4);
+    a->lod_area     = settings_get_int(a->cfg, "lod_area", 4);
+    paint_set_area_dot_px(a->lod_area);
     int dv = settings_get_int(a->cfg, "datum", 0);
     a->datum = (dv >= 0 && dv < DATUM_COUNT) ? dv : DATUM_WGS84;
     int gt = settings_get_int(a->cfg, "grid_type", 1);
@@ -372,6 +376,7 @@ void app_persist_settings(App *a)
     settings_set_int(a->cfg,  "mode",        a->mode);
     settings_set_int(a->cfg,  "font_size",   a->font_size);
     settings_set_int(a->cfg,  "max_class",   a->max_class);
+    settings_set_int(a->cfg,  "lod_area",    a->lod_area);
     settings_set_int(a->cfg,  "datum",       a->datum);
     settings_set_int(a->cfg,  "grid_type",   a->grid_type);
     ovl_store_all(a->cfg, a->ovl_alpha);

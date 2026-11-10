@@ -48,6 +48,12 @@
  */
 #define AREA_DOT_PX 4
 
+/* 面要素 LOD 运行时档位（小面画点阈值，2~12）。缺省 = AREA_DOT_PX。
+ * 编译期常量改成了设置项 lod_area（画质取舍交给用户，见 settings.c）；
+ * app_init/app_apply_settings 读到后调这里。超过 12 按 12 钳（再大净损失
+ * 超过 10% 且收益递减，见 docs/PERF-AREA-LOD-TIERS.md 的实测表）。 */
+void paint_set_area_dot_px(int px);
+
 typedef struct {
     uint64_t visited;     /* 扫过的边数 */
     uint64_t drawn;       /* 真正画的边数 */
