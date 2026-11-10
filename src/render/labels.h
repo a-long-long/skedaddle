@@ -16,6 +16,8 @@ typedef struct {
     char   name[64];
     double lat, lon;
     int    kind, weight;
+    int    sub;      /* kind 11 的子类（0=通用蓝圆 1交通 2教育 3医疗 4旅游 5生活），
+                        语义与 tools/places_build.c 的 PSUB_* 对齐；其余 kind 恒 0 */
 } LabelItem;
 
 typedef struct {

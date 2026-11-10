@@ -65,6 +65,9 @@ static int halo_enabled(void)
     return v;
 }
 
+/* POI 子类配色开关（定义在本文件 POI 段，refresh_items 提前用到，前置声明） */
+static int poi_sub_enabled(void);
+
 /* ------------------------------------------------------------------ */
 /* 地名标注                                                             */
 /* ------------------------------------------------------------------ */
@@ -101,6 +104,7 @@ static void poi_ext_load(LabelCache *lc)
         LabelItem *it = &lc->ext[lc->n_ext++];
         snprintf(it->name, sizeof(it->name), "%s", name);
         it->lat = la; it->lon = lo; it->kind = 11; it->weight = w;
+        it->sub = 0;   /* 外部 CSV 不区分子类：通用蓝圆 */
     }
     fclose(f);
     if (lc->n_ext)
@@ -263,19 +267,34 @@ static int refresh_items(LabelCache *lc, const MapView *v, int show_poi)
     lc->cached_poi = show_poi;
     lc->cached_poi_source = lc->poi_source;
     memcpy(lc->cached_bb, bb, sizeof(bb));
-    if (!lc->db) { lc->n_items = 0; goto ext_merge; }   /* 无地名库：只剩外部层 */
 
-    /* 外扩 30%：小幅平移不重查 */
+    /* 外扩 30%：小幅平移不重查。★ 必须在 goto ext_merge 之前初始化：
+       无地名库（db==NULL）只走外部层时，ext_merge 同样要用 dla/dlo
+       做视口过滤（11-10 外部 POI 首版把初始化放在 goto 之后，
+       -Wmaybe-uninitialized 报警 + 脏值进过滤条件）。 */
     double dla = (bb[2] - bb[0]) * 0.3 + 1e-6;
     double dlo = (bb[3] - bb[1]) * 0.3 + 1e-6;
 
+    if (!lc->db) { lc->n_items = 0; goto ext_merge; }   /* 无地名库：只剩外部层 */
+
+    /* sub 列是 11-10 加的：老库没有这列，prepare 会报 "no such column"。
+     * 回退到 "0 AS sub"（全部当通用蓝圆）——老库不必重建也能继续用，
+     * 只是画不出子类配色。 */
     const char *sql =
-        "SELECT name,lat,lon,kind,weight FROM place "
+        "SELECT name,lat,lon,kind,weight,sub FROM place "
+        "WHERE lat BETWEEN ?1 AND ?2 AND lon BETWEEN ?3 AND ?4 AND kind<=?5 "
+        "AND (?7 OR kind<>11) "
+        "ORDER BY weight DESC LIMIT ?6";
+    const char *sql_old =
+        "SELECT name,lat,lon,kind,weight,0 FROM place "
         "WHERE lat BETWEEN ?1 AND ?2 AND lon BETWEEN ?3 AND ?4 AND kind<=?5 "
         "AND (?7 OR kind<>11) "
         "ORDER BY weight DESC LIMIT ?6";
     sqlite3_stmt *st = NULL;
-    if (sqlite3_prepare_v2(lc->db, sql, -1, &st, NULL) != SQLITE_OK) return -1;
+    if (sqlite3_prepare_v2(lc->db, sql, -1, &st, NULL) != SQLITE_OK) {
+        if (sqlite3_prepare_v2(lc->db, sql_old, -1, &st, NULL) != SQLITE_OK)
+            return -1;
+    }
     sqlite3_bind_double(st, 1, bb[0] - dla);
     sqlite3_bind_double(st, 2, bb[2] + dla);
     sqlite3_bind_double(st, 3, bb[1] - dlo);
@@ -305,6 +324,9 @@ static int refresh_items(LabelCache *lc, const MapView *v, int show_poi)
         it->lon    = sqlite3_column_double(st, 2);
         it->kind   = sqlite3_column_int(st, 3);
         it->weight = sqlite3_column_int(st, 4);
+        /* SKEDADDLE_POI_SUB=0：负向对照，强制全部走通用蓝圆 ⇒ 与加列前
+         * 的出图逐字节一致（与 LABEL_HALO / POI_R 同一套玩法）。 */
+        it->sub    = poi_sub_enabled() ? sqlite3_column_int(st, 5) : 0;
         lc->n_items++;
     }
     sqlite3_finalize(st);
@@ -384,16 +406,37 @@ static void grid_for_font(Font *font, int view_w, int view_h)
 /* POI / 地名图标（矢量标记，按类别着色 + 形状区分）                     */
 /* ------------------------------------------------------------------ */
 
-typedef enum { SH_DISC, SH_TRI, SH_DIAMOND } PoiShape;
+typedef enum { SH_DISC, SH_TRI, SH_DIAMOND, SH_SQUARE, SH_CROSS } PoiShape;
 
-/* kind 语义见 skedaddle_places_build.c：数值小 = 行政级别高。按类别给颜色与形状。 */
-static void poi_style(int kind, uint8_t *r, uint8_t *g, uint8_t *b, PoiShape *sh)
+/* POI 子类配色总开关：默认开。SKEDADDLE_POI_SUB=0 强制全部设施 POI 走
+ * 通用蓝圆（sub=0 路径），用于"加列前后出图逐字节一致"的负向对照。
+ * 进程内只读一次环境变量，零逐帧开销（与 halo_enabled 同构）。 */
+static int poi_sub_enabled(void)
+{
+    static int v = -1;
+    if (v < 0) {
+        const char *e = getenv("SKEDADDLE_POI_SUB");
+        v = !(e && (!strcmp(e, "0") || !strcmp(e, "off")));
+    }
+    return v;
+}
+
+/* kind 语义见 skedaddle_places_build.c：数值小 = 行政级别高。按类别给颜色与形状。
+ * sub 只在 kind==11（设施 POI）时有意义，0 = 通用蓝圆（与加列前完全一致）：
+ * ★ sub=0 必须保持 (40,120,232, SH_DISC) 原样——负向对照的锚点就是它。 */
+static void poi_style(int kind, int sub, uint8_t *r, uint8_t *g, uint8_t *b,
+                      PoiShape *sh)
 {
     if      (kind <= 2) { *r = 214; *g = 48;  *b = 48;  *sh = SH_DISC; }   /* 首都/直辖市 红 */
     else if (kind <= 4) { *r = 232; *g = 128; *b = 24;  *sh = SH_DISC; }   /* 市/镇 橙 */
     else if (kind <= 7) { *r = 236; *g = 192; *b = 32;  *sh = SH_DISC; }   /* 村/屯 金 */
     else if (kind == 9) { *r = 72;  *g = 182; *b = 96;  *sh = SH_DISC; }   /* 街区 绿 */
     else if (kind == 10){ *r = 40;  *g = 162; *b = 172; *sh = SH_TRI; }     /* 自然地物 青三角 */
+    else if (kind == 11 && sub == 1) { *r = 108; *g = 78;  *b = 216; *sh = SH_SQUARE; } /* 交通 紫 */
+    else if (kind == 11 && sub == 2) { *r = 150; *g = 100; *b = 50;  *sh = SH_DISC;   } /* 教育 褐 */
+    else if (kind == 11 && sub == 3) { *r = 226; *g = 62;  *b = 74;  *sh = SH_CROSS;  } /* 医疗 红十字 */
+    else if (kind == 11 && sub == 4) { *r = 52;  *g = 156; *b = 88;  *sh = SH_DISC;   } /* 旅游 绿 */
+    else if (kind == 11 && sub == 5) { *r = 196; *g = 148; *b = 24;  *sh = SH_DISC;   } /* 生活 琥珀 */
     else if (kind == 11){ *r = 40;  *g = 120; *b = 232; *sh = SH_DISC; }   /* POI 蓝圆 */
     else                { *r = 150; *g = 150; *b = 160; *sh = SH_DIAMOND; }  /* 其他地物 灰菱 */
 }
@@ -438,6 +481,19 @@ static void fill_poly(Raster *rs, const int *px, const int *py, int n, uint32_t 
     }
 }
 
+/* 十字（医疗）：竖臂全高、横臂收窄到 ~1/3 高度。t=core 时 7x7 十字。 */
+static void fill_cross(Raster *rs, int cx, int cy, int t, uint32_t c)
+{
+    int arm = t / 3;                     /* 臂厚的一半（t=3 -> 1） */
+    if (arm < 1) arm = 1;
+    for (int dy = -t; dy <= t; dy++) {
+        int y = cy + dy;
+        if ((unsigned)y >= (unsigned)rs->h) continue;
+        int dx = (dy < -arm || dy > arm) ? arm : t;
+        raster_hspan(rs, y, cx - dx, cx + dx + 1, c);
+    }
+}
+
 static void shape_fill(Raster *rs, int x, int y, int t, PoiShape sh, uint32_t c)
 {
     if (sh == SH_DISC) { fill_disc(rs, x, y, t, c); return; }
@@ -445,6 +501,13 @@ static void shape_fill(Raster *rs, int x, int y, int t, PoiShape sh, uint32_t c)
         int px[3] = { x, x - t + 1, x + t - 1 };
         int py[3] = { y - t, y + t, y + t };
         fill_poly(rs, px, py, 3, c);
+        return;
+    }
+    if (sh == SH_CROSS) { fill_cross(rs, x, y, t, c); return; }
+    if (sh == SH_SQUARE) {
+        int px[4] = { x - t, x + t + 1, x + t + 1, x - t };
+        int py[4] = { y - t, y - t, y + t + 1, y + t + 1 };
+        fill_poly(rs, px, py, 4, c);
         return;
     }
     int px[4] = { x, x + t, x, x - t };
@@ -469,11 +532,12 @@ static int poi_radius(void)
     return r;
 }
 
-/* 画一个 POI 标记：深灰描边 + 白底 + 类别色芯，紧贴 (x,y) 坐标点。 */
-static void draw_poi_marker(Raster *rs, int x, int y, int kind)
+/* 画一个 POI 标记：深灰描边 + 白底 + 类别色芯，紧贴 (x,y) 坐标点。
+ * sub = kind 11 的子类（交通/教育/医疗/旅游/生活），影响色芯颜色与形状。 */
+static void draw_poi_marker(Raster *rs, int x, int y, int kind, int sub)
 {
     uint8_t r, g, b; PoiShape sh;
-    poi_style(kind, &r, &g, &b, &sh);
+    poi_style(kind, sub, &r, &g, &b, &sh);
     uint32_t dark  = raster_rgb(rs, 40, 42, 48);
     uint32_t white = raster_rgb(rs, 255, 255, 255);
     uint32_t col   = raster_rgb(rs, r, g, b);
@@ -508,6 +572,7 @@ enum { LCMD_HALO, LCMD_SHADOW, LCMD_POI, LCMD_DOT };
 typedef struct {
     uint8_t      type;      /* LCMD_* */
     uint8_t      r, g, b;
+    uint8_t      sub;       /* LCMD_POI 用：kind 11 子类 */
     int16_t      poi_kind;  /* LCMD_POI 用 */
     const char  *text;      /* LCMD_HALO/SHADOW 用（指向 lc->items / np->blob） */
     Font        *font;      /* 小字 or 区名大字 */
@@ -524,7 +589,7 @@ static int       s_lcmd_n;
 
 static int lcmd_push(uint8_t type, Font *font, const char *text,
                      int x, int y, int ylo, int yhi,
-                     uint8_t r, uint8_t g, uint8_t b, int poi_kind)
+                     uint8_t r, uint8_t g, uint8_t b, int poi_kind, int sub)
 {
     if (s_lcmd_n >= s_lcmd_cap) {
         int nc = s_lcmd_cap ? s_lcmd_cap * 2 : 512;
@@ -537,6 +602,7 @@ static int lcmd_push(uint8_t type, Font *font, const char *text,
     c->type = type; c->font = font; c->text = text;
     c->x = x; c->y = y; c->ylo = ylo; c->yhi = yhi;
     c->r = r; c->g = g; c->b = b; c->poi_kind = (int16_t)poi_kind;
+    c->sub = (uint8_t)sub;
     return 0;
 }
 
@@ -571,7 +637,7 @@ static void label_task(void *arg, int tid)
             font_draw_a_pre(c->font, rs, c->x, c->y, c->text, c->r, c->g, c->b, 1, 255);
             break;
         case LCMD_POI:
-            draw_poi_marker(rs, c->x, c->y, c->poi_kind);
+            draw_poi_marker(rs, c->x, c->y, c->poi_kind, c->sub);
             break;
         case LCMD_DOT:
             fill_disc(rs, c->x, c->y, 2, raster_rgb(rs, c->r, c->g, c->b));
@@ -702,13 +768,13 @@ void paint_place_labels(Raster *rs, const MapView *v,
                     g_grid[yy * GRID_COLS + xx] = 1;
             if (lcmd_push(LCMD_HALO, big, it->name, ax0, ay0,
                           ay0 - up_b - 3, ay0 + dn_b + 3,
-                          30, 44, 76, 0) != 0)
+                          30, 44, 76, 0, 0) != 0)
                 goto oom;
             /* 小小定位点取代 POI 圆圈：区名代表"一片地方"而非一个设施 */
             {
                 int dy = ay0 + big_ch + 3;
                 if (lcmd_push(LCMD_DOT, NULL, NULL, x, dy,
-                              dy - 2, dy + 2, 30, 44, 76, 0) != 0)
+                              dy - 2, dy + 2, 30, 44, 76, 0, 0) != 0)
                     goto oom;
             }
             drawn++;
@@ -721,12 +787,12 @@ void paint_place_labels(Raster *rs, const MapView *v,
             /* 镇名：普通字号 + 白描边深色字，形成第二级层次 */
             if (lcmd_push(LCMD_HALO, font, it->name, tx, ty,
                           ty - up_s - 3, ty + dn_s + 3,
-                          38, 42, 54, 0) != 0)
+                          38, 42, 54, 0, 0) != 0)
                 goto oom;
             drawn++;
             if (show_poi) {
                 if (lcmd_push(LCMD_POI, NULL, NULL, x, y,
-                              y - 13, y + 13, 0, 0, 0, it->kind) != 0)
+                              y - 13, y + 13, 0, 0, 0, it->kind, it->sub) != 0)
                     goto oom;
                 icons++;
             }
@@ -736,7 +802,7 @@ void paint_place_labels(Raster *rs, const MapView *v,
         /* 图标与标签独立开关，但共用一个避让格（任一个显示就占格，避免重叠） */
         if (show_poi) {
             if (lcmd_push(LCMD_POI, NULL, NULL, x, y,
-                          y - 13, y + 13, 0, 0, 0, it->kind) != 0)
+                          y - 13, y + 13, 0, 0, 0, it->kind, it->sub) != 0)
                 goto oom;
             icons++;
         }
@@ -746,7 +812,7 @@ void paint_place_labels(Raster *rs, const MapView *v,
              * 配合 SKEDADDLE_FONT_SHARP=1.0 做逐字节负向对照。 */
             if (lcmd_push(halo_on ? LCMD_HALO : LCMD_SHADOW, font, it->name,
                           tx, ty, ty - up_s - 3, ty + dn_s + 3,
-                          46, 48, 56, 0) != 0)
+                          46, 48, 56, 0, 0) != 0)
                 goto oom;
             drawn++;
         }
@@ -815,7 +881,7 @@ void paint_road_labels(Raster *rs, const MapView *v, Font *font,
          * 否则深蓝灰小字 + 1px 黑影仍是发虚的一批。 */
         if (lcmd_push(halo_on ? LCMD_HALO : LCMD_SHADOW, font, s,
                       x, y, y - up_s - 3, y + dn_s + 3,
-                      70, 80, 110, 0) != 0)
+                      70, 80, 110, 0, 0) != 0)
             break;                          /* OOM：这帧余下路名不画 */
         drawn++;
     }

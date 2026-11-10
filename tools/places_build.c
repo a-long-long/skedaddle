@@ -16,8 +16,8 @@
  *   ./skedaddle_places_build --pbf=sources/beijing.osm.pbf --db=/tmp/bj.db
  *   ./skedaddle_places_build --db=<已建好的库> --selftest
  *
- * 产出（SQLite，schema 与旧库存量完全一致，所以加载端不用改）：
- *   place(id, name, lat, lon, kind, weight)
+ * 产出（SQLite，与旧库的区别只有 place 表多一列 sub —— 见下方 sub 语义）：
+ *   place(id, name, lat, lon, kind, weight, sub)
  *   gram (gram, place_id) WITHOUT ROWID
  *   + place(lat,lon) 索引（标注层按视口范围查，没索引就是全表扫）
  *
@@ -67,6 +67,21 @@ enum {
     PLK_POI     = 11,  /* 有名字的设施（车站 / 学校 / 景区 / 商场…） */
     PLK_FEATURE = 12,  /* 其他有名字的地物（桥梁 / 堤 / 城墙…） */
     PLK_ROAD    = 13,  /* 路名 —— **只进搜索，永不画**（见下方说明） */
+};
+
+/* sub：设施 POI（kind 11）的子类。渲染端按它分形状/配色（labels.c 的
+ * poi_style），0 = 未识别/通用（蓝圆，与加列前的出图逐字节一致）。
+ * 归并原则：同一张 poi_weight 表里视觉上值得区分的用途各归一档；
+ * 行政区/自然地物/其他地物（kind != 11）恒为 0。
+ * ★ sub 与 kind 是两个正交维度：kind 决定"画不画、占哪个层级"，sub 只
+ *   决定"画成什么样子"。搜索/bigram 不读 sub，加列不影响旧查询。 */
+enum {
+    PSUB_GENERIC = 0,   /* 通用（表里没认出来的设施、外部 CSV POI） */
+    PSUB_TRANSIT = 1,   /* 交通枢纽：车站 / 机场 / 码头 */
+    PSUB_EDU     = 2,   /* 教育科研：大学 / 学校 / 学院 */
+    PSUB_MEDICAL = 3,   /* 医疗：医院 / 药店 */
+    PSUB_TOURISM = 4,   /* 旅游景点：景区 / 博物馆 / 公园 / 体育场 / 广场 */
+    PSUB_SERVICE = 5,   /* 生活服务：银行 / 酒店 / 市场 / 商场 / 餐饮 */
 };
 
 /* ★ 为什么路名是 13 而不是占一个"正常"档位
@@ -218,7 +233,8 @@ static const char *kSchema =
     "                     lat    REAL    NOT NULL,"
     "                     lon    REAL    NOT NULL,"
     "                     kind   INTEGER NOT NULL,"
-    "                     weight INTEGER NOT NULL);"
+    "                     weight INTEGER NOT NULL,"
+    "                     sub    INTEGER NOT NULL DEFAULT 0);"
     "CREATE TABLE gram(   gram     TEXT    NOT NULL,"
     "                     place_id INTEGER NOT NULL,"
     "                     PRIMARY KEY(gram, place_id)) WITHOUT ROWID;";
@@ -242,7 +258,7 @@ static int sink_open(Sink *s, const char *path)
         fprintf(stderr, "建表失败: %s\n", err); return -1;
     }
     if (sqlite3_prepare_v2(s->db,
-            "INSERT INTO place(id,name,lat,lon,kind,weight) VALUES(?1,?2,?3,?4,?5,?6)",
+            "INSERT INTO place(id,name,lat,lon,kind,weight,sub) VALUES(?1,?2,?3,?4,?5,?6,?7)",
             -1, &s->ins_place, NULL) != SQLITE_OK ||
         sqlite3_prepare_v2(s->db, "INSERT OR REPLACE INTO gram(gram,place_id) VALUES(?1,?2)",
             -1, &s->ins_gram, NULL) != SQLITE_OK) {
@@ -282,6 +298,7 @@ typedef struct {
     int  hit;      /* 是不是我们想要的实体 */
     int  kind;
     int  weight;
+    int  sub;      /* kind 11 的子类（PSUB_*），其余 kind 恒 0 */
 } Verdict;
 
 /* 名字：优先 name，没有就用 name:zh（中文 OSM 里两者常一致，别指望本地化后缀） */
@@ -382,26 +399,32 @@ static int has_blacklisted(PbfBlock *b, const uint32_t *k, const uint32_t *v, si
     return 0;
 }
 
-/* POI 类。返回权重；0 = 不认 */
-static int poi_weight(const char *key, const char *val)
+/* POI 类。返回权重（0 = 不认）；命中时 *sub 带出子类（不认时置 0）。
+ * 权重与条目和加 sub 列之前逐条一致（只并入子类标注），重建库后 place
+ * 行数、weight、bigram 都不变，变的只有新列。 */
+static int poi_weight(const char *key, const char *val, int *sub)
 {
-    struct { const char *k, *v; int w; } tbl[] = {
-        { "railway",    "station",      60 }, { "aeroway",  "aerodrome",  60 },
-        { "amenity",    "airport",      60 }, { "amenity",  "ferry_terminal", 55 },
-        { "amenity",    "university",   50 }, { "amenity",  "hospital",   50 },
-        { "tourism",    "attraction",   45 }, { "historic", "monument",   45 },
-        { "leisure",    "park",         40 }, { "amenity",  "school",     35 },
-        { "amenity",    "college",      35 }, { "tourism",  "museum",     35 },
-        { "historic",   "memorial",     30 }, { "amenity",  "library",    30 },
-        { "leisure",    "stadium",      30 }, { "amenity",  "police",     25 },
-        { "amenity",    "bank",         25 }, { "amenity",  "pharmacy",   25 },
-        { "tourism",    "hotel",        25 }, { "amenity",  "marketplace",25 },
-        { "shop",       "mall",         22 }, { "leisure",  "square",     22 },
-        { "amenity",    "restaurant",   18 }, { "amenity",  "fast_food",  15 },
-        { "amenity",    "cafe",         15 }, { "shop",     "supermarket",15 },
+    if (sub) *sub = PSUB_GENERIC;
+    struct { const char *k, *v; int w, s; } tbl[] = {
+        { "railway",    "station",      60, PSUB_TRANSIT }, { "aeroway",  "aerodrome",     60, PSUB_TRANSIT },
+        { "amenity",    "airport",      60, PSUB_TRANSIT }, { "amenity",  "ferry_terminal",55, PSUB_TRANSIT },
+        { "amenity",    "university",   50, PSUB_EDU     }, { "amenity",  "hospital",      50, PSUB_MEDICAL },
+        { "tourism",    "attraction",   45, PSUB_TOURISM }, { "historic", "monument",      45, PSUB_TOURISM },
+        { "leisure",    "park",         40, PSUB_TOURISM }, { "amenity",  "school",        35, PSUB_EDU     },
+        { "amenity",    "college",      35, PSUB_EDU     }, { "tourism",  "museum",        35, PSUB_TOURISM },
+        { "historic",   "memorial",     30, PSUB_TOURISM }, { "amenity",  "library",       30, PSUB_EDU     },
+        { "leisure",    "stadium",      30, PSUB_TOURISM }, { "amenity",  "police",        25, PSUB_SERVICE },
+        { "amenity",    "bank",         25, PSUB_SERVICE }, { "amenity",  "pharmacy",      25, PSUB_MEDICAL },
+        { "tourism",    "hotel",        25, PSUB_SERVICE }, { "amenity",  "marketplace",   25, PSUB_SERVICE },
+        { "shop",       "mall",         22, PSUB_SERVICE }, { "leisure",  "square",        22, PSUB_TOURISM },
+        { "amenity",    "restaurant",   18, PSUB_SERVICE }, { "amenity",  "fast_food",     15, PSUB_SERVICE },
+        { "amenity",    "cafe",         15, PSUB_SERVICE }, { "shop",     "supermarket",   15, PSUB_SERVICE },
     };
     for (size_t i = 0; i < sizeof(tbl) / sizeof(tbl[0]); i++)
-        if (strcmp(tbl[i].k, key) == 0 && strcmp(tbl[i].v, val) == 0) return tbl[i].w;
+        if (strcmp(tbl[i].k, key) == 0 && strcmp(tbl[i].v, val) == 0) {
+            if (sub) *sub = tbl[i].s;
+            return tbl[i].w;
+        }
     return 0;
 }
 
@@ -410,7 +433,7 @@ static int poi_weight(const char *key, const char *val)
 static int class_node_tags(PbfBlock *b, const uint32_t *k, const uint32_t *v,
                            size_t n, Verdict *out)
 {
-    out->hit = 0; out->kind = 0; out->weight = 0;
+    out->hit = 0; out->kind = 0; out->weight = 0; out->sub = 0;
     if (has_blacklisted(b, k, v, n)) return 0;
 
     /* ---- 行政区：place=* ---- */
@@ -475,7 +498,7 @@ static int class_node_tags(PbfBlock *b, const uint32_t *k, const uint32_t *v,
         "amenity", "shop", "tourism", "leisure", "historic", "natural",
         "man_made", "aeroway", "railway", "highway", "bridge", "waterway"
     };
-    int best = 0, best_kind = 0;
+    int best = 0, best_kind = 0, best_sub = 0;
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
         const char *val = kv_get(b, k, v, n, keys[i]);
         if (!val) continue;
@@ -483,34 +506,36 @@ static int class_node_tags(PbfBlock *b, const uint32_t *k, const uint32_t *v,
         if (strcmp(keys[i], "highway") == 0) {
             if (strcmp(val, "services") == 0 || strcmp(val, "rest_area") == 0 ||
                 strcmp(val, "bus_stop") == 0 || strcmp(val, "trailhead") == 0) {
-                if (best < 12) { best = 12; best_kind = PLK_FEATURE; }
+                if (best < 12) { best = 12; best_kind = PLK_FEATURE; best_sub = 0; }
             }
             continue;                          /* 其余 highway 是路，交给 names.bin */
         }
         if (strcmp(keys[i], "railway") == 0 && strcmp(val, "station") != 0 &&
             strcmp(val, "halt") != 0 && strcmp(val, "yard") != 0) {
-            if (best < 10) { best = 10; best_kind = PLK_FEATURE; }
+            if (best < 10) { best = 10; best_kind = PLK_FEATURE; best_sub = 0; }
             continue;
         }
         if (strcmp(keys[i], "waterway") == 0 || strcmp(keys[i], "bridge") == 0) {
-            if (best < 15) { best = 15; best_kind = PLK_FEATURE; }
+            if (best < 15) { best = 15; best_kind = PLK_FEATURE; best_sub = 0; }
             continue;
         }
         if (strcmp(keys[i], "natural") == 0) {
-            int w = poi_weight("natural", val);
+            int w = poi_weight("natural", val, NULL);
             if (w == 0) w = 30;
-            if (best < w) { best = w; best_kind = PLK_NATURAL; }
+            if (best < w) { best = w; best_kind = PLK_NATURAL; best_sub = 0; }
             continue;
         }
-        int w = poi_weight(keys[i], val);
+        int sub = 0;
+        int w = poi_weight(keys[i], val, &sub);
         if (w == 0) {
-            if (best < 10) { best = 10; best_kind = PLK_POI; }
+            if (best < 10) { best = 10; best_kind = PLK_POI; best_sub = 0; }
         } else if (best < w) {
-            best = w; best_kind = PLK_POI;
+            best = w; best_kind = PLK_POI; best_sub = sub;
         }
     }
     if (!best) return 0;
     out->hit = 1; out->kind = best_kind; out->weight = best > 400 ? 400 : best;
+    out->sub = (best_kind == PLK_POI) ? best_sub : 0;
     return 1;
 }
 
@@ -534,14 +559,14 @@ static int class_way_tags(PbfBlock *b, const uint32_t *k, const uint32_t *v,
     for (size_t i = 0; i < sizeof(skip_keys) / sizeof(skip_keys[0]); i++)
         if (kv_get(b, k, v, n, skip_keys[i])) return 0;
 
-    int best = 0, best_kind = 0;
+    int best = 0, best_kind = 0, best_sub = 0;
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
         const char *val = kv_get(b, k, v, n, keys[i]);
         if (!val) continue;
-        int kind, w;
+        int kind, w, sub = 0;
         if (strcmp(keys[i], "natural") == 0) {
             kind = PLK_NATURAL;
-            w = poi_weight("natural", val);
+            w = poi_weight("natural", val, NULL);
             if (w == 0) w = 25;
         } else if (strcmp(keys[i], "place") == 0) {
             /* place=square / island 画成多边形的情况 */
@@ -551,13 +576,14 @@ static int class_way_tags(PbfBlock *b, const uint32_t *k, const uint32_t *v,
             w = 25;
         } else {
             kind = PLK_POI;
-            w = poi_weight(keys[i], val);
-            if (w == 0) w = 10;
+            w = poi_weight(keys[i], val, &sub);
+            if (w == 0) { w = 10; sub = 0; }
         }
-        if (best < w) { best = w; best_kind = kind; }
+        if (best < w) { best = w; best_kind = kind; best_sub = sub; }
     }
     if (!best) return 0;
     out->hit = 1; out->kind = best_kind; out->weight = best > 400 ? 400 : best;
+    out->sub = (best_kind == PLK_POI) ? best_sub : 0;
     return 1;
 }
 
@@ -570,6 +596,7 @@ typedef struct {
     uint32_t name_off;
     uint16_t kind;
     int16_t  weight;
+    uint8_t  sub;       /* kind 11 的子类（PSUB_*），其余 kind 恒 0 */
 } WayCand;
 
 typedef struct {
@@ -689,7 +716,7 @@ static int same_place_seen(Builder *b, const char *name, double lat, double lon)
 }
 
 static int emit_row(Builder *b, BuildStats *st, uint64_t osm_key, double lat,
-                    double lon, int kind, int weight, const char *name)
+                    double lon, int kind, int weight, int sub, const char *name)
 {
     if (!name || !*name) return 0;
     if (keyset_seen(&b->seen, osm_key)) { st->dup_dropped++; return 0; }
@@ -705,6 +732,7 @@ static int emit_row(Builder *b, BuildStats *st, uint64_t osm_key, double lat,
     sqlite3_bind_double(s, 4, lon);
     sqlite3_bind_int(s, 5, kind);
     sqlite3_bind_int(s, 6, weight);
+    sqlite3_bind_int(s, 7, sub);
     if (sqlite3_step(s) != SQLITE_DONE) return -1;
     st->rows_place++;
 
@@ -747,7 +775,7 @@ static int handle_tagged_node(Builder *b, PbfBlock *blk, int64_t osm_id,
 
     uint64_t key = ((uint64_t)osm_id << 2) | 1u;    /* 1 = node */
     return emit_row(b, st, key, lat_e7 / 1e7, lon_e7 / 1e7,
-                    vd.kind, vd.weight, name);
+                    vd.kind, vd.weight, vd.sub, name);
 }
 
 /* 名字的 64 位指纹，用于路名去重。
@@ -898,6 +926,7 @@ static int pass1(Builder *b, const char *path)
                         wc->name_off = (uint32_t)noff;
                         wc->kind    = PLK_ROAD;
                         wc->weight  = (int16_t)road_weight(hw);
+                        wc->sub     = 0;
                         continue;
                     }
                 }
@@ -948,6 +977,7 @@ static int pass1(Builder *b, const char *path)
                 wc->name_off = (uint32_t)noff;
                 wc->kind    = (uint16_t)vd.kind;
                 wc->weight  = (int16_t)vd.weight;
+                wc->sub     = (uint8_t)vd.sub;
             }
             if (ret) break;
         }
@@ -1063,7 +1093,7 @@ static void emit_ways(Builder *b)
 
         uint64_t key = ((uint64_t)wc->osm_id << 2) | 2u;   /* 2 = way */
         emit_row(b, &b->st, key, slat / nfound / 1e7, slon / nfound / 1e7,
-                 wc->kind, wc->weight, name);
+                 wc->kind, wc->weight, wc->sub, name);
     }
 }
 
