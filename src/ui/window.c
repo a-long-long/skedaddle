@@ -73,6 +73,7 @@ int app_init(App *a, const char *graph_dir, int w, int h,
     fprintf(stderr, "GPU 检测: %s（本项目为软件光栅，无 GPU 渲染路径，此值仅作信息展示）\n",
             a->gpu_available ? "可用" : "无");
     a->show_poi    = settings_get_bool(a->cfg, "show_poi", 1);
+    a->poi_source  = settings_get_int(a->cfg, "poi_source", 0);
     a->show_labels = settings_get_bool(a->cfg, "show_labels", 1);
     a->show_contours = settings_get_bool(a->cfg, "show_contours", 1);
     a->voice_on    = settings_get_bool(a->cfg, "voice_on", 1);
@@ -178,6 +179,7 @@ int app_init(App *a, const char *graph_dir, int w, int h,
     const char *places = getenv("SKEDADDLE_PLACES");
     if (!places || !*places) places = "products/places_auto.db";
     if (label_cache_init(&a->places, places) == 0) a->has_places = 1;
+    a->places.poi_source = a->poi_source;   /* 外部 POI 开关在 init 后接上 */
     /* 搜索库：同一个文件，但**另开一个连接**——LabelCache 可能正拿着语句在
        遍历，共用连接会互相踩游标（sqlite3 连接不是并发安全的）。
        打开失败只提示，不致命（只是搜不了）。 */
@@ -331,6 +333,8 @@ void app_apply_settings(App *a)
     app_update_daynight(a);
     a->show_panel   = settings_get_bool(a->cfg, "show_panel", 1);
     a->show_poi     = settings_get_bool(a->cfg, "show_poi", 1);
+    a->poi_source   = settings_get_int(a->cfg, "poi_source", 0);
+    a->places.poi_source = a->poi_source;   /* 切来源即失效缓存（cached_poi_source） */
     a->show_labels  = settings_get_bool(a->cfg, "show_labels", 1);
     a->show_contours = settings_get_bool(a->cfg, "show_contours", 1);
     a->voice_on     = settings_get_bool(a->cfg, "voice_on", 1);
@@ -369,6 +373,7 @@ void app_persist_settings(App *a)
     settings_set_int(a->cfg,  "day_night",   a->day_night_mode);
     settings_set_bool(a->cfg, "show_panel",  a->show_panel);
     settings_set_bool(a->cfg, "show_poi",    a->show_poi);
+    settings_set_int(a->cfg,  "poi_source",  a->poi_source);
     settings_set_bool(a->cfg, "show_labels", a->show_labels);
     settings_set_bool(a->cfg, "show_contours", a->show_contours);
     settings_set_bool(a->cfg, "voice_on",    a->voice_on);

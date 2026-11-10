@@ -27,6 +27,13 @@ typedef struct {
     int        cached_kindmax;
     int        cached_poi;       /* 上次查询时 show_poi 的值 */
     int        loaded;
+    /* 外部 POI（设置 poi_source=1 时启用）：CSV 在 init 时整表载入内存，
+       视口过滤后与 SQL 结果按 weight 合并取 Top-N。只接管"设施 POI"
+       （kind 11）这一层；行政地名（kind 1~10）始终来自地名库。 */
+    LabelItem *ext;               /* 外部 POI 条目（kind 恒为 11） */
+    int        n_ext, ext_cap;
+    int        poi_source;        /* 0=地图自带（缺省） 1=外部文件 */
+    int        cached_poi_source; /* 上次查询时 poi_source 的值（切换须重查） */
 } LabelCache;
 
 int  label_cache_init(LabelCache *lc, const char *db_path);

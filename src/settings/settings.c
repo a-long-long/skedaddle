@@ -12,6 +12,10 @@ const SettingMeta SETTINGS_SCHEMA[] = {
     { "day_night",   "昼夜模式",   ST_INT,  2, 0, 2, 1, "白天\0夜间\0自动(日出日落)\0" },
     { "show_panel",  "导航面板",   ST_BOOL, 1, 0, 1, 1, NULL },
     { "show_poi",    "POI 显示",   ST_BOOL, 1, 0, 1, 1, NULL },
+    /* 0=地名库自带的 OSM 设施 POI（缺省，行为与历史版本一致）；1=外部文件
+       products/poi_ext.csv（格式见 labels.c 的 poi_ext_load）。只接管设施
+       POI 一层，行政地名仍来自地名库。 */
+    { "poi_source",  "POI 来源",   ST_INT,  0, 0, 1, 1, "地图自带\0外部文件\0" },
     { "show_labels", "地名标注",   ST_BOOL, 1, 0, 1, 1, NULL },
     { "show_contours", "等高线",   ST_BOOL, 1, 0, 1, 1, NULL },
     { "grid_subdiv",   "网格细分刻度", ST_BOOL, 0, 0, 1, 1, NULL },

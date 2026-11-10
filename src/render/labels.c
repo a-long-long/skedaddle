@@ -69,9 +69,48 @@ static int halo_enabled(void)
 /* 地名标注                                                             */
 /* ------------------------------------------------------------------ */
 
+/* 外部 POI 文件：products/poi_ext.csv（环境变量 SKEDADDLE_POI_EXT 可覆盖路径）。
+ * 格式（UTF-8，'#' 注释，空行忽略）：
+ *     名称,纬度,经度[,权重]
+ * 名称里不能有逗号；权重缺省 50 —— 量纲对齐 places_build：车站/机场 60、
+ * 大学/医院 50，镇名 22。给 50 = 与重要设施同级；想压过村名可给 80+。
+ * kind 恒为 11（设施 POI：蓝圆图标、z13 起可见、受「POI 显示」开关控制）。
+ * 文件不存在 = 空表：poi_source=1 时画不出设施 POI，属预期（不是错误）。
+ * ★ init 载一次、不做热重载：外部 POI 是"一份数据"不是"实时源"，
+ *   改文件重启生效——省掉每帧 stat 的开销和半途重载的一致性问题。 */
+static void poi_ext_load(LabelCache *lc)
+{
+    const char *path = getenv("SKEDADDLE_POI_EXT");
+    if (!path || !*path) path = "products/poi_ext.csv";
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
+        char name[64]; double la, lo; int w = 50, n;
+        if ((n = sscanf(line, "%63[^,],%lf,%lf,%d", name, &la, &lo, &w)) < 3) continue;
+        if (la < -90.0 || la > 90.0 || lo < -180.0 || lo > 180.0) continue;
+        if (n < 4) w = 50;
+        if (lc->n_ext >= lc->ext_cap) {
+            int nc = lc->ext_cap ? lc->ext_cap * 2 : 256;
+            LabelItem *q = (LabelItem *)realloc(lc->ext,
+                                                (size_t)nc * sizeof(LabelItem));
+            if (!q) break;
+            lc->ext = q; lc->ext_cap = nc;
+        }
+        LabelItem *it = &lc->ext[lc->n_ext++];
+        snprintf(it->name, sizeof(it->name), "%s", name);
+        it->lat = la; it->lon = lo; it->kind = 11; it->weight = w;
+    }
+    fclose(f);
+    if (lc->n_ext)
+        fprintf(stderr, "外部POI: %s 载入 %d 条\n", path, lc->n_ext);
+}
+
 int label_cache_init(LabelCache *lc, const char *db_path)
 {
     memset(lc, 0, sizeof(*lc));
+    poi_ext_load(lc);            /* 地名库打不开也照载：可无库纯外部 POI 跑 */
     if (sqlite3_open_v2(db_path, &lc->db, SQLITE_OPEN_READONLY, NULL) != SQLITE_OK) {
         fprintf(stderr, "地名库打不开 %s（无地名标注）\n", db_path);
         lc->db = NULL;
@@ -84,6 +123,7 @@ void label_cache_free(LabelCache *lc)
 {
     if (lc->db) sqlite3_close(lc->db);
     free(lc->items);
+    free(lc->ext);
     memset(lc, 0, sizeof(*lc));
 }
 
@@ -202,6 +242,15 @@ static int bbox_moved_far(const double *a, const double *b)
     return d > 0.2;
 }
 
+/* 合并 Top-N 的排序键：weight 降序，并列时原序（SQL 结果在前）升序。 */
+typedef struct { int w, seq; } LOrd;
+static int lord_cmp(const void *a, const void *b)
+{
+    const LOrd *x = (const LOrd *)a, *y = (const LOrd *)b;
+    if (x->w != y->w) return y->w - x->w;
+    return x->seq - y->seq;
+}
+
 static int refresh_items(LabelCache *lc, const MapView *v, int show_poi)
 {
     double bb[4];
@@ -212,8 +261,9 @@ static int refresh_items(LabelCache *lc, const MapView *v, int show_poi)
     lc->cached_kindmax = kind_max;
     lc->cached_zoom = v->zoom;
     lc->cached_poi = show_poi;
+    lc->cached_poi_source = lc->poi_source;
     memcpy(lc->cached_bb, bb, sizeof(bb));
-    if (!lc->db) { lc->n_items = 0; return 0; }
+    if (!lc->db) { lc->n_items = 0; goto ext_merge; }   /* 无地名库：只剩外部层 */
 
     /* 外扩 30%：小幅平移不重查 */
     double dla = (bb[2] - bb[0]) * 0.3 + 1e-6;
@@ -235,9 +285,10 @@ static int refresh_items(LabelCache *lc, const MapView *v, int show_poi)
      * z<14 放宽到 1200；z>=14（500 米档）维持 400，出图逐字节不变。 */
     sqlite3_bind_int(st, 5, kind_max);
     sqlite3_bind_int(st, 6, v->zoom < 14.0 ? 1200 : 400);
-    /* POI 总开关关闭时把 kind 11（设施 POI）从 SQL 层排除：Top-N 名额
-     * 不再被 POI 占用，让给真正的行政地名 / 村名 / 小区。 */
-    sqlite3_bind_int(st, 7, show_poi ? 1 : 0);
+    /* kind 11（设施 POI）的 SQL 层排除：POI 总开关关闭，或 POI 来源切到
+     * 外部文件（设施层由外部 CSV 接管，内置的不能再占 Top-N 名额）。
+     * 行政地名（kind 1~10）不受 poi_source 影响，始终查地名库。 */
+    sqlite3_bind_int(st, 7, (show_poi && lc->poi_source == 0) ? 1 : 0);
 
     lc->n_items = 0;
     while (sqlite3_step(st) == SQLITE_ROW) {
@@ -257,6 +308,51 @@ static int refresh_items(LabelCache *lc, const MapView *v, int show_poi)
         lc->n_items++;
     }
     sqlite3_finalize(st);
+
+ext_merge:
+    /* poi_source=1：外部 POI 接管设施层。并入视口内的外部条目后与 SQL 结果
+       一起按 weight 重排、截回 Top-N —— SQL 的 LIMIT 只预算了地名库那部分，
+       两层必须共享名额，否则外部 POI 等于"免费插队"，挤掉的是行政地名。
+       并列时序号小者（= SQL 结果，行政地名）在前：确定性优先。
+       show_poi 关闭或 zoom<13（kind 11 本就不可见）时不加——?7 已把
+       设施层整个排除，这里保持同口径。 */
+    if (lc->poi_source == 1 && show_poi && kind_max >= 11) {
+        int limit = v->zoom < 14.0 ? 1200 : 400;
+        int added = 0;
+        for (int i = 0; i < lc->n_ext; i++) {
+            const LabelItem *e = &lc->ext[i];
+            if (e->lat < bb[0] - dla || e->lat > bb[2] + dla ||
+                e->lon < bb[1] - dlo || e->lon > bb[3] + dlo) continue;
+            if (lc->n_items >= lc->cap_items) {
+                int ncap = lc->cap_items ? lc->cap_items * 2 : 256;
+                LabelItem *ni = (LabelItem *)realloc(
+                    lc->items, (size_t)ncap * sizeof(LabelItem));
+                if (!ni) break;
+                lc->items = ni; lc->cap_items = ncap;
+            }
+            lc->items[lc->n_items++] = *e;
+            added++;
+        }
+        /* ★ 只要并入了外部条目就要排序：避让是按列表序"先到先得"，
+           不排的话外部条目永远最后入场，weight 再高也抢不过中心区的
+           村名/街区（实测 w=500 的中心点就这样被挤掉）。总数没超 Top-N
+           也要排——排序顺带把截断做了，成本 ≤1200 个 int 的一次 qsort。 */
+        if (added > 0 && lc->n_items > 0) {
+            LOrd *o = (LOrd *)malloc((size_t)lc->n_items * sizeof(LOrd));
+            LabelItem *tmp = (LabelItem *)malloc((size_t)limit * sizeof(LabelItem));
+            if (o && tmp) {
+                for (int i = 0; i < lc->n_items; i++) {
+                    o[i].w = lc->items[i].weight; o[i].seq = i;
+                }
+                qsort(o, (size_t)lc->n_items, sizeof(LOrd), lord_cmp);
+                int keep = lc->n_items < limit ? lc->n_items : limit;
+                for (int i = 0; i < keep; i++) tmp[i] = lc->items[o[i].seq];
+                memcpy(lc->items, tmp, (size_t)keep * sizeof(LabelItem));
+                lc->n_items = keep;
+            }
+            free(o); free(tmp);
+        }
+    }
     return 0;
 }
 
@@ -520,6 +616,7 @@ void paint_place_labels(Raster *rs, const MapView *v,
     if (!lc->loaded || lc->cached_kindmax != kind_max ||
         fabs(v->zoom - lc->cached_zoom) >= 0.25 ||
         lc->cached_poi != show_poi ||               /* 面板/菜单开关切换须重查 */
+        lc->cached_poi_source != lc->poi_source ||  /* POI 来源切换须重查 */
         bbox_moved_far(lc->cached_bb, bb)) {
         if (refresh_items(lc, v, show_poi) != 0) return;
     }
