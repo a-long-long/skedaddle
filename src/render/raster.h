@@ -56,7 +56,8 @@ static inline void px_write(Raster *rs, int x, int y, uint32_t c)
 
 static inline void raster_point(Raster *rs, int x, int y, uint32_t c)
 {
-    if ((unsigned)x < (unsigned)rs->w && (unsigned)y < (unsigned)rs->h)
+    if ((unsigned)(x - rs->clip.x) < (unsigned)rs->clip.w &&
+        (unsigned)(y - rs->clip.y) < (unsigned)rs->clip.h)
         px_write(rs, x, y, c);
 }
 
@@ -64,9 +65,10 @@ static inline void raster_point(Raster *rs, int x, int y, uint32_t c)
    越界的 y 直接丢弃，x 裁进 [0, w)。 */
 static inline void raster_hspan(Raster *rs, int y, int x0, int x1, uint32_t c)
 {
-    if ((unsigned)y >= (unsigned)rs->h) return;
-    if (x0 < 0) x0 = 0;
-    if (x1 > rs->w) x1 = rs->w;
+    if ((unsigned)(y - rs->clip.y) >= (unsigned)rs->clip.h) return;
+    int cx1 = rs->clip.x + rs->clip.w;
+    if (x0 < rs->clip.x) x0 = rs->clip.x;
+    if (x1 > cx1) x1 = cx1;
     if (x0 >= x1) return;
     uint32_t *p = rs->px + (size_t)y * rs->stride;
     for (int x = x0; x < x1; x++) p[x] = c;
@@ -256,6 +258,75 @@ static inline int raster_clip_line(Raster *rs, int *X1, int *Y1, int *X2, int *Y
     return 1;
 }
 
+/* 与 raster_line_clipped 逐像素同算法，但每写一个像素都过一遍 clip。
+ *
+ * ★ 为什么必须"跑全程 + 写时过滤"，不能先做几何裁剪：
+ *   raster_clip_line 用交点重建端点，Bresenham 从新端点重新起步 ⇒ 与整段绘
+ *   制在约 34% 的跨界线段上差 1 像素（和 clip_equiv 抓到的是同一类问题）。
+ *   分带并行要求逐字节等于串行，所以带视图里的跨带线段只能这样画。
+ *   代价：跨带的长线要把带外那段也走一遍（每条相交带各走一次）。
+ *   ⇒ 只在"两端不全在带内"时才走这条路径，短边（绝大多数）仍走快路径。
+ */
+static inline void raster_line_checked(Raster *rs, int x1, int y1, int x2, int y2,
+                                       uint32_t color)
+{
+    uint32_t *px = rs->px;
+    size_t stride = rs->stride;
+    const int cx = rs->clip.x, cy = rs->clip.y;
+    const int cw = rs->clip.w, ch = rs->clip.h;
+
+#define SK_SP(X, Y)                                                        \
+    do {                                                                   \
+        if ((unsigned)((X) - cx) < (unsigned)cw &&                         \
+            (unsigned)((Y) - cy) < (unsigned)ch)                           \
+            px[(size_t)(Y) * stride + (X)] = color;                        \
+    } while (0)
+
+    if (y1 == y2) {                                   /* HLINE */
+        int xlo = x1 <= x2 ? x1 : x2, xhi = x1 <= x2 ? x2 : x1;
+        for (int x = xlo; x <= xhi; x++) SK_SP(x, y1);
+        return;
+    }
+    if (x1 == x2) {                                   /* VLINE */
+        int ylo = y1 <= y2 ? y1 : y2, yhi = y1 <= y2 ? y2 : y1;
+        for (int y = ylo; y <= yhi; y++) SK_SP(x1, y);
+        return;
+    }
+    int dx = x2 - x1, dy = y2 - y1;
+    int adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+    if (adx == ady) {                                 /* DLINE */
+        int x, y, n, sx;
+        if (y1 <= y2) { x = x1; y = y1; n = y2 - y1 + 1; sx = (x2 > x1) ? 1 : -1; }
+        else          { x = x2; y = y2; n = y1 - y2 + 1; sx = (x1 > x2) ? 1 : -1; }
+        for (int i = 0; i < n; i++) { SK_SP(x, y); x += sx; y++; }
+        return;
+    }
+    /* BLINE */
+    int numpixels, d, dinc1, dinc2, xinc1, xinc2, yinc1, yinc2;
+    if (adx >= ady) {
+        numpixels = adx + 1;
+        d = (2 * ady) - adx;
+        dinc1 = ady * 2;
+        dinc2 = (ady - adx) * 2;
+        xinc1 = 1; xinc2 = 1; yinc1 = 0; yinc2 = 1;
+    } else {
+        numpixels = ady + 1;
+        d = (2 * adx) - ady;
+        dinc1 = adx * 2;
+        dinc2 = (adx - ady) * 2;
+        xinc1 = 0; xinc2 = 1; yinc1 = 1; yinc2 = 1;
+    }
+    if (x1 > x2) { xinc1 = -xinc1; xinc2 = -xinc2; }
+    if (y1 > y2) { yinc1 = -yinc1; yinc2 = -yinc2; }
+    int x = x1, y = y1;
+    for (int i = 0; i < numpixels; i++) {
+        SK_SP(x, y);
+        if (d < 0) { d += dinc1; x += xinc1; y += yinc1; }
+        else       { d += dinc2; x += xinc2; y += yinc2; }
+    }
+#undef SK_SP
+}
+
 /* 等价于 SDL_RenderDrawLine（不透明）。 */
 static inline void raster_line(Raster *rs, int x0, int y0, int x1, int y1, uint32_t c)
 {
@@ -267,12 +338,36 @@ static inline void raster_line(Raster *rs, int x0, int y0, int x1, int y1, uint3
             px_write(rs, x, y, c);
         return;
     }
+
+    /* 快路径：两端都在 clip 内 ⇒ 整段都在（矩形是凸的），直接画。
+       带视图下这条路径同样成立，短边（绝大多数）开销与单线程完全一样。 */
+    if ((unsigned)(x0 - rs->clip.x) < (unsigned)rs->clip.w &&
+        (unsigned)(y0 - rs->clip.y) < (unsigned)rs->clip.h &&
+        (unsigned)(x1 - rs->clip.x) < (unsigned)rs->clip.w &&
+        (unsigned)(y1 - rs->clip.y) < (unsigned)rs->clip.h) {
+        raster_line_clipped(rs, x0, y0, x1, y1, c);
+        return;
+    }
+
+    /* 慢路径：先按**画布**矩形裁剪 —— 这一步必须与单线程（clip=全画布）走
+       完全相同的代码路径，否则分带输出对不上串行。带视图临时把 clip 换成
+       画布边界做完裁剪，再换回来逐像素过滤。 */
+    RectI band = rs->clip;
+    int full = (band.x == 0 && band.y == 0 && band.w == rs->w && band.h == rs->h);
     int ax = x0, ay = y0, bx = x1, by = y1;
-    int inside = ((unsigned)ax < (unsigned)rs->w && (unsigned)ay < (unsigned)rs->h &&
-                  (unsigned)bx < (unsigned)rs->w && (unsigned)by < (unsigned)rs->h);
-    if (!inside && !raster_clip_line(rs, &ax, &ay, &bx, &by))
-        return;                             /* 整段在画布外 */
-    raster_line_clipped(rs, ax, ay, bx, by, c);
+    if (!full) {
+        rs->clip.x = 0; rs->clip.y = 0;
+        rs->clip.w = rs->w; rs->clip.h = rs->h;
+    }
+    int inside_canvas = ((unsigned)ax < (unsigned)rs->w && (unsigned)ay < (unsigned)rs->h &&
+                         (unsigned)bx < (unsigned)rs->w && (unsigned)by < (unsigned)rs->h);
+    int ok = inside_canvas || raster_clip_line(rs, &ax, &ay, &bx, &by);
+    if (!full) rs->clip = band;
+    if (!ok) return;                        /* 整段在画布外 */
+
+    if (full) { raster_line_clipped(rs, ax, ay, bx, by, c); return; }
+    /* 带视图：端点与单线程完全相同，只把带外像素滤掉 ⇒ 逐字节一致。 */
+    raster_line_checked(rs, ax, ay, bx, by, c);
 }
 
 /* 粗线：与 paint.c 原来的 paint_thick_line 同一套画法（竖向偏移画 n 条，

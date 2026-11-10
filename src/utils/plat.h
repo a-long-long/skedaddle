@@ -98,6 +98,9 @@ void     sk_cond_broadcast(SkCond *c);           /* 唤醒全部等待者 */
  * 线程自行结束，调用方不 join；f 内部自行处理自己的资源。 */
 int sk_thread_spawn(void (*f)(void *), void *arg);
 
+/* 逻辑核数（渲染分带并行的默认带数）。取不到时返回 1（调用方退回串行）。 */
+int sk_cpu_cores(void);
+
 /* ---------------- 进程 / 时间 ---------------- */
 
 /* 当前可执行文件路径（Linux /proc/self/exe，macOS _NSGetExecutablePath，

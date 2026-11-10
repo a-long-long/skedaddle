@@ -46,7 +46,8 @@ static inline uint8_t blend_ch(uint8_t s, uint8_t d, uint8_t a)
 
 void raster_px_rgba(Raster *rs, int x, int y, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 {
-    if ((unsigned)x >= (unsigned)rs->w || (unsigned)y >= (unsigned)rs->h) return;
+    if ((unsigned)(x - rs->clip.x) >= (unsigned)rs->clip.w ||
+        (unsigned)(y - rs->clip.y) >= (unsigned)rs->clip.h) return;
     if (a >= 255) { px_write(rs, x, y, raster_rgb(rs, r, g, b)); return; }
     if (a == 0) return;
     uint32_t dst = rs->px[(size_t)y * rs->stride + x];
@@ -64,10 +65,10 @@ void raster_fill_rect(Raster *rs, int x, int y, int w, int h,
 {
     if (w <= 0 || h <= 0) return;
     int x1 = x, y1 = y, x2 = x + w, y2 = y + h;
-    if (x1 < 0) x1 = 0;
-    if (y1 < 0) y1 = 0;
-    if (x2 > rs->w) x2 = rs->w;
-    if (y2 > rs->h) y2 = rs->h;
+    if (x1 < rs->clip.x) x1 = rs->clip.x;
+    if (y1 < rs->clip.y) y1 = rs->clip.y;
+    if (x2 > rs->clip.x + rs->clip.w) x2 = rs->clip.x + rs->clip.w;
+    if (y2 > rs->clip.y + rs->clip.h) y2 = rs->clip.y + rs->clip.h;
     if (x1 >= x2 || y1 >= y2) return;
 
     if (a >= 255) {
@@ -142,10 +143,30 @@ void raster_line_rgba(Raster *rs, int x0, int y0, int x1, int y1,
         raster_px_rgba(rs, x0, y0, r, g, b, a);
         return;
     }
+    /* 快路径：两端都在 clip 内 ⇒ 整段都在，直接画。 */
+    if ((unsigned)(x0 - rs->clip.x) < (unsigned)rs->clip.w &&
+        (unsigned)(y0 - rs->clip.y) < (unsigned)rs->clip.h &&
+        (unsigned)(x1 - rs->clip.x) < (unsigned)rs->clip.w &&
+        (unsigned)(y1 - rs->clip.y) < (unsigned)rs->clip.h) {
+        raster_line_rgba_clipped(rs, x0, y0, x1, y1, r, g, b, a);
+        return;
+    }
+
+    /* 慢路径：与 raster_line 同一套 —— 先按画布裁剪（保证与单线程端点一致），
+       再整段跑一遍。raster_line_rgba_clipped 里每个像素都走 raster_px_rgba，
+       它自己会按 clip 过滤，所以带视图天然拿到"与串行逐字节相同"的结果。 */
+    RectI band = rs->clip;
+    int full = (band.x == 0 && band.y == 0 && band.w == rs->w && band.h == rs->h);
     int ax = x0, ay = y0, bx = x1, by = y1;
-    int inside = ((unsigned)ax < (unsigned)rs->w && (unsigned)ay < (unsigned)rs->h &&
-                  (unsigned)bx < (unsigned)rs->w && (unsigned)by < (unsigned)rs->h);
-    if (!inside && !raster_clip_line(rs, &ax, &ay, &bx, &by)) return;
+    if (!full) {
+        rs->clip.x = 0; rs->clip.y = 0;
+        rs->clip.w = rs->w; rs->clip.h = rs->h;
+    }
+    int inside_canvas = ((unsigned)ax < (unsigned)rs->w && (unsigned)ay < (unsigned)rs->h &&
+                         (unsigned)bx < (unsigned)rs->w && (unsigned)by < (unsigned)rs->h);
+    int ok = inside_canvas || raster_clip_line(rs, &ax, &ay, &bx, &by);
+    if (!full) rs->clip = band;
+    if (!ok) return;
     raster_line_rgba_clipped(rs, ax, ay, bx, by, r, g, b, a);
 }
 

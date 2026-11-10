@@ -182,6 +182,7 @@ set(SEARCH_SRCS
 set(RENDER_SRCS
     src/render/paint.c
     src/render/raster.c
+    src/render/band.c
     src/render/navdraw.c
     src/render/font.c
     src/render/labels.c

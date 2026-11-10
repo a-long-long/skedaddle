@@ -1728,3 +1728,18 @@ int sk_has_gpu(void)
     return 0;
 #endif
 }
+
+/* 逻辑核数（并行分带的默认带数）。放在同一个跨平台函数体里按 _WIN32 分流，
+ * 理由同 sk_has_gpu：分到两个 #ifdef 块里容易只改一边、另一平台 undefined。
+ * 取不到时返回 1 —— 调用方据此退回串行，绝不让"核数为 0"把画面切成 0 带。 */
+int sk_cpu_cores(void)
+{
+#ifdef _WIN32
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    return si.dwNumberOfProcessors > 0 ? (int)si.dwNumberOfProcessors : 1;
+#else
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    return n > 0 ? (int)n : 1;
+#endif
+}

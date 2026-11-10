@@ -1,4 +1,5 @@
 #include "render/paint.h"
+#include "render/band.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +11,20 @@
 #include "utils/geo.h"
 #include "render/labels.h"
 #include "render/raster.h"
+
+/* ------------------------------------------------------------------ */
+/* 分带并行的启用门槛                                                   */
+/* ------------------------------------------------------------------ */
+
+/* 每条线程 spawn+join 大约 50us；要素量不够时并行纯亏（z15 一帧总共才
+   2~3 ms）。门槛取"起线程能省回来的量级"，可按实测再调。 */
+#define SK_BAND_MIN_AREAS 8000   /* z12 及以上 */
+#define SK_BAND_MIN_LINES 20000  /* z9/z11 是 1.9 万 / 12 万条 */
+#define SK_BAND_MIN_ROADS 2000   /* 道路走 tile 索引，z9 就已有 27 万条 */
+
+/* 分桶的行余量：raster_thick_line 最粗 width=5，会画到 y±2 且不做 y 裁剪，
+   分桶只按端点纬度 ⇒ 不留余量，紧贴带边的那半条描边会被上下两条带都拒收。 */
+#define SK_BAND_PAD 3
 
 /* ------------------------------------------------------------------ */
 /* 路名收集（paint_roads 顺带记录，labels.c 消费）                       */
@@ -35,7 +50,7 @@ void road_labels_add(const NamePool *np, uint32_t name_id, int x, int y)
    ★ 必须在 paint_frame 里调（不是 paint_roads 里）：多省时 paint_roads
      每省调一次；而 g_last_px 跨帧不清会出 holes——背景每帧重刷，上一帧
      写过的像素这帧是空的，若拿上一帧的状态去判"已写过"就会漏画。 */
-static int g_last_px = -1, g_last_tag = -1;
+static __thread int g_last_px = -1, g_last_tag = -1;
 void paint_roadpix_begin(void) { g_last_px = -1; g_last_tag = -1; }
 
 /* 路面配色：高等级路更醒目，低等级路压暗 */
@@ -250,6 +265,152 @@ static int road_name_cls_max(double zoom)
     return 4;
 }
 
+/* 并行路阶段的路名锚点缓冲。
+ *
+ * ★ 为什么不能直接调 road_labels_add：路名按"先到先得"占避让格，顺序一变
+ *   最终显示的标签就会变。分带并行时每条带各自按 tile 顺序收集，直接追加会
+ *   变成"带0 全部 → 带1 全部"，跨带的重叠标签会换赢家。
+ *   所以每条带先攒到自己的缓冲里，带 seq（tile 线性序 + 条目序），全部结束后
+ *   一次归并排序 ⇒ 顺序与串行逐项相同。 */
+typedef struct {
+    const NamePool *np;
+    uint32_t        name_id;
+    int             x, y;
+    uint32_t        seq;
+} SeqLabel;
+
+typedef struct {
+    SeqLabel *a;
+    int       n, cap;
+} RoadSink;
+
+static int sink_push(RoadSink *s, const NamePool *np, uint32_t nid,
+                     int x, int y, uint32_t seq)
+{
+    if (s->n >= s->cap) {
+        int nc = s->cap ? s->cap * 2 : 256;
+        SeqLabel *p = (SeqLabel *)realloc(s->a, (size_t)nc * sizeof(SeqLabel));
+        if (!p) return -1;
+        s->a = p;
+        s->cap = nc;
+    }
+    s->a[s->n].np = np;
+    s->a[s->n].name_id = nid;
+    s->a[s->n].x = x;
+    s->a[s->n].y = y;
+    s->a[s->n].seq = seq;
+    s->n++;
+    return 0;
+}
+
+static int seqlabel_cmp(const void *a, const void *b)
+{
+    uint32_t sa = ((const SeqLabel *)a)->seq, sb = ((const SeqLabel *)b)->seq;
+    return sa < sb ? -1 : (sa > sb ? 1 : 0);
+}
+
+/* 画一条路（edgelist v2 记录）。串行与分带并行共用同一份代码。
+ *   count=0：不记审计计数（跨带边被多条带各画一次，只能记一次）。
+ *   sink!=NULL：并行模式，路名锚点攒进本线程缓冲（见 SeqLabel 的说明）。 */
+static void road_emit(Raster *rs, const MvProj *P,
+                      const NMBinFile *edges, const NamePool *np,
+                      DedupSet *dd, double zoom, int W, int H, int margin,
+                      uint64_t ne, const uint32_t *ccls, int eff_max,
+                      const uint8_t *xl, uint32_t seq,
+                      int count, RoadSink *sink, PaintStats *st,
+                      int bid, int nb, int cy0, int cyh)
+{
+    static __thread PaintStats s_dummy;
+    PaintStats *dst = count ? st : &s_dummy;
+
+    uint8_t cls = xl[XL2_CLS];
+    if (cls > eff_max) return;
+    if (sk_get_u16(xl + XL2_FLAGS) & EF_REVERSE) return;
+
+    int32_t fla = sk_get_i32(xl + XL2_FROM_LAT);
+    int32_t flo = sk_get_i32(xl + XL2_FROM_LON);
+    int32_t tla = sk_get_i32(xl + XL2_TO_LAT);
+    int32_t tlo = sk_get_i32(xl + XL2_TO_LON);
+
+    int x0, y0, x1, y1;
+    mv_proj_e7(P, fla, flo, &x0, &y0);
+    mv_proj_e7(P, tla, tlo, &x1, &y1);
+    if ((x0 < -margin && x1 < -margin) || (x0 > W + margin && x1 > W + margin) ||
+        (y0 < -margin && y1 < -margin) || (y0 > H + margin && y1 > H + margin))
+        return;
+
+    /* 带裁剪：本带不覆盖这条边的 y 范围就早退。跨带边在每条相交带各画一次，
+       各自 clip 一半 —— 与"只归一条带"的差别就在带边界会不会缺一条线。
+       ★ 判据必须**比"分桶用的纬度范围"更宽**：分桶先把边分到带，这里再判一次，
+         若这里更严（或恰好相等），边界上的那几条会被分进来又立刻退掉 ——
+         既不画也不记账（实测 z13 少 25 条、z15 少 30 条 = 21 个像素，全是
+         y 正好落在 bt-bpad / bb2+bpad 那一行上的边）。宽 4 行做量化余量，
+         多画的像素会被 clip 滤掉，只是稍慢一点点。 */
+    int bt = rs->clip.y, bb2 = bt + rs->clip.h;
+    int bpad = margin + SK_BAND_PAD + 4;
+    if ((y0 < bt - bpad && y1 < bt - bpad) ||
+        (y0 > bb2 + bpad && y1 > bb2 + bpad)) return;
+
+    if (dd) {
+        /* 身份 = 两端 e7 坐标的有序对。
+           ★ 不能排序成 (min,max)：双向道路的回程边会因此被判成重复，整条路消失。
+           ★ 比 v1 用 OSM node id 更稳：跨省同一路口即便两个 pbf 给的 id 体系
+             不同，坐标也一致（coordkey.h 里整套跨省缝合的前提）。 */
+        if (dedup_seen(dd, coord_key_e7(fla, flo), coord_key_e7(tla, tlo))) {
+            dst->dedup_skipped++;
+            return;
+        }
+    }
+
+    const Style *s = &kStyle[cls > 4 ? 4 : cls];
+    int width = (zoom < 12.5) ? 1 : s->width;
+    dst->drawn++;
+    /* 退化成一个像素的段：若紧邻的上一条落在同一像素且同等级，再画一次是
+       纯浪费（z9 一帧 59 万条里 67% 是这种段）。只认"紧邻的前一条"是刻意的
+       —— 中间不可能插进别的等级把它改写，所以像素结果与逐条画完全一致
+       （用逐像素记录表试过：非退化的线穿过像素时不会更新记录表，会被误判，
+       16 个像素换了赢家）。g_last_px 是 __thread 的：并行时每条带独立维护，
+       而"同像素"必然同带（带是不重叠的 y 区间），所以行为与串行等价。 */
+    if (width == 1 && x0 == x1 && y0 == y1 &&
+        (unsigned)x0 < (unsigned)W && (unsigned)y0 < (unsigned)H) {
+        int px = y0 * W + x0, tag = cls > 4 ? 4 : cls;
+        if (px == g_last_px && tag == g_last_tag) return;
+        g_last_px = px; g_last_tag = tag;
+    } else {
+        g_last_px = -1;
+    }
+    raster_thick_line(rs, x0, y0, x1, y1, width, ccls[cls > 4 ? 4 : cls]);
+
+    if (cls <= road_name_cls_max(zoom) && zoom >= 12.0 &&
+        x0 >= 0 && x0 < W && y0 >= 0 && y0 < H) {
+        uint32_t eidx = sk_get_u32(xl + XL2_EDGE);
+        if ((uint64_t)eidx < ne) {
+            uint32_t nid = sk_get_u32(edges->data +
+                                      (uint64_t)eidx * SK_EDGE_BYTES +
+                                      EF_NAME_ID);
+            if (nid) {
+                int ax = (x0 + x1) / 2, ay = (y0 + y1) / 2;
+                if (sink) {
+                    /* 每条边只收一次，归属 = 锚点所在带（带外钳到端带）。
+                       ★ 不能用"锚点落在本带才收"：串行路径无条件收 ——
+                         from 端点在画布内、中点在画布外（长边跨出画布）的
+                         锚点串行也会加，labels.c 自己会裁。若按带收，
+                         画布外的锚点没有任何带认领 ⇒ 收集集合与串行不同，
+                         避让结果随之而变（实测 z15 底缘 651 个像素差异）。
+                       ★ 钳到端带而不是丢弃，再按 seq 归并 ⇒ 与串行同序。 */
+                    int tgt = (int)(((long long)(ay - cy0)) * nb / cyh);
+                    if (tgt < 0) tgt = 0;
+                    if (tgt >= nb) tgt = nb - 1;
+                    if (tgt == bid)
+                        sink_push(sink, np, nid, ax, ay, seq);
+                } else {
+                    road_labels_add(np, nid, ax, ay);
+                }
+            }
+        }
+    }
+}
+
 /* tile 驱动路径：只遍历视口覆盖的 tile（±1 格 margin）。 */
 static void paint_roads_tiled(Raster *rs, const MapView *v,
                               const NMBinFile *nodes, const NMBinFile *edges,
@@ -307,71 +468,8 @@ static void paint_roads_tiled(Raster *rs, const MapView *v,
                 const uint8_t *xl = edgelist->data +
                                     (size_t)off * SK_XL2_BYTES;
                 for (uint32_t k = 0; k < cnt; k++, xl += SK_XL2_BYTES) {
-                    uint8_t cls = xl[XL2_CLS];
-                    if (cls > eff_max) continue;
-                    if (sk_get_u16(xl + XL2_FLAGS) & EF_REVERSE) continue;
-
-                    int32_t fla = sk_get_i32(xl + XL2_FROM_LAT);
-                    int32_t flo = sk_get_i32(xl + XL2_FROM_LON);
-                    int32_t tla = sk_get_i32(xl + XL2_TO_LAT);
-                    int32_t tlo = sk_get_i32(xl + XL2_TO_LON);
-
-                    int x0, y0, x1, y1;
-                    mv_proj_e7(P, fla, flo, &x0, &y0);
-                    mv_proj_e7(P, tla, tlo, &x1, &y1);
-                    if ((x0 < -margin && x1 < -margin) || (x0 > W + margin && x1 > W + margin) ||
-                        (y0 < -margin && y1 < -margin) || (y0 > H + margin && y1 > H + margin))
-                        continue;
-
-                    if (ddt) {
-                        /* 身份 = 两端 e7 坐标的有序对。
-                           ★ 不能排序成 (min,max)：双向道路的回程边会因此被判成
-                             重复，整条路会消失。
-                           ★ 比 v1 用 OSM node id 更稳：跨省同一路口即便两个
-                             pbf 给的 id 体系不同，坐标也一致（这是 coordkey.h
-                             里整套跨省缝合的前提）。 */
-                        if (dedup_seen(dd, coord_key_e7(fla, flo),
-                                           coord_key_e7(tla, tlo))) {
-                            st->dedup_skipped++;
-                            continue;
-                        }
-                    }
-
-                    const Style *s = &kStyle[cls > 4 ? 4 : cls];
-                    int width = (zoom < 12.5) ? 1 : s->width;
-                    st->drawn++;
-                    /* ★临时：与上一条落在同一像素且同等级 → 跳过落笔。
-                       只认"紧邻的前一条"：这样中间不可能插进别的等级把它改写，
-                       是构造上等价的（用逐像素记录表试过，非退化的线穿过像素时
-                       不会更新记录表，会被误判，实测 16 个像素换了赢家）。 */
-                    /* 退化成一个像素的段：若紧邻的上一条落在同一像素且同等级，
-                       再画一次是纯浪费（SDL 每次 DrawLine 的固定开销 ~100ns，
-                       z9 一帧 59 万条里 67% 是这种段）。只认"紧邻的前一条"是
-                       刻意的——中间不可能插进别的等级把它改写，所以像素结果
-                       与逐条画完全一致（用逐像素记录表试过：非退化的线穿过
-                       像素时不会更新记录表，会被误判，16 个像素换了赢家）。 */
-                    if (width == 1 && x0 == x1 && y0 == y1 &&
-                        (unsigned)x0 < (unsigned)W && (unsigned)y0 < (unsigned)H) {
-                        int px = y0 * W + x0, tag = cls > 4 ? 4 : cls;
-                        if (px == g_last_px && tag == g_last_tag) continue;
-                        g_last_px = px; g_last_tag = tag;
-                    } else {
-                        g_last_px = -1;
-                    }
-                    raster_thick_line(rs, x0, y0, x1, y1, width,
-                                      ccls[cls > 4 ? 4 : cls]);
-
-                    if (cls <= road_name_cls_max(zoom) && zoom >= 12.0 &&
-                        x0 >= 0 && x0 < W && y0 >= 0 && y0 < H) {
-                        uint32_t eidx = sk_get_u32(xl + XL2_EDGE);
-                        if ((uint64_t)eidx < ne) {
-                            uint32_t nid = sk_get_u32(edges->data +
-                                              (uint64_t)eidx * SK_EDGE_BYTES +
-                                              EF_NAME_ID);
-                            if (nid) road_labels_add(np, nid,
-                                                     (x0 + x1) / 2, (y0 + y1) / 2);
-                        }
-                    }
+                    road_emit(rs, P, edges, np, ddt, zoom, W, H, margin, ne,
+                              ccls, eff_max, xl, 0, 1, NULL, st, 0, 0, 0, 0);
                 }
             }
         }
@@ -440,6 +538,209 @@ static void paint_roads_tiled(Raster *rs, const MapView *v,
     }
 }
 
+/* 路阶段的桶元素：记录索引 + 全局 seq（归并用）+ 是否本带归属（计数用）。 */
+typedef struct {
+    uint32_t idx;     /* edgelist 记录序号 */
+    uint32_t seq;     /* tile 线性序 * 65536 + 条目序 ⇒ 与串行遍历序同构 */
+    uint32_t main_b;  /* 1 = 这条边的中心落在本带，审计计数记在我这里 */
+} RoadItem;
+
+static RoadItem *s_rbkt[SK_BAND_MAX];
+static size_t    s_rbkt_cap[SK_BAND_MAX];
+static uint32_t  s_rbkt_n[SK_BAND_MAX];
+
+static int rbkt_push(int t, uint32_t idx, uint32_t seq, uint32_t main_b)
+{
+    if (s_rbkt_n[t] >= s_rbkt_cap[t]) {
+        size_t nc = s_rbkt_cap[t] ? s_rbkt_cap[t] * 2 : 4096;
+        RoadItem *q = (RoadItem *)realloc(s_rbkt[t], nc * sizeof(RoadItem));
+        if (!q) return -1;
+        s_rbkt[t] = q;
+        s_rbkt_cap[t] = nc;
+    }
+    s_rbkt[t][s_rbkt_n[t]].idx = idx;
+    s_rbkt[t][s_rbkt_n[t]].seq = seq;
+    s_rbkt[t][s_rbkt_n[t]].main_b = main_b;
+    s_rbkt_n[t]++;
+    return 0;
+}
+
+typedef struct {
+    BandView        *bv;
+    const MapView   *v;
+    MvProj           P;
+    const NMBinFile *edges;
+    const NMBinFile *edgelist;
+    const NamePool  *np;
+    double           zoom;
+    int              W, H, margin;
+    uint64_t         ne;
+    uint32_t         ccls[5];
+    int              eff_max;
+    PaintStats       st[SK_BAND_MAX];
+    RoadSink         sinks[SK_BAND_MAX];
+    int              nb, cy0, cyh;   /* 锚点归属带用：带数 + 基准 clip 范围 */
+} RoadsJob;
+
+static void roads_task(void *arg, int tid)
+{
+    RoadsJob *j = (RoadsJob *)arg;
+    Raster *rs = &j->bv->band[tid];
+    PaintStats *st = &j->st[tid];
+    memset(st, 0, sizeof *st);
+    /* 新线程的 __thread g_last_px 初值是 -1，但线程复用时可能是上一帧的值；
+       这里显式清一次，语义等价于串行时的 paint_roadpix_begin。 */
+    g_last_px = -1;
+    g_last_tag = -1;
+
+    uint32_t n = s_rbkt_n[tid];
+    for (uint32_t k = 0; k < n; k++) {
+        const RoadItem *it = &s_rbkt[tid][k];
+        const uint8_t *xl = j->edgelist->data + (size_t)it->idx * SK_XL2_BYTES;
+        road_emit(rs, &j->P, j->edges, j->np, NULL, j->zoom, j->W, j->H,
+                  j->margin, j->ne, j->ccls, j->eff_max, xl, it->seq,
+                  it->main_b, &j->sinks[tid], st, tid, j->nb, j->cy0, j->cyh);
+    }
+}
+
+/* 返回 0 = 已并行画完；-1 = 不适用（v1 记录 / 旋转视图 / OOM），调用方落回串行。
+ * 只在 dd == NULL（单省）时调用 —— 去重表是共享哈希，多线程会写坏。 */
+static int paint_roads_banded(Raster *rs, const MapView *v,
+                              const NMBinFile *edges,
+                              const NMBinFile *tiles, const NMBinFile *edgelist,
+                              const NamePool *np, int max_class,
+                              PaintStats *st, int nband)
+{
+    if (!edgelist || edgelist->hdr.rec_size != SK_XL2_BYTES) return -1;
+
+    TileRange tr;
+    if (!tile_range(tiles, v, &tr)) return 0;
+
+    double zoom = v->zoom;
+    int W = v->w, H = v->h;
+    const int margin = 64;
+    uint64_t ne = edges->hdr.rec_count;
+
+    MvProj P;
+    mv_proj_begin(v, &P);
+    /* 旋转视图下"屏幕 y 与纬度单调"不成立，按纬度分桶会漏要素。 */
+    if (P.rot != 0.0) return -1;
+
+    int eff_max = max_class;
+    if (zoom < 9.0)        { if (eff_max > 0) eff_max = 0; }
+    else if (zoom < 11.5)  { if (eff_max > 1) eff_max = 1; }
+    else if (zoom < 12.5)  { if (eff_max > 2) eff_max = 2; }
+    else if (zoom < 14.0)  { if (eff_max > 3) eff_max = 3; }
+
+    BandView bv;
+    band_init(&bv, rs, nband);
+    for (int t = 0; t < bv.n; t++)
+        s_rbkt_n[t] = 0;   /* s_rbkt/s_rbkt_cap 的容量跨帧保留，只清计数 */
+
+    /* 每带的纬度范围（含 SK_BAND_PAD 行余量）。用 unproject 从像素行反推
+       ⇒ 分桶零投影。若逐边投影来判带，z9 的 27 万条 × N 带会把并行收益
+       全部吃掉（那正是串行路径的成本）。
+       ★ 余量只能给 SK_BAND_PAD（±2 行描边 + 1 行量化），**不能**把视口裁剪
+         的 margin(64) 也算进来：带高只有 100~800 行，±67 行的范围让带两两
+         重叠 134 行 ⇒ z9 平均每条边被 2.3 条带各画一遍（实测分桶 63.8 万次
+         push / 27.4 万条边），画得多不算，还全落在空转上 —— 路 19ms 反而
+         变 23ms。带归属只关心"这条边的描边会不会碰到本带"，与视口无关。 */
+    const int bpad = SK_BAND_PAD;
+    int32_t blat_lo[SK_BAND_MAX], blat_hi[SK_BAND_MAX];
+    for (int t = 0; t < bv.n; t++) {
+        double la, lo;
+        mv_unproject(v, W / 2, bv.edge[t] - bpad, &la, &lo);
+        double a = la;
+        mv_unproject(v, W / 2, bv.edge[t + 1] + bpad, &la, &lo);
+        double b = la;
+        if (a > b) { double tmp = a; a = b; b = tmp; }
+        blat_lo[t] = (int32_t)(a * 1e7);
+        blat_hi[t] = (int32_t)(b * 1e7);
+    }
+
+    int ntx = tr.tx_hi - tr.tx_lo + 1;
+    for (int ty = tr.ty_lo; ty <= tr.ty_hi; ty++) {
+        for (int tx = tr.tx_lo; tx <= tr.tx_hi; tx++) {
+            uint32_t off, cnt;
+            tile_dir(tiles, &tr, tx, ty, &off, &cnt);
+            uint32_t tlin = (uint32_t)((ty - tr.ty_lo) * ntx + (tx - tr.tx_lo));
+            const uint8_t *xl = edgelist->data + (size_t)off * SK_XL2_BYTES;
+            for (uint32_t k = 0; k < cnt; k++, xl += SK_XL2_BYTES) {
+                uint8_t cls = xl[XL2_CLS];
+                if (cls > eff_max) continue;
+                if (sk_get_u16(xl + XL2_FLAGS) & EF_REVERSE) continue;
+
+                int32_t fla = sk_get_i32(xl + XL2_FROM_LAT);
+                int32_t tla = sk_get_i32(xl + XL2_TO_LAT);
+                int32_t elo = fla < tla ? fla : tla;
+                int32_t ehi = fla < tla ? tla : fla;
+
+                uint32_t idx = off + k;
+                uint32_t seq = tlin * 65536u + k;
+                /* 归属带 = 第一条相交带（t 最小），不是"纬度中心最近"那条：
+                   后者可能根本没被分进（它的纬度范围与这条边的端点区间不相交）
+                   ⇒ 这条边在别的带里画了，却谁也没计数。取第一条相交带，
+                   计数必然落在真实画过它的带上，且一条边只记一次。 */
+                int main_b = 1;
+                for (int t = 0; t < bv.n; t++) {
+                    if (ehi < blat_lo[t] || elo > blat_hi[t]) continue;
+                    if (rbkt_push(t, idx, seq, (uint32_t)main_b) != 0)
+                        return -1;
+                    main_b = 0;
+                }
+            }
+        }
+    }
+
+    RoadsJob job;
+    memset(&job, 0, sizeof job);
+    job.bv = &bv;
+    job.v = v;
+    job.P = P;
+    job.edges = edges;
+    job.edgelist = edgelist;
+    job.np = np;
+    job.zoom = zoom;
+    job.W = W; job.H = H; job.margin = margin;
+    job.ne = ne;
+    for (int k = 0; k < 5; k++)
+        job.ccls[k] = raster_rgb(rs, kStyle[k].r, kStyle[k].g, kStyle[k].b);
+    job.eff_max = eff_max;
+    job.nb = bv.n;
+    job.cy0 = bv.base.clip.y;
+    job.cyh = bv.base.clip.h;
+    band_run(&bv, roads_task, &job);
+
+    /* 路名锚点：按 seq 归并 ⇒ 顺序与串行逐项相同（避让先到先得，顺序一变
+       显示结果就变）。 */
+    int total = 0;
+    for (int t = 0; t < bv.n; t++) total += job.sinks[t].n;
+    if (total > 0) {
+        SeqLabel *all = (SeqLabel *)malloc((size_t)total * sizeof(SeqLabel));
+        if (all) {
+            int pos = 0;
+            for (int t = 0; t < bv.n; t++) {
+                int n = job.sinks[t].n;
+                if (n > 0) {
+                    memcpy(all + pos, job.sinks[t].a, (size_t)n * sizeof(SeqLabel));
+                    pos += n;
+                }
+            }
+            qsort(all, (size_t)total, sizeof(SeqLabel), seqlabel_cmp);
+            for (int i = 0; i < total; i++)
+                road_labels_add(all[i].np, all[i].name_id, all[i].x, all[i].y);
+            free(all);
+        }
+    }
+    for (int t = 0; t < bv.n; t++) free(job.sinks[t].a);
+
+    for (int t = 0; t < bv.n; t++) {
+        st->drawn         += job.st[t].drawn;
+        st->dedup_skipped += job.st[t].dedup_skipped;
+    }
+    return 0;
+}
+
 void paint_roads(Raster *rs, const MapView *v,
                  const NMBinFile *nodes, const NMBinFile *edges,
                  const NMBinFile *tiles, const NMBinFile *edgelist,
@@ -457,6 +758,14 @@ void paint_roads(Raster *rs, const MapView *v,
     if (nn == 0 || ne == 0) return;
 
     if (tiles && edgelist) {
+        /* 分带并行：去重表 dd 是跨省共享的哈希，多线程会写坏 ⇒ 只有单省
+           （dd == NULL）才并行；多省仍走串行 tiled 路径。失败落回串行。 */
+        int nband = band_pick_count();
+        if (nband > 1 && dd == NULL && ne >= SK_BAND_MIN_ROADS) {
+            if (paint_roads_banded(rs, v, edges, tiles, edgelist, np,
+                                   max_class, st, nband) == 0)
+                return;
+        }
         paint_roads_tiled(rs, v, nodes, edges, tiles, edgelist, np, dd,
                           max_class, st, peer_tiles, n_peer);
         return;
@@ -584,7 +893,7 @@ static const AreaStyle kAreaStyle[AK_OTHER + 1] = {
      终点、在下一段被当作起点，SDL 只画一次、我们画两次，落在同一个像素、
      同一个颜色上；最后一点 SDL 由末尾那次 DrawPoint 补上，而我们的每段
      都画满两端，所以恒等。（用 1500 条随机折线逐像素验证过 0 差异。） */
-static int g_sp_x, g_sp_y, g_sp_have;
+static __thread int g_sp_x, g_sp_y, g_sp_have;
 
 static void stroke_begin(void) { g_sp_have = 0; }
 
@@ -650,7 +959,7 @@ static void fill_polygon(Raster *rs, const int *px, const int *py, int n,
         e[b + 1] = t;
     }
 
-    static int xs[128], act[256];
+    static __thread int xs[128], act[256];
     int na = 0, next = 0;
     for (int y = ymin; y <= ymax; y++) {
         double yc = y + 0.5;
@@ -748,7 +1057,7 @@ static int project_ring(const MvProj *P, const NMBinFile *nodes,
                         const NMBinFile *polyrefs, uint32_t off, uint32_t cnt,
                         uint64_t nn, int *px, int *py, int cap)
 {
-    static int32_t  rla[RING_CAP], rlo[RING_CAP];
+    static __thread int32_t  rla[RING_CAP], rlo[RING_CAP];
     if (cnt > RING_CAP) cnt = RING_CAP;
     uint32_t m = 0;
     for (uint32_t k = 0; k < cnt; k++) {
@@ -765,6 +1074,198 @@ static int project_ring(const MvProj *P, const NMBinFile *nodes,
         n++;
     }
     return n;
+}
+
+/* ------------------------------------------------------------------ */
+/* 面阶段：分带并行                                                      */
+/* ------------------------------------------------------------------ */
+
+/* 面绘制上下文。把一次 pass 里所有不变的东西打包，串行与并行共用同一份
+   area_emit —— 两条路径必须是同一份代码。历史教训：一旦复制一份"并行版"，
+   几何筛选差一个条件就是"并行开着少画两百个面"，而这种漂移逐字节对拍会
+   立刻抓到，但排查要花掉一整天。 */
+typedef struct {
+    const MvProj    *P;
+    const NMBinFile *nodes;
+    const NMBinFile *areas;
+    const NMBinFile *polyrefs;
+    uint64_t         nn;
+    int32_t          vla0, vla1, vlo0, vlo1;   /* 视口经纬（e7），筛 bbox 用 */
+    uint32_t         afill[AK_OTHER + 1];
+    uint32_t         astroke[AK_OTHER + 1];
+} AreaCtx;
+
+/* 画一个面。种类 / LOD / 视口筛选全在函数内做（分桶预扫也调一遍同样的判据，
+   重复判一次是幂等的，代价远小于维护两份筛选逻辑）。 */
+static void area_emit(Raster *rs, const AreaCtx *c, uint64_t i,
+                      const int32_t *bb, double zoom, int count, PaintStats *st)
+{
+    /* 跨带的面会在每条相交带各画一次（各自 clip 一半），但审计计数只能记一次，
+       否则 areas_drawn 会随着带数上涨 —— regress 的确定性判据会直接假红。 */
+    static __thread PaintStats s_dummy;
+    PaintStats *dst = count ? st : &s_dummy;
+    const uint8_t *ar = c->areas->data + (size_t)i * SK_AREA_BYTES;
+    uint8_t kind = ar[AF_KIND];
+    if (kind == AK_NONE || kind > AK_OTHER) return;
+    /* LOD：低 zoom 只画大片水面/绿地，建筑到中高 zoom 才出现 */
+    if (kind == AK_BUILDING && zoom < 13.0) return;
+    if (zoom < 8.0) return;
+    if (bb && (bb[0] > c->vla1 || bb[2] < c->vla0 ||
+               bb[1] > c->vlo1 || bb[3] < c->vlo0))
+        return;
+
+    uint32_t off = sk_get_u32(ar + AF_REF_OFF);
+    uint32_t cnt = sk_get_u32(ar + AF_REF_CNT);
+    if (cnt < 4) return;
+
+    /* ---- 小面快速路径（低 zoom 的面开销主要就在这里）----
+     * 实测面的屏幕尺寸分布（北京城内 1280×800）：
+     *   z9 : 61618 个面里 42952 个（70%）最大边 < 2 px
+     *   z11: 36237 个面里 10106 个（28%）
+     * 这些面填充出来最多一个像素，却要走"投影全部 cnt 个顶点 → 扫描线
+     * 逐行对 n 条边求交 → 再描一遍 n 条边"这一整套，成本和大面同量级。
+     * 用 geo bbox 的两个角点投影估出屏幕尺寸（2 次投影，不必投影全部顶点），
+     * 够小就只点一个像素：颜色贡献保留，开销从 O(cnt×行) 降到 O(1)。
+     * 估的是外接框上界，只会挑出确实很小的面，不会误伤大面。 */
+    if (bb) {
+        int xa, ya, xb, yb;
+        mv_proj_e7(c->P, bb[0], bb[1], &xa, &ya);
+        mv_proj_e7(c->P, bb[2], bb[3], &xb, &yb);
+        int aw = xa > xb ? xa - xb : xb - xa;
+        int ah = ya > yb ? ya - yb : yb - ya;
+        if ((aw > ah ? aw : ah) < AREA_DOT_PX) {
+            raster_point(rs, (xa + xb) / 2, (ya + yb) / 2, c->afill[kind]);
+            dst->areas_drawn++;
+            dst->areas_dotted++;
+            return;
+        }
+    }
+
+    /* 复杂面（顶点很多，如公园/湖泊边界）：填充上限 256 顶点，超出退化为描边 */
+    if (cnt > 256) {
+        static __thread int bx[RING_CAP], by[RING_CAP];
+        int bn = project_ring(c->P, c->nodes, c->polyrefs, off, cnt, c->nn,
+                              bx, by, RING_CAP);
+        stroke_begin();
+        for (int k = 0; k < bn; k++) stroke_push(rs, bx[k], by[k], c->astroke[kind]);
+        stroke_flush();
+        dst->areas_drawn++;
+        return;
+    }
+
+    int px[256], py[256];
+    int n = project_ring(c->P, c->nodes, c->polyrefs, off, cnt, c->nn, px, py, 256);
+    if (n < 3) return;
+    /* 闭合 way 首尾同点，去掉重复尾点 */
+    if (n > 3 && px[0] == px[n - 1] && py[0] == py[n - 1]) n--;
+
+    fill_polygon(rs, px, py, n, c->afill[kind]);
+    stroke_ring(rs, px, py, n, c->astroke[kind]);   /* 闭合：末尾自动补回首点 */
+    dst->areas_drawn++;
+}
+
+/* 分桶缓冲：按带收集面索引。分桶是单线程做的（在主线程里预扫），
+   所以这几块静态缓冲不需要加锁；容量跨帧保留，避免每帧 realloc。 */
+static uint32_t *s_bkt[SK_BAND_MAX];
+static size_t    s_bkt_cap[SK_BAND_MAX];
+static uint32_t  s_bkt_n[SK_BAND_MAX];
+
+static int bkt_push(int t, uint32_t idx)
+{
+    if (s_bkt_n[t] >= s_bkt_cap[t]) {
+        size_t nc = s_bkt_cap[t] ? s_bkt_cap[t] * 2 : 4096;
+        uint32_t *p = (uint32_t *)realloc(s_bkt[t], nc * sizeof(uint32_t));
+        if (!p) return -1;
+        s_bkt[t] = p;
+        s_bkt_cap[t] = nc;
+    }
+    s_bkt[t][s_bkt_n[t]++] = idx;
+    return 0;
+}
+
+/* y 落在哪条带。y 可能为负（视口外）或超屏 ⇒ 夹到首/末带。 */
+static int band_of_y(const BandView *bv, int y)
+{
+    for (int t = 0; t < bv->n; t++)
+        if (y < bv->edge[t + 1]) return t;
+    return bv->n - 1;
+}
+
+typedef struct {
+    BandView      *bv;
+    const AreaCtx *ctx;
+    const int32_t *bball;
+    double         zoom;
+    PaintStats     st[SK_BAND_MAX];   /* 每带独立计数，结束后汇总 */
+} AreasJob;
+
+static void areas_task(void *arg, int tid)
+{
+    AreasJob *j = (AreasJob *)arg;
+    Raster *rs = &j->bv->band[tid];
+    PaintStats *st = &j->st[tid];
+    memset(st, 0, sizeof *st);
+    uint32_t n = s_bkt_n[tid];
+    const uint32_t *b = s_bkt[tid];
+    for (uint32_t k = 0; k < n; k++) {
+        uint32_t v = b[k];
+        uint32_t i = v & 0x7fffffffu;
+        int is_main = (v & 0x80000000u) != 0;   /* 归属带才计数，见 area_emit */
+        area_emit(rs, j->ctx, i, j->bball + (size_t)i * 4, j->zoom, is_main, st);
+    }
+}
+
+/* 返回 0 = 已并行画完；-1 = 中途失败（OOM 等），调用方必须落回串行。 */
+static int paint_areas_banded(Raster *rs, const AreaCtx *ctx, int32_t *bball,
+                              uint64_t na, double zoom, int nband, PaintStats *st)
+{
+    BandView bv;
+    band_init(&bv, rs, nband);
+    for (int t = 0; t < bv.n; t++) s_bkt_n[t] = 0;
+
+    for (uint64_t i = 0; i < na; i++) {
+        const uint8_t *ar = ctx->areas->data + (size_t)i * SK_AREA_BYTES;
+        uint8_t kind = ar[AF_KIND];
+        if (kind == AK_NONE || kind > AK_OTHER) continue;
+        if (kind == AK_BUILDING && zoom < 13.0) continue;
+        if (zoom < 8.0) continue;
+        const int32_t *bb = bball + (size_t)i * 4;
+        if (bb[0] > ctx->vla1 || bb[2] < ctx->vla0 ||
+            bb[1] > ctx->vlo1 || bb[3] < ctx->vlo0)
+            continue;
+        uint32_t cnt = sk_get_u32(ar + AF_REF_CNT);
+        if (cnt < 4) continue;
+
+        /* 用 bbox 两角点的屏幕 y 估出跨带区间。跨带的面要在每条相交带各画
+           一次，各自靠 clip 取自己那一半 —— 只按中心行归带会在带边界缺一条。 */
+        int xa, ya, xb, yb;
+        mv_proj_e7(ctx->P, bb[0], bb[1], &xa, &ya);
+        mv_proj_e7(ctx->P, bb[2], bb[3], &xb, &yb);
+        /* 外扩 2px：投影是单点浮点运算，bbox 角点算出的 y 与实际顶点可能
+           差 1px；少算一条带就是"带边界缺一条线"，多算只是白画几个像素。 */
+        int ylo = (ya < yb ? ya : yb) - 2;
+        int yhi = (ya < yb ? yb : ya) + 2;
+        int t0 = band_of_y(&bv, ylo), t1 = band_of_y(&bv, yhi);
+        int main_t = band_of_y(&bv, (ylo + yhi) / 2);
+        for (int t = t0; t <= t1; t++) {
+            uint32_t v = (uint32_t)i | (t == main_t ? 0x80000000u : 0u);
+            if (bkt_push(t, v) != 0) return -1;
+        }
+    }
+
+    AreasJob job;
+    memset(&job, 0, sizeof job);
+    job.bv = &bv;
+    job.ctx = ctx;
+    job.bball = bball;
+    job.zoom = zoom;
+    band_run(&bv, areas_task, &job);
+
+    for (int t = 0; t < bv.n; t++) {
+        st->areas_drawn  += job.st[t].areas_drawn;
+        st->areas_dotted += job.st[t].areas_dotted;
+    }
+    return 0;
 }
 
 int paint_areas(Raster *rs, const MapView *v,
@@ -825,74 +1326,177 @@ int paint_areas(Raster *rs, const MapView *v,
        累加的结果抹掉（表现为"图上明明有建筑/水面，统计却报 0"——全 8 省加载时
        最后一个不覆盖视口的省会把计数清成 0）。一帧的清零只在 paint_frame 开头
        做一次，见那里的注释。 */
-    for (uint64_t i = 0; i < na; i++) {
-        const uint8_t *ar = areas->data + i * SK_AREA_BYTES;
-        uint8_t kind = ar[AF_KIND];
-        if (kind == AK_NONE || kind > AK_OTHER) continue;
-        /* LOD：低 zoom 只画大片水面/绿地，建筑到中高 zoom 才出现 */
-        if (kind == AK_BUILDING && zoom < 13.0) continue;
-        if (zoom < 8.0) continue;
-        const int32_t *bb = *bbox_cache + i * 4;
-        if (bb[0] > vla1 || bb[2] < vla0 || bb[1] > vlo1 || bb[3] < vlo0) continue;
-
-        uint32_t off = sk_get_u32(ar + AF_REF_OFF);
-        uint32_t cnt = sk_get_u32(ar + AF_REF_CNT);
-        if (cnt < 4) continue;
-
-        /* ★ 面要素不做跨省去重：填充/描边都是不透明色，同一条要素被两省各画
-           一遍落在同样的像素上；去重只是白花哈希钱（实测 8 省 z9 省 22 ms、
-           逐像素 0 差异，见 PLAN.md §23）。 */
-
-        /* ---- 小面快速路径（低 zoom 的面开销主要就在这里）----
-         * 实测面的屏幕尺寸分布（北京城内 1280×800）：
-         *   z9 : 61618 个面里 42952 个（70%）最大边 < 2 px
-         *   z11: 36237 个面里 10106 个（28%）
-         * 这些面填充出来最多一个像素，却要走"投影全部 cnt 个顶点 → 扫描线
-         * 逐行对 n 条边求交 → 再描一遍 n 条边"这一整套，成本和大面同量级。
-         * 用 geo bbox 的两个角点投影估出屏幕尺寸（2 次投影，不必投影全部顶点），
-         * 够小就只点一个像素：颜色贡献保留，开销从 O(cnt×行) 降到 O(1)。
-         * 估的是外接框上界，只会挑出确实很小的面，不会误伤大面。 */
-        if (*bbox_cache) {
-            int xa, ya, xb, yb;
-            mv_proj_e7(&P, bb[0], bb[1], &xa, &ya);
-            mv_proj_e7(&P, bb[2], bb[3], &xb, &yb);
-            int aw = xa > xb ? xa - xb : xb - xa;
-            int ah = ya > yb ? ya - yb : yb - ya;
-            if ((aw > ah ? aw : ah) < AREA_DOT_PX) {
-                raster_point(rs, (xa + xb) / 2, (ya + yb) / 2, afill[kind]);
-                st->areas_drawn++;
-                st->areas_dotted++;
-                continue;
-            }
-        }
-
-        /* 复杂面（顶点很多，如公园/湖泊边界）：填充上限 256 顶点，超出退化为描边 */
-        if (cnt > 256) {
-            static int bx[RING_CAP], by[RING_CAP];
-            int bn = project_ring(&P, nodes, polyrefs, off, cnt, nn, bx, by, RING_CAP);
-            stroke_begin();
-            for (int k = 0; k < bn; k++) stroke_push(rs, bx[k], by[k], astroke[kind]);
-            stroke_flush();
-            st->areas_drawn++;
-            continue;
-        }
-
-        int px[256], py[256];
-        int n = project_ring(&P, nodes, polyrefs, off, cnt, nn, px, py, 256);
-        if (n < 3) continue;
-        /* 闭合 way 首尾同点，去掉重复尾点 */
-        if (n > 3 && px[0] == px[n - 1] && py[0] == py[n - 1]) n--;
-
-        fill_polygon(rs, px, py, n, afill[kind]);
-        stroke_ring(rs, px, py, n, astroke[kind]);   /* 闭合：末尾自动补回首点 */
-        st->areas_drawn++;
+    AreaCtx ctx;
+    ctx.P = &P;
+    ctx.nodes = nodes;
+    ctx.areas = areas;
+    ctx.polyrefs = polyrefs;
+    ctx.nn = nn;
+    ctx.vla0 = vla0; ctx.vla1 = vla1;
+    ctx.vlo0 = vlo0; ctx.vlo1 = vlo1;
+    for (int k = 0; k <= AK_OTHER; k++) {
+        ctx.afill[k] = afill[k];
+        ctx.astroke[k] = astroke[k];
     }
+
+    /* 分带并行：要素量不够就别起线程（每条线程 ~50us 的创建开销，z15 一帧
+       总共才 2 ms）。失败一律落回串行 —— 宁慢不可缺块。 */
+    int nband = band_pick_count();
+    if (nband > 1 && na >= SK_BAND_MIN_AREAS && bbox_cache && *bbox_cache) {
+        if (paint_areas_banded(rs, &ctx, *bbox_cache, na, zoom, nband, st) == 0)
+            return 0;
+    }
+
+    const int32_t *bball = (bbox_cache && *bbox_cache) ? *bbox_cache : NULL;
+    for (uint64_t i = 0; i < na; i++)
+        area_emit(rs, &ctx, i, bball ? bball + (size_t)i * 4 : NULL, zoom, 1, st);
     return 0;
 }
 
 /* ------------------------------------------------------------------ */
 /* 线要素：步行道 / 铁路 / 水系线                                        */
 /* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* 线阶段：分带并行                                                      */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    const MvProj    *P;
+    const NMBinFile *nodes;
+    const NMBinFile *lines;
+    const NMBinFile *polyrefs;
+    uint64_t         nn, np;
+    int32_t          vla0, vla1, vlo0, vlo1;
+    double           la0, la1, lo0, lo1;   /* 视口（外扩 0.02°） */
+} LineCtx;
+
+/* 画一条线（折线）。与面同样的约定：筛选全在函数内做，两条路径共用。 */
+static void line_emit(Raster *rs, const LineCtx *c, uint64_t i,
+                      const int32_t *lb, double zoom, int count, PaintStats *st)
+{
+    static __thread PaintStats s_dummy;
+    PaintStats *dst = count ? st : &s_dummy;
+
+    if (lb) {
+        if (lb[2] < c->vla0 || lb[0] > c->vla1 ||
+            lb[3] < c->vlo0 || lb[1] > c->vlo1)
+            return;
+    }
+    const uint8_t *lr = c->lines->data + (size_t)i * SK_LINE_BYTES;
+    uint8_t cls = lr[LF_CLASS];
+    /* LOD：步行道细节多、密度大，中高 zoom 才显示 */
+    if (cls == RC_PATH && zoom < 14.0) return;
+    if (zoom < 8.0) return;
+
+    /* ★ 线要素同样不去重（理由同面要素，见 PLAN.md §23）。 */
+
+    uint32_t off = sk_get_u32(lr + LF_REF_OFF);
+    uint32_t cnt = sk_get_u32(lr + LF_REF_CNT);
+    if ((uint64_t)off + cnt > c->np) return;
+
+    int vis = 0;
+    int px[4096], py[4096];
+    int n = 0;
+    for (uint32_t k = 0; k < cnt && n < 4096; k++) {
+        uint32_t idx = sk_get_u32(c->polyrefs->data + ((uint64_t)off + k) * 4);
+        if ((uint64_t)idx >= c->nn) continue;
+        const uint8_t *nr = c->nodes->data + (uint64_t)idx * SK_NODE_BYTES;
+        int32_t ila = sk_get_i32(nr + NF_LAT), ilo = sk_get_i32(nr + NF_LON);
+        double la = (double)ila / 1e7;
+        double lo = (double)ilo / 1e7;
+        if (la >= c->la0 && la <= c->la1 && lo >= c->lo0 && lo <= c->lo1) vis = 1;
+        int x, y;
+        mv_proj_e7(c->P, ila, ilo, &x, &y);
+        px[n] = x; py[n] = y; n++;
+    }
+    if (!vis || n < 2) return;
+
+    uint8_t cr, cg, cb, width;
+    switch (cls) {
+    case RC_RAIL:  cr = 120; cg = 120; cb = 132; width = (zoom < 12.5) ? 1 : 2; break;
+    case RC_WATER: cr = 150; cg = 195; cb = 230; width = (zoom < 12.5) ? 1 : 2; break;
+    default:       cr = 202; cg = 199; cb = 190; width = 1; break;  /* RC_PATH */
+    }
+    uint32_t col = raster_rgb(rs, cr, cg, cb);
+    if (width <= 1) {
+        stroke_begin();
+        for (int k = 0; k < n; k++) stroke_push(rs, px[k], py[k], col);
+        stroke_flush();
+    } else {
+        for (int k = 1; k < n; k++)
+            raster_thick_line(rs, px[k - 1], py[k - 1], px[k], py[k],
+                              width, col);
+    }
+    dst->lines_drawn++;
+}
+
+typedef struct {
+    BandView      *bv;
+    const LineCtx *ctx;
+    const int32_t *lball;
+    double         zoom;
+    PaintStats     st[SK_BAND_MAX];
+} LinesJob;
+
+static void lines_task(void *arg, int tid)
+{
+    LinesJob *j = (LinesJob *)arg;
+    Raster *rs = &j->bv->band[tid];
+    PaintStats *st = &j->st[tid];
+    memset(st, 0, sizeof *st);
+    uint32_t n = s_bkt_n[tid];
+    const uint32_t *b = s_bkt[tid];
+    for (uint32_t k = 0; k < n; k++) {
+        uint32_t v = b[k];
+        uint32_t i = v & 0x7fffffffu;
+        int is_main = (v & 0x80000000u) != 0;
+        line_emit(rs, j->ctx, i, j->lball + (size_t)i * 4, j->zoom, is_main, st);
+    }
+}
+
+static int paint_lines_banded(Raster *rs, const LineCtx *ctx, int32_t *lball,
+                              uint64_t nl, double zoom, int nband, PaintStats *st)
+{
+    BandView bv;
+    band_init(&bv, rs, nband);
+    for (int t = 0; t < bv.n; t++) s_bkt_n[t] = 0;
+
+    for (uint64_t i = 0; i < nl; i++) {
+        const int32_t *lb = lball + (size_t)i * 4;
+        if (lb[2] < ctx->vla0 || lb[0] > ctx->vla1 ||
+            lb[3] < ctx->vlo0 || lb[1] > ctx->vlo1)
+            continue;
+        const uint8_t *lr = ctx->lines->data + (size_t)i * SK_LINE_BYTES;
+        uint8_t cls = lr[LF_CLASS];
+        if (cls == RC_PATH && zoom < 14.0) continue;
+        if (zoom < 8.0) continue;
+
+        int xa, ya, xb, yb;
+        mv_proj_e7(ctx->P, lb[0], lb[1], &xa, &ya);
+        mv_proj_e7(ctx->P, lb[2], lb[3], &xb, &yb);
+        int ylo = (ya < yb ? ya : yb) - 2;
+        int yhi = (ya < yb ? yb : ya) + 2;
+        int t0 = band_of_y(&bv, ylo), t1 = band_of_y(&bv, yhi);
+        int main_t = band_of_y(&bv, (ylo + yhi) / 2);
+        for (int t = t0; t <= t1; t++) {
+            uint32_t v = (uint32_t)i | (t == main_t ? 0x80000000u : 0u);
+            if (bkt_push(t, v) != 0) return -1;
+        }
+    }
+
+    LinesJob job;
+    memset(&job, 0, sizeof job);
+    job.bv = &bv;
+    job.ctx = ctx;
+    job.lball = lball;
+    job.zoom = zoom;
+    band_run(&bv, lines_task, &job);
+
+    for (int t = 0; t < bv.n; t++)
+        st->lines_drawn += job.st[t].lines_drawn;
+    return 0;
+}
 
 int paint_lines(Raster *rs, const MapView *v,
                 const NMBinFile *nodes, const NMBinFile *lines,
@@ -945,62 +1549,27 @@ int paint_lines(Raster *rs, const MapView *v,
     int32_t vlo0 = (int32_t)(lo0 * 1e7), vlo1 = (int32_t)(lo1 * 1e7);
     double zoom = v->zoom;
 
-    /* 同上：不清零，多省循环时跨省累加。 */
-    for (uint64_t i = 0; i < nl; i++) {
-        /* bbox 预筛：线没有 tile 索引，这是唯一能避免"为每条线投影全部顶点"
-           的手段。放在去重之前——bbox 测试比哈希便宜得多。 */
-        if (bb) {
-            if (bb[i * 4 + 2] < vla0 || bb[i * 4] > vla1 ||
-                bb[i * 4 + 3] < vlo0 || bb[i * 4 + 1] > vlo1)
-                continue;
-        }
-        const uint8_t *lr = lines->data + i * SK_LINE_BYTES;
-        uint8_t cls = lr[LF_CLASS];
-        /* LOD：步行道细节多、密度大，中高 zoom 才显示 */
-        if (cls == RC_PATH && zoom < 14.0) continue;
-        if (zoom < 8.0) continue;
+    LineCtx ctx;
+    ctx.P = &P;
+    ctx.nodes = nodes;
+    ctx.lines = lines;
+    ctx.polyrefs = polyrefs;
+    ctx.nn = nn;
+    ctx.np = np;
+    ctx.vla0 = vla0; ctx.vla1 = vla1;
+    ctx.vlo0 = vlo0; ctx.vlo1 = vlo1;
+    ctx.la0 = la0;  ctx.la1 = la1;
+    ctx.lo0 = lo0;  ctx.lo1 = lo1;
 
-        /* ★ 线要素同样不去重（理由同面要素，见 PLAN.md §23）。 */
-
-        uint32_t off = sk_get_u32(lr + LF_REF_OFF);
-        uint32_t cnt = sk_get_u32(lr + LF_REF_CNT);
-        if ((uint64_t)off + cnt > np) continue;
-
-        int vis = 0;
-        int px[4096], py[4096];
-        int n = 0;
-        for (uint32_t k = 0; k < cnt && n < 4096; k++) {
-            uint32_t idx = sk_get_u32(polyrefs->data + ((uint64_t)off + k) * 4);
-            if ((uint64_t)idx >= nn) continue;
-            const uint8_t *nr = nodes->data + (uint64_t)idx * SK_NODE_BYTES;
-            int32_t ila = sk_get_i32(nr + NF_LAT), ilo = sk_get_i32(nr + NF_LON);
-            double la = (double)ila / 1e7;
-            double lo = (double)ilo / 1e7;
-            if (la >= la0 && la <= la1 && lo >= lo0 && lo <= lo1) vis = 1;
-            int x, y;
-            mv_proj_e7(&P, ila, ilo, &x, &y);
-            px[n] = x; py[n] = y; n++;
-        }
-        if (!vis || n < 2) continue;
-
-        uint8_t cr, cg, cb, width;
-        switch (cls) {
-        case RC_RAIL:  cr = 120; cg = 120; cb = 132; width = (zoom < 12.5) ? 1 : 2; break;
-        case RC_WATER: cr = 150; cg = 195; cb = 230; width = (zoom < 12.5) ? 1 : 2; break;
-        default:       cr = 202; cg = 199; cb = 190; width = 1; break;  /* RC_PATH */
-        }
-        uint32_t col = raster_rgb(rs, cr, cg, cb);
-        if (width <= 1) {
-            stroke_begin();
-            for (int k = 0; k < n; k++) stroke_push(rs, px[k], py[k], col);
-            stroke_flush();
-        } else {
-            for (int k = 1; k < n; k++)
-                raster_thick_line(rs, px[k - 1], py[k - 1], px[k], py[k],
-                                  width, col);
-        }
-        st->lines_drawn++;
+    int nband = band_pick_count();
+    if (nband > 1 && nl >= SK_BAND_MIN_LINES && bb) {
+        if (paint_lines_banded(rs, &ctx, bb, nl, zoom, nband, st) == 0)
+            return 0;
     }
+
+    /* 同上：不清零，多省循环时跨省累加。 */
+    for (uint64_t i = 0; i < nl; i++)
+        line_emit(rs, &ctx, i, bb ? bb + (size_t)i * 4 : NULL, zoom, 1, st);
     return 0;
 }
 
