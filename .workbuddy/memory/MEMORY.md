@@ -76,6 +76,9 @@
 
 ## 别再试（verdicts only）
 - 渲染：简化几何/去描边/面 tile 索引/顶点内联/软件预取/合并折线/NMBIN v3 全否；贵在间接寻址非 stride。
+- ★★★ 换语言（C→Rust）不是渲染性能杠杆：`-O3`/`-march=native` 实测零收益（`CMakeLists.txt:18`，native 已含自动向量化）⇒ 瓶颈在内存访问与每要素固定开销，非算术吞吐；Rust 走同一 LLVM 后端，1:1 移植预期 0%（±5%）。LOD 档位（`AREA_DOT_PX` 2→3 省 15%）仍在；**多线程分带已于 11-10 落地**（见下条）。详见 `2026-11-10.md`。
+- ★★★ 分带并行已落地（d8ed879）：`band.{c,h}` + `SKEDADDLE_BANDS`（0=串行基线/N=强制/缺省核数≤8）；面/线/路三阶段出图与串行逐字节一致，阶段和 z9 57→33ms、z11 60→32、z13 29→16（1.7~1.9×）。四陷阱勿再犯：①跨带线段对画布裁剪出串行同端点再逐像素滤带（重跑 Bresenham 漂 1px）②路分桶余量只给 ±3 行，搬视口 margin(64) 会让每边被 2.3 带重画反变慢 ③带早退判据须比分桶宽 4 行，相等则边界边"分进来又退掉"不画不计数 ④路名锚点钳到端带（串行画布外中点也收），按 seq 归并还原串行序。
+- ★★ 离屏出图必须从仓库根目录跑：POI/地名数据按 cwd 相对路径找，从 dist/ 里跑 `place_labels=0`/`poi_icons=0` 整图差 4.2%（白字全没）⇒ 与历史基线对拍假 DIFF。Windows regress 运行时 PATH：`dist/skedaddle-release` + `ucrt64/bin`（编译期仍禁 Qt bin）。
 - ★ 瓦片缓存/条带复用全量回退：`mv_project` 逐要素 lround + `sk_mercator_y_fast` 与 `inv` 不互逆 ⇒ 复用区差 1px。
 - 算路：rev.bin v2 / PQ 叉数≠4 / 状态表改布局 全败；`RouteOpts` 一律指名初始化。地标 >30 无收益；改地标数须连带重定 w。
 - 一次 `nmbin_open` 全部 disp tile 耗尽 Windows 映射句柄 ⇒ 逐 tile 开→拼→关。浮层透明度：`QGraphicsOpacityEffect` 与"整块一起淡"已否。
@@ -83,7 +86,7 @@
 - ★ `core.autocrlf=true`：Python 文本模式写文件会转 CRLF 造成假 `M` ⇒ 读写都用 `newline=''` 或 rb/wb。
 
 ## 已达成水平（参考口径，勿跨口径相减）
-- 渲染 1280×800：z9 113 / z11 51 / z13 35 / z15 16 ms（8 省北京中心，4 轮最小）。算路 50 条(30 地标 w=1.25)：中位 123 / p90 753 / 最慢 1503 ms，展开 10.43M；比无表快 1.6×、p90 4.2×、质量 −3.21%。
+- 渲染 1280×800：z9 113 / z11 51 / z13 35 / z15 16 ms（8 省北京中心，4 轮最小；串行口径）。**分带并行后（北京单省，11-10）**：阶段和（面+路+线）z9 33 / z11 32 / z13 16 ms，1.7~1.9×；标注阶段仍串行。算路 50 条(30 地标 w=1.25)：中位 123 / p90 753 / 最慢 1503 ms，展开 10.43M；比无表快 1.6×、p90 4.2×、质量 −3.21%。
 
 ## Android 原生 JNI App（11-04，见 docs/android.md）
 - 原生 JNI App，不动 `ui_qt`；C 核心零改动，平台差异全在 `plat.c` 的 `__ANDROID__` 分支。工程 `android/`（Gradle + NDK CMake 复用 `src/` 编 `libskedaddle.so`），JNI 包名 `com.skedaddle.android.Skedaddle`。
