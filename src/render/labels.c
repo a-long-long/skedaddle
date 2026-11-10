@@ -519,26 +519,36 @@ static void shape_fill(Raster *rs, int x, int y, int t, PoiShape sh, uint32_t c)
     fill_poly(rs, px, py, 4, c);
 }
 
-/* POI 标记半径：默认 4（外径 2R+1=9~10px）。SKEDADDLE_POI_R=6 恢复 11-06
- * 之前的尺寸，配合 SKEDADDLE_LABEL_HALO=0 + SKEDADDLE_FONT_SHARP=1.0 可
- * 逐字节复现改动前的出图（跨端负向对照，别让基线悄悄作废）。
- * 进程内只读一次环境变量，零逐帧开销。 */
-static int poi_radius(void)
+/* POI 标记半径（外径 2R+1）：SKEDADDLE_POI_R=固定值整体覆盖（负向对照：
+ * =4 即旧"全档恒定 4"行为，配合 SKEDADDLE_LABEL_HALO=0 + SKEDADDLE_FONT_SHARP=1.0
+ * 可逐字节复现改动前的出图）；缺省按缩放分档：
+ *   zoom<15 → 4   z13 POI 出场档，城区一屏两三百个，10px 已是密度上限
+ *   z15~16  → 5   街道级密度下降，色芯 4px 起可分辨十字/方块等子类形状
+ *   z>=17   → 6   要素稀疏，读得清优先于占得少
+ * 进程内只读一次环境变量；半径在决策期（主线程）算好、随命令下发，
+ * worker 不碰 env/static，无竞态。 */
+static int poi_radius_for_zoom(double zoom)
 {
-    static int r = 0;
-    if (r == 0) {
+    static int forced = -1;
+    if (forced < 0) {
         const char *e = getenv("SKEDADDLE_POI_R");
-        int v = (e && *e) ? atoi(e) : 4;
-        if (v < 2) v = 2;
-        if (v > 12) v = 12;
-        r = v;
+        int v = (e && *e) ? atoi(e) : 0;
+        if (v > 0) {
+            if (v < 2) v = 2;
+            if (v > 12) v = 12;
+        }
+        forced = v;                     /* 0 = 未设置，走缩放分档 */
     }
-    return r;
+    if (forced > 0) return forced;
+    if (zoom < 15.0) return 4;
+    if (zoom < 17.0) return 5;
+    return 6;
 }
 
 /* 画一个 POI 标记：深灰描边 + 白底 + 类别色芯，紧贴 (x,y) 坐标点。
- * sub = kind 11 的子类（交通/教育/医疗/旅游/生活），影响色芯颜色与形状。 */
-static void draw_poi_marker(Raster *rs, int x, int y, int kind, int sub)
+ * sub = kind 11 的子类（交通/教育/医疗/旅游/生活），影响色芯颜色与形状；
+ * R = 半径（决策期按 zoom 分档，见 poi_radius_for_zoom）。 */
+static void draw_poi_marker(Raster *rs, int x, int y, int kind, int sub, int R)
 {
     uint8_t r, g, b; PoiShape sh;
     poi_style(kind, sub, &r, &g, &b, &sh);
@@ -546,9 +556,8 @@ static void draw_poi_marker(Raster *rs, int x, int y, int kind, int sub)
     uint32_t white = raster_rgb(rs, 255, 255, 255);
     uint32_t col   = raster_rgb(rs, r, g, b);
     /* z12 一屏两三百个标记，旧外径 14px 会把小字压住、满屏彩色噪点。
-     * 缩到外径 10px（面积约减半），色芯保留 3px 仍能区分类别颜色/形状。
-     * R=6 时用旧的 R-2 色芯，保证旧基线逐字节可复现。 */
-    int R = poi_radius();
+     * R=4（10px，面积约减半）色芯 3px 仍能区分类别颜色；R>=6 用 R-2
+     * 色芯保持描边/白底比例，SKEDADDLE_POI_R=6 时旧基线逐字节可复现。 */
     int core = (R >= 6) ? R - 2 : R - 1;
     shape_fill(rs, x, y, R + 1, sh, dark);
     shape_fill(rs, x, y, R,     sh, white);
@@ -577,6 +586,7 @@ typedef struct {
     uint8_t      type;      /* LCMD_* */
     uint8_t      r, g, b;
     uint8_t      sub;       /* LCMD_POI 用：kind 11 子类 */
+    uint8_t      R;         /* LCMD_POI 用：半径（决策期按 zoom 分档） */
     int16_t      poi_kind;  /* LCMD_POI 用 */
     const char  *text;      /* LCMD_HALO/SHADOW 用（指向 lc->items / np->blob） */
     Font        *font;      /* 小字 or 区名大字 */
@@ -593,7 +603,8 @@ static int       s_lcmd_n;
 
 static int lcmd_push(uint8_t type, Font *font, const char *text,
                      int x, int y, int ylo, int yhi,
-                     uint8_t r, uint8_t g, uint8_t b, int poi_kind, int sub)
+                     uint8_t r, uint8_t g, uint8_t b, int poi_kind, int sub,
+                     int R)
 {
     if (s_lcmd_n >= s_lcmd_cap) {
         int nc = s_lcmd_cap ? s_lcmd_cap * 2 : 512;
@@ -607,6 +618,7 @@ static int lcmd_push(uint8_t type, Font *font, const char *text,
     c->x = x; c->y = y; c->ylo = ylo; c->yhi = yhi;
     c->r = r; c->g = g; c->b = b; c->poi_kind = (int16_t)poi_kind;
     c->sub = (uint8_t)sub;
+    c->R = (uint8_t)(R > 0 && R < 255 ? R : 0);
     return 0;
 }
 
@@ -641,7 +653,7 @@ static void label_task(void *arg, int tid)
             font_draw_a_pre(c->font, rs, c->x, c->y, c->text, c->r, c->g, c->b, 1, 255);
             break;
         case LCMD_POI:
-            draw_poi_marker(rs, c->x, c->y, c->poi_kind, c->sub);
+            draw_poi_marker(rs, c->x, c->y, c->poi_kind, c->sub, c->R);
             break;
         case LCMD_DOT:
             fill_disc(rs, c->x, c->y, 2, raster_rgb(rs, c->r, c->g, c->b));
@@ -694,10 +706,9 @@ void paint_place_labels(Raster *rs, const MapView *v,
     memset(g_grid, 0, sizeof(g_grid));
     grid_for_font(font, v->w, v->h);
     s_lcmd_n = 0;                 /* 命令缓冲每帧重用 */
-    /* 懒初始化的静态量必须在决策期（主线程）先踩一遍：worker 线程里首调
-       是"读 env → 写 static"的竞态。halo_enabled 在下方本来就会调；
-       poi_radius 只有 draw_poi_marker 里会碰，这里显式预热。 */
-    if (show_poi) (void)poi_radius();
+    /* POI 半径在决策期一次算好随命令下发：worker 不再碰"读 env → 写 static"
+     * 的懒初始化（竞态随之消失），LCMD_POI 的 R 字段只读。 */
+    int poi_R = poi_radius_for_zoom(v->zoom);
 
     /* ★ 1/2/5/10 公里等中低 zoom 才有「区域名」层：市/区名用大字、镇名加白描边，
      *   与 POI 小字拉开视觉层级。旧实现把 kind 1~2 的行政区名和村名/POI 画成
@@ -772,13 +783,13 @@ void paint_place_labels(Raster *rs, const MapView *v,
                     g_grid[yy * GRID_COLS + xx] = 1;
             if (lcmd_push(LCMD_HALO, big, it->name, ax0, ay0,
                           ay0 - up_b - 3, ay0 + dn_b + 3,
-                          30, 44, 76, 0, 0) != 0)
+                          30, 44, 76, 0, 0, 0) != 0)
                 goto oom;
             /* 小小定位点取代 POI 圆圈：区名代表"一片地方"而非一个设施 */
             {
                 int dy = ay0 + big_ch + 3;
                 if (lcmd_push(LCMD_DOT, NULL, NULL, x, dy,
-                              dy - 2, dy + 2, 30, 44, 76, 0, 0) != 0)
+                              dy - 2, dy + 2, 30, 44, 76, 0, 0, 0) != 0)
                     goto oom;
             }
             drawn++;
@@ -791,12 +802,13 @@ void paint_place_labels(Raster *rs, const MapView *v,
             /* 镇名：普通字号 + 白描边深色字，形成第二级层次 */
             if (lcmd_push(LCMD_HALO, font, it->name, tx, ty,
                           ty - up_s - 3, ty + dn_s + 3,
-                          38, 42, 54, 0, 0) != 0)
+                          38, 42, 54, 0, 0, 0) != 0)
                 goto oom;
             drawn++;
             if (show_poi) {
                 if (lcmd_push(LCMD_POI, NULL, NULL, x, y,
-                              y - 13, y + 13, 0, 0, 0, it->kind, it->sub) != 0)
+                              y - 13, y + 13, 0, 0, 0, it->kind, it->sub,
+                              poi_R) != 0)
                     goto oom;
                 icons++;
             }
@@ -806,7 +818,8 @@ void paint_place_labels(Raster *rs, const MapView *v,
         /* 图标与标签独立开关，但共用一个避让格（任一个显示就占格，避免重叠） */
         if (show_poi) {
             if (lcmd_push(LCMD_POI, NULL, NULL, x, y,
-                          y - 13, y + 13, 0, 0, 0, it->kind, it->sub) != 0)
+                          y - 13, y + 13, 0, 0, 0, it->kind, it->sub,
+                          poi_R) != 0)
                 goto oom;
             icons++;
         }
@@ -816,7 +829,7 @@ void paint_place_labels(Raster *rs, const MapView *v,
              * 配合 SKEDADDLE_FONT_SHARP=1.0 做逐字节负向对照。 */
             if (lcmd_push(halo_on ? LCMD_HALO : LCMD_SHADOW, font, it->name,
                           tx, ty, ty - up_s - 3, ty + dn_s + 3,
-                          46, 48, 56, 0, 0) != 0)
+                          46, 48, 56, 0, 0, 0) != 0)
                 goto oom;
             drawn++;
         }
@@ -885,7 +898,7 @@ void paint_road_labels(Raster *rs, const MapView *v, Font *font,
          * 否则深蓝灰小字 + 1px 黑影仍是发虚的一批。 */
         if (lcmd_push(halo_on ? LCMD_HALO : LCMD_SHADOW, font, s,
                       x, y, y - up_s - 3, y + dn_s + 3,
-                      70, 80, 110, 0, 0) != 0)
+                      70, 80, 110, 0, 0, 0) != 0)
             break;                          /* OOM：这帧余下路名不画 */
         drawn++;
     }
