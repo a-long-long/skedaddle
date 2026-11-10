@@ -74,10 +74,12 @@ static int poi_sub_enabled(void);
 
 /* 外部 POI 文件：products/poi_ext.csv（环境变量 SKEDADDLE_POI_EXT 可覆盖路径）。
  * 格式（UTF-8，'#' 注释，空行忽略）：
- *     名称,纬度,经度[,权重]
+ *     名称,纬度,经度[,权重[,子类]]
  * 名称里不能有逗号；权重缺省 50 —— 量纲对齐 places_build：车站/机场 60、
  * 大学/医院 50，镇名 22。给 50 = 与重要设施同级；想压过村名可给 80+。
- * kind 恒为 11（设施 POI：蓝圆图标、z13 起可见、受「POI 显示」开关控制）。
+ * 子类缺省 0（通用蓝圆），可给 1~5 吃 poi_style 的分形状配色：
+ * 1交通(紫方块) 2教育(褐圆) 3医疗(红十字) 4旅游(绿圆) 5生活(琥珀圆)。
+ * kind 恒为 11（设施 POI：z13 起可见、受「POI 显示」开关控制）。
  * 文件不存在 = 空表：poi_source=1 时画不出设施 POI，属预期（不是错误）。
  * ★ init 载一次、不做热重载：外部 POI 是"一份数据"不是"实时源"，
  *   改文件重启生效——省掉每帧 stat 的开销和半途重载的一致性问题。 */
@@ -90,10 +92,12 @@ static void poi_ext_load(LabelCache *lc)
     char line[512];
     while (fgets(line, sizeof(line), f)) {
         if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
-        char name[64]; double la, lo; int w = 50, n;
-        if ((n = sscanf(line, "%63[^,],%lf,%lf,%d", name, &la, &lo, &w)) < 3) continue;
+        char name[64]; double la, lo; int w = 50, sub = 0, n;
+        n = sscanf(line, "%63[^,],%lf,%lf,%d,%d", name, &la, &lo, &w, &sub);
+        if (n < 3) continue;
         if (la < -90.0 || la > 90.0 || lo < -180.0 || lo > 180.0) continue;
         if (n < 4) w = 50;
+        if (sub < 0) sub = 0; else if (sub > 5) sub = 5;
         if (lc->n_ext >= lc->ext_cap) {
             int nc = lc->ext_cap ? lc->ext_cap * 2 : 256;
             LabelItem *q = (LabelItem *)realloc(lc->ext,
@@ -104,7 +108,7 @@ static void poi_ext_load(LabelCache *lc)
         LabelItem *it = &lc->ext[lc->n_ext++];
         snprintf(it->name, sizeof(it->name), "%s", name);
         it->lat = la; it->lon = lo; it->kind = 11; it->weight = w;
-        it->sub = 0;   /* 外部 CSV 不区分子类：通用蓝圆 */
+        it->sub = sub;   /* 0=通用蓝圆；1~5 分形状配色，见上 */
     }
     fclose(f);
     if (lc->n_ext)
