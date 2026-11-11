@@ -41,6 +41,46 @@ static const char *u8_next(const char *p, const char *end)
     return q > end ? end : q;
 }
 
+/* 地址串规范化（见 search.h）。UTF-8 逐"字符"处理，多字节整段复制，
+ * 绝不劈开汉字；规范化只会变短或等长，不会变长。 */
+int search_normalize_addr(const char *in, char *out, size_t cap)
+{
+    if (!out || cap == 0) return 0;
+    out[0] = '\0';
+    if (!in) return 0;
+    const unsigned char *p = (const unsigned char *)in;
+    size_t o = 0;
+    while (*p && o + 4 < cap) {
+        if (p[0] == 0xE3 && p[1] == 0x80 && p[2] == 0x80) { p += 3; continue; } /* U+3000 */
+        if (p[0] == 0xEF && p[1] == 0xBC && p[2] >= 0x90 && p[2] <= 0x99) {    /* U+FF10..19 */
+            out[o++] = (char)('0' + (p[2] - 0x90)); p += 3; continue;
+        }
+        if (p[0] == 0xEF && p[1] == 0xBC && p[2] >= 0xA1 && p[2] <= 0xBA) {    /* U+FF21..3A */
+            out[o++] = (char)('a' + (p[2] - 0xA1)); p += 3; continue;
+        }
+        if (p[0] == 0xEF && p[1] == 0xBD && p[2] >= 0x81 && p[2] <= 0x9A) {    /* U+FF41..5A */
+            out[o++] = (char)('a' + (p[2] - 0x81)); p += 3; continue;
+        }
+        if (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') { p++; continue; }
+        if (*p >= 'A' && *p <= 'Z') { out[o++] = (char)(*p + 32); p++; continue; }
+        if (*p < 0x80) { out[o++] = (char)*p; p++; continue; }
+        size_t len = (*p >= 0xF0) ? 4 : (*p >= 0xE0) ? 3 : (*p >= 0xC0) ? 2 : 1;
+        size_t k = 0;
+        for (; k < len && p[k]; k++) out[o + k] = (char)p[k];
+        o += k; p += k;
+    }
+    out[o] = '\0';
+    if (o >= 3) {
+        unsigned char a = (unsigned char)out[o-3], b = (unsigned char)out[o-2],
+                      c = (unsigned char)out[o-1];
+        if ((a == 0xE5 && b == 0x8F && c == 0xB7) ||   /* 号 */
+            (a == 0xE8 && b == 0x99 && c == 0x9F)) {   /* 號 */
+            o -= 3; out[o] = '\0';
+        }
+    }
+    return (int)o;
+}
+
 int search_bigrams(const char *q, char grams[][GRAM_BYTES], int max_grams,
                    int *chars)
 {
@@ -254,20 +294,37 @@ int search_query(SearchDb *d, const char *q,
 
     clock_t t0 = clock();
 
+    /* ★ 查询与建库共用一份地址规范化：用户输入「建国路 88 号」与库里
+       「建国路88」的 bigram / 子串复核才能对上。普通地名是恒等变换，
+       旧查询结果逐条不变（负向对照）。 */
+    char qn[256];
+    search_normalize_addr(q, qn, sizeof(qn));
+    if (!*qn) return 0;
+
+    /* ★ 门牌（kind 14）只在查询串含数字时参与召回：用户搜「中关村」要的是
+       地名，不是「中关村大街27」；门牌行进的是同一张 gram 表，不加门控会
+       挤占候选并把精确同名地名压到后面（11-11 实测 search_cli 断言变红）。
+       门牌查询必然带号码数字 ⇒ 这条门控不影响任何门牌搜索，且让不含数字的
+       普通查询与改动前逐条一致（负向对照）。14 与 places_build.c 的
+       PLK_ADDRESS 双处锚定（search 层不能 include 建库端头）。 */
+    int q_has_digit = 0;
+    for (const char *p = qn; *p; p++)
+        if (*p >= '0' && *p <= '9') { q_has_digit = 1; break; }
+
     char grams[MAX_GRAMS][GRAM_BYTES];
     int nchars = 0;
-    int ng = search_bigrams(q, grams, MAX_GRAMS, &nchars);
+    int ng = search_bigrams(qn, grams, MAX_GRAMS, &nchars);
 
     IdList ids = { 0 };
     if (ng > 0) {
         ids_by_grams(d, grams, ng, &ids);
     } else {
         /* 单字（或空）：先走 gram 前缀，没结果再全表兜底 */
-        ids_by_prefix(d, q, &ids);
+        ids_by_prefix(d, qn, &ids);
         if (ids.n == 0) {
             free(ids.v);
             ids.v = NULL; ids.n = ids.cap = 0;
-            ids_by_scan(d, q, &ids);
+            ids_by_scan(d, qn, &ids);
         }
     }
 
@@ -294,8 +351,9 @@ int search_query(SearchDb *d, const char *q,
             h.dist_m = -1;
 
             /* ★ 子串复核：gram 全中不等于连续 */
-            if (!contains_ci(h.name, q)) continue;
+            if (!contains_ci(h.name, qn)) continue;
             if (kind_max > 0 && h.kind > kind_max) continue;
+            if (h.kind >= 14 && !q_has_digit) continue;
 
             double dist = -1;
             if (have_center) {
@@ -305,10 +363,10 @@ int search_query(SearchDb *d, const char *q,
             }
             double base = have_center ? dist / (1.0 + h.weight * 0.05)
                                       : 1000.0 / (1.0 + (double)h.weight);
-            int exact  = (strcmp(h.name, q) == 0);
-            int prefix = !exact && (strncmp(h.name, q, strlen(q)) == 0);
+            int exact  = (strcmp(h.name, qn) == 0);
+            int prefix = !exact && (strncmp(h.name, qn, strlen(qn)) == 0);
             double qm   = exact ? 3.0 : (prefix ? 2.0 : 1.0);
-            int extra   = (int)strlen(h.name) - (int)strlen(q);
+            int extra   = (int)strlen(h.name) - (int)strlen(qn);
             if (extra < 0) extra = 0;
             h.score = base * (1.0 + extra * 0.03) / qm;
             cand[nc].h = h;

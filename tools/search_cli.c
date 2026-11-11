@@ -42,6 +42,8 @@ int main(int argc, char **argv)
     const char *db = "products/places_auto.db";
     const char *near_s = NULL;
     const char *q = NULL;
+    const char *q_file = NULL;   /* --q-file: UTF-8 文件读查询串（Windows
+                                    命令行传中文会被 MSYS2 转码，验收会假红） */
     int limit = 20, repeat = 20, recall_check = 0;
     int fails = 0;
 
@@ -51,11 +53,23 @@ int main(int argc, char **argv)
         const char *a = argv[i], *v;
         if ((v = tc_arg_val(a, "--db=")))          db = v;
         else if ((v = tc_arg_val(a, "--q=")))      q = v;
+        else if ((v = tc_arg_val(a, "--q-file="))) q_file = v;
         else if ((v = tc_arg_val(a, "--near=")))   near_s = v;
         else if ((v = tc_arg_val(a, "--limit=")))  limit = atoi(v);
         else if ((v = tc_arg_val(a, "--repeat="))) repeat = atoi(v);
         else if (strcmp(a, "--recall-check") == 0) recall_check = 1;
         else { fprintf(stderr, "未知参数 %s\n", a); return 2; }
+    }
+
+    char qbuf[256];
+    if (q_file) {
+        FILE *f = fopen(q_file, "rb");
+        if (!f) { printf("ASSERT-FAIL    打不开查询文件 %s\n", q_file); return 1; }
+        size_t nr = fread(qbuf, 1, sizeof(qbuf) - 1, f);
+        fclose(f);
+        qbuf[nr] = '\0';
+        while (nr > 0 && (qbuf[nr-1] == '\n' || qbuf[nr-1] == '\r')) qbuf[--nr] = '\0';
+        q = qbuf;
     }
 
     SearchDb *d = search_open(db);
@@ -104,9 +118,13 @@ int main(int argc, char **argv)
             else             snprintf(dd, sizeof(dd), "-");
             printf("  %2d  %-22s kind %2d w %2d  %s\n",
                    i, hits[i].name, hits[i].kind, hits[i].weight, dd);
-            /* 1. 结果名必须真的含关键词 */
-            if (!strstr(hits[i].name, words[w]))
-                FAIL("%s 的第 %d 条结果「%s」不含关键词\n", words[w], i, hits[i].name);
+            /* 1. 结果名必须真的含关键词。★ 用规范化后的词比：用户可能输入
+               「建国路 88 号」，库里存的是规范化名「建国路88」，原串直接
+               strstr 会误报 ASSERT-FAIL（查询端与建库端共用一份规范化）。 */
+            char qn[128];
+            search_normalize_addr(words[w], qn, sizeof(qn));
+            if (!strstr(hits[i].name, qn))
+                FAIL("%s 的第 %d 条结果「%s」不含关键词\n", qn, i, hits[i].name);
             /* 2. 排序单调：直接用结果里带回的排序分，不重算公式 */
             if (prev_score >= 0 && hits[i].score < prev_score - 1e-9)
                 FAIL("%s 排序不是升序：第 %d 条分数更小（%.3f < %.3f）\n",
@@ -119,7 +137,9 @@ int main(int argc, char **argv)
         if (have_center && n > 1) {
             double dmin = hits[0].dist_m;
             for (int i = 1; i < n; i++) {
-                if (strcmp(hits[i].name, words[w]) == 0 &&
+                char qn2[128];
+                search_normalize_addr(words[w], qn2, sizeof(qn2));
+                if (strcmp(hits[i].name, qn2) == 0 &&
                     hits[i].dist_m <= dmin * 2.0 + 1000.0)
                     FAIL("%s 有同名条目（%.1f km）却排在第 %d 位\n",
                          words[w], hits[i].dist_m / 1000.0, i);

@@ -63,4 +63,13 @@ int search_query(SearchDb *d, const char *q,
    最多 16 字节）。chars 回填关键词的字符数。 */
 int search_bigrams(const char *q, char grams[][16], int max_grams, int *chars);
 
+/* 地址串规范化：去空白（含全角空格）、全角数字/字母转半角、ASCII 大写转
+   小写、去掉末尾的「号 / 號」。返回写入 out 的字节数（不含 NUL）。
+ * ★ 建库端（places_build 拼 addr:street + addr:housenumber）与查询端
+ *   （search_query）必须调同一份，否则「建国路 88 号」搜不到库里的
+ *   「建国路88号」——bigram 与子串复核会同时失配（沿用 search_bigrams
+ *   那份「两端一份实现」的纪律）。
+ * ★ 普通地名不带空格/号尾缀 ⇒ 规范化是恒等变换，旧查询结果逐条不变。 */
+int search_normalize_addr(const char *in, char *out, size_t cap);
+
 #endif

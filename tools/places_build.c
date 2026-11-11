@@ -67,7 +67,13 @@ enum {
     PLK_POI     = 11,  /* 有名字的设施（车站 / 学校 / 景区 / 商场…） */
     PLK_FEATURE = 12,  /* 其他有名字的地物（桥梁 / 堤 / 城墙…） */
     PLK_ROAD    = 13,  /* 路名 —— **只进搜索，永不画**（见下方说明） */
+    PLK_ADDRESS = 14,  /* 门牌 addr:street + addr:housenumber —— 同理只进搜索 */
 };
+
+/* 门牌权重：低于任何 POI / 行政区，排序时自然靠后，不挤占普通搜索结果。
+ * 渲染层 kind<=12 天然不画（labels.c kind_max_for_zoom），搜索层 kind_max=0
+ * 不限，于是一个字段就同时满足「能搜到」与「不画出来」。 */
+#define PLK_ADDR_WEIGHT 8
 
 /* sub：设施 POI（kind 11）的子类。渲染端按它分形状/配色（labels.c 的
  * poi_style），0 = 未识别/通用（蓝圆，与加列前的出图逐字节一致）。
@@ -597,6 +603,7 @@ typedef struct {
     uint16_t kind;
     int16_t  weight;
     uint8_t  sub;       /* kind 11 的子类（PSUB_*），其余 kind 恒 0 */
+    uint8_t  key_slot;  /* keyset_seen 的 osm_key 低两位：2=way / 3=门牌 way */
 } WayCand;
 
 typedef struct {
@@ -664,6 +671,25 @@ static size_t clip_name(const char *s, size_t len, size_t max)
     return last;
 }
 
+/* 门牌：addr:street + addr:housenumber → 规范化的可搜索串。
+ * ★ 必须拼成「街道+号码」而不是只存号码：name_is_numeric 会丢纯数字名，
+ *   而且用户搜的是「建国路88号」不是「88」。
+ * ★ 两端（这里与 search_query）调同一份 search_normalize_addr，
+ *   否则「建国路 88 号」与库里「建国路88」的 bigram 会分叉。 */
+static int make_addr_name(const char *street, const char *house,
+                          char *out, size_t cap)
+{
+    if (!street || !*street || !house || !*house) return 0;
+    char raw[PL_NAME_MAX], norm[PL_NAME_MAX];
+    snprintf(raw, sizeof(raw), "%s%s", street, house);
+    search_normalize_addr(raw, norm, sizeof(norm));
+    if (!*norm) return 0;
+    size_t l = clip_name(norm, strlen(norm), cap - 1);
+    memcpy(out, norm, l);
+    out[l] = '\0';
+    return l > 0;
+}
+
 /* 去掉空白后全是数字的名字（"551"、"226"）是编号，不是地名。
  * 实测北京抽上来一百多条这种，混在搜索结果里很难解释为"搜索质量"。 */
 static int name_is_numeric(const char *s)
@@ -721,7 +747,13 @@ static int emit_row(Builder *b, BuildStats *st, uint64_t osm_key, double lat,
     if (!name || !*name) return 0;
     if (keyset_seen(&b->seen, osm_key)) { st->dup_dropped++; return 0; }
     if (name_is_numeric(name))          { st->numeric_name++; return 0; }
-    if (same_place_seen(b, name, lat, lon)) { st->dup_sameplace++; return 0; }
+    /* ★ 门牌（kind 14）不参与「同名同处」合并：拼出来的名字可能与建筑自身的
+       name 完全相同（实测「复兴路61号院」），参与合并会把原有 POI 行吞掉
+       —— 这是 11-11 重建时丢 3 条老数据的真因。门牌自身靠 osm_key 槽位 3
+       去重就够了，不同楼同号也不该被 330m 格合并。 */
+    if (kind != PLK_ADDRESS && same_place_seen(b, name, lat, lon)) {
+        st->dup_sameplace++; return 0;
+    }
 
     sqlite3_int64 id = ++b->sink.next_id;
     sqlite3_stmt *s = b->sink.ins_place;
@@ -759,6 +791,20 @@ static int handle_tagged_node(Builder *b, PbfBlock *blk, int64_t osm_id,
     BuildStats *st = &b->st;
     st->nodes_tagged++;
     if (n == 0) return 0;
+
+    /* ---- 门牌（addr:*）：kind 14 只进搜索、永不画 ----
+     * 用 osm_key 槽位 3，避免与同一 node 上可能同时存在的 POI 行（槽位 1）
+     * 在 keyset_seen 里互撞 —— 一栋楼既叫「某某餐厅」又有门牌是常见的。 */
+    {
+        const char *as = kv_get(blk, keys, vals, n, "addr:street");
+        const char *ah = kv_get(blk, keys, vals, n, "addr:housenumber");
+        char an[64];
+        if (make_addr_name(as, ah, an, sizeof(an))) {
+            uint64_t akey = ((uint64_t)osm_id << 2) | 3u;
+            emit_row(b, st, akey, lat_e7 / 1e7, lon_e7 / 1e7,
+                     PLK_ADDRESS, PLK_ADDR_WEIGHT, 0, an);
+        }
+    }
 
     Verdict vd;
     if (!class_node_tags(blk, keys, vals, n, &vd) || !vd.hit) return 0;
@@ -927,7 +973,42 @@ static int pass1(Builder *b, const char *path)
                         wc->kind    = PLK_ROAD;
                         wc->weight  = (int16_t)road_weight(hw);
                         wc->sub     = 0;
+                        wc->key_slot = 2;
                         continue;
+                    }
+                }
+
+                /* ---- ways 之二：门牌（建筑轮廓常把 addr:* 挂在 way 上） ----
+                 * 与路名同款：只取 refs 中点一个节点，门牌定位差几十米无妨。 */
+                {
+                    size_t nw = w->n_keys < w->n_vals ? w->n_keys : w->n_vals;
+                    const char *as = kv_get(blk, w->keys, w->vals, nw, "addr:street");
+                    const char *ah = kv_get(blk, w->keys, w->vals, nw, "addr:housenumber");
+                    char an[64];
+                    if (make_addr_name(as, ah, an, sizeof(an)) && w->n_refs > 0) {
+                        if (b->nwc >= b->capwc) {
+                            size_t nc = b->capwc ? b->capwc * 2 : 1024;
+                            WayCand *wp = realloc(b->wc, nc * sizeof(WayCand));
+                            if (!wp) { ret = -1; break; }
+                            b->wc = wp; b->capwc = nc;
+                        }
+                        if (buf_reserve(&b->refs, sizeof(int64_t)) != 0) { ret = -1; break; }
+                        size_t mid = w->n_refs / 2;
+                        int64_t acc = 0;
+                        for (size_t k = 0; k <= mid; k++) acc += w->refs[k];
+                        size_t word_ndx = b->refs.n / sizeof(int64_t);
+                        ((int64_t *)b->refs.p)[word_ndx] = acc;
+                        b->refs.n += sizeof(int64_t);
+                        size_t noff = buf_put_cstr(&b->names, an, strlen(an));
+                        WayCand *awc = &b->wc[b->nwc++];
+                        awc->osm_id   = w->id;
+                        awc->ref_off  = (uint32_t)word_ndx;
+                        awc->ref_cnt  = 1;
+                        awc->name_off = (uint32_t)noff;
+                        awc->kind     = PLK_ADDRESS;
+                        awc->weight   = PLK_ADDR_WEIGHT;
+                        awc->sub      = 0;
+                        awc->key_slot = 3;   /* 与 POI way(2) 分开去重 */
                     }
                 }
 
@@ -978,6 +1059,7 @@ static int pass1(Builder *b, const char *path)
                 wc->kind    = (uint16_t)vd.kind;
                 wc->weight  = (int16_t)vd.weight;
                 wc->sub     = (uint8_t)vd.sub;
+                wc->key_slot = 2;
             }
             if (ret) break;
         }
@@ -1091,7 +1173,8 @@ static void emit_ways(Builder *b)
             b->st.road_rows++;
         }
 
-        uint64_t key = ((uint64_t)wc->osm_id << 2) | 2u;   /* 2 = way */
+        uint64_t key = ((uint64_t)wc->osm_id << 2) |
+                       (wc->key_slot ? wc->key_slot : 2u);
         emit_row(b, &b->st, key, slat / nfound / 1e7, slon / nfound / 1e7,
                  wc->kind, wc->weight, wc->sub, name);
     }
@@ -1237,10 +1320,10 @@ static int selftest(const char *db_path)
         rows++;
         if (!nm || !*nm) { printf("ASSERT-FAIL    id %lld 名字为空\n", (long long)id); fails++; continue; }
         if (lat < -90 || lat > 90 || lon < -180 || lon > 180) bad_ll++;
-        /* 上限写成 PLK_ROAD 而不是 12：标注层的上限才是 12（labels.c 的
-         * kind_max_for_zoom），kind 13 是"只进搜索"的路名，合法。上次加完路名
-         * 就是在这条上吃了一记 ASSERT-FAIL —— 判据必须跟着 kind 表一起走。 */
-        if (kind < 1 || kind > PLK_ROAD) bad_kind++;
+        /* 上限跟着 kind 表走：12 是标注层 kind_max_for_zoom，13 路名、
+         * 14 门牌都是"只进搜索"的合法 kind。上次加完路名就是在这条上
+         * 吃了一记 ASSERT-FAIL。 */
+        if (kind < 1 || kind > PLK_ADDRESS) bad_kind++;
         if (weight <= 0) bad_kind++;
 
         if (rows % 7 != 0 && rows % 13 != 0) continue;   /* 抽样约 20%，其余靠总数兜底 */
