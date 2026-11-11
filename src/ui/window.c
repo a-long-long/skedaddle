@@ -63,6 +63,10 @@ int app_init(App *a, const char *graph_dir, int w, int h,
     a->max_class = settings_get_int(a->cfg, "max_class", 4);
     a->lod_area  = settings_get_int(a->cfg, "lod_area", 4);
     paint_set_area_dot_px(a->lod_area);   /* 面要素 LOD 档位（渲染静态档） */
+    a->pref_toll     = settings_get_int(a->cfg, "pref_toll", 0);
+    a->pref_ferry    = settings_get_int(a->cfg, "pref_ferry", 0);
+    a->pref_unpaved  = settings_get_int(a->cfg, "pref_unpaved", 0);
+    a->heading_up    = settings_get_bool(a->cfg, "heading_up", 0);
     a->need_redraw = 1;
     a->show_panel = settings_get_bool(a->cfg, "show_panel", 1);
     {
@@ -343,6 +347,10 @@ void app_apply_settings(App *a)
     a->max_class    = settings_get_int(a->cfg, "max_class", 4);
     a->lod_area     = settings_get_int(a->cfg, "lod_area", 4);
     paint_set_area_dot_px(a->lod_area);
+    a->pref_toll    = settings_get_int(a->cfg, "pref_toll", 0);
+    a->pref_ferry   = settings_get_int(a->cfg, "pref_ferry", 0);
+    a->pref_unpaved = settings_get_int(a->cfg, "pref_unpaved", 0);
+    a->heading_up   = settings_get_bool(a->cfg, "heading_up", 0);
     int dv = settings_get_int(a->cfg, "datum", 0);
     a->datum = (dv >= 0 && dv < DATUM_COUNT) ? dv : DATUM_WGS84;
     int gt = settings_get_int(a->cfg, "grid_type", 1);
@@ -382,6 +390,10 @@ void app_persist_settings(App *a)
     settings_set_int(a->cfg,  "font_size",   a->font_size);
     settings_set_int(a->cfg,  "max_class",   a->max_class);
     settings_set_int(a->cfg,  "lod_area",    a->lod_area);
+    settings_set_int(a->cfg,  "pref_toll",    a->pref_toll);
+    settings_set_int(a->cfg,  "pref_ferry",   a->pref_ferry);
+    settings_set_int(a->cfg,  "pref_unpaved", a->pref_unpaved);
+    settings_set_bool(a->cfg, "heading_up",  a->heading_up);
     settings_set_int(a->cfg,  "datum",       a->datum);
     settings_set_int(a->cfg,  "grid_type",   a->grid_type);
     ovl_store_all(a->cfg, a->ovl_alpha);
@@ -443,14 +455,21 @@ static void nav_drop_route(App *a)
 /* Router 惰性创建：状态表一上来就 30MB，只有真要算路才建。 */
 static int nav_ensure_router(App *a)
 {
-    if (a->router) return 0;
     /* heur_w 留 0：让 router_create 按"有没有 lm.bin"兜底（见 route.h ROUTE_HEUR_W_LM）。
        写死 1.4 会把兜底顶掉，有表时反而更贪心、路线更差。 */
-    RouteOpts opt = { .mode_time = 1, .bidir = 1 };
-    a->router = router_create(&a->ms, &opt);
     if (!a->router) {
-        fprintf(stderr, "路由初始化失败\n");
-        return -1;
+        RouteOpts opt = { .mode_time = 1, .bidir = 1,
+                          .pref_toll = a->pref_toll, .pref_ferry = a->pref_ferry,
+                          .pref_unpaved = a->pref_unpaved };
+        a->router = router_create(&a->ms, &opt);
+        if (!a->router) {
+            fprintf(stderr, "路由初始化失败\n");
+            return -1;
+        }
+    } else {
+        /* 设置项在面板里改完不必重建 Router（状态表 30MB）：每次算路前
+           把三个偏好同步过去即可。Qt 前端直接写 App 字段也走这条。 */
+        router_set_prefs(a->router, a->pref_toll, a->pref_ferry, a->pref_unpaved);
     }
     return 0;
 }
@@ -1041,6 +1060,15 @@ void app_nav_sim_tick(App *a)
     if (a->sim_follow) {
         a->view.lat = a->sim.car_lat;
         a->view.lon = a->sim.car_lon;
+    }
+    /* 车头朝上：投影层本来就有 rot（含 mv_unproject / Ctrl+拖动），这里只负责
+       把航向接过去。★ 只在"本功能写过 rot"时清零，免得把用户手动旋转的角度抹掉。 */
+    if (a->heading_up && a->sim_on && a->sim_follow) {
+        a->view.rot = a->sim.heading_deg;
+        a->rot_from_heading = 1;
+    } else if (a->rot_from_heading) {
+        a->view.rot = 0.0;
+        a->rot_from_heading = 0;
     }
     a->need_redraw = 1;
 }

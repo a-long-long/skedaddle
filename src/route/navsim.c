@@ -217,10 +217,33 @@ double navsim_remaining_m(const NavSim *s)
     return r > 0 ? r : 0;
 }
 
+/* ---------------------------------------------------------------------------
+ * ETA 动态校准接口（预留，默认关闭）
+ *
+ * 将来接实时路况 / 历史速度 / 实际行驶速度时，只需注册一个回调，把"按限速
+ * 算出的剩余秒数"换成"按当前路况估计的剩余秒数"。本模块只负责在唯一的
+ * 数值收敛点调用它，不改任何现有计算：
+ *   - 未注册（s_eta_cal == NULL）⇒ 恒等变换，逐位与改动前一致；
+ *   - 回调签名带 NavSim*，将来可按位置/时间/速度做条件校准；
+ *   - 返回值仍会被钳到 >= 0，坏数据不会让导航条显示负数。
+ * ★ 刻意**不**动 RouteResult.total_s / seg_ds：那是路线的物理时间
+ *   （route_check 有 Σseg_ds == total_s 自检），动态校准属于"显示层估计"，
+ *   两者分口才能做回归对拍。全程预计时间的显示（navdraw.c / chrome.c）
+ *   将来若也要校准，走同一个回调、传 NULL 之外的 NavSim 即可，接口不用改。
+ * ------------------------------------------------------------------------- */
+typedef double (*EtaCalibrator)(double remaining_s, const NavSim *s);
+static EtaCalibrator s_eta_cal = NULL;
+
+void navsim_set_eta_calibrator(double (*fn)(double, const NavSim *))
+{
+    s_eta_cal = fn;
+}
+
 double navsim_remaining_s(const NavSim *s)
 {
     if (!s || !s->rr) return 0;
     double r = s->rr->total_s - time_at_m(s, base_m(s));
+    if (s_eta_cal) r = s_eta_cal(r, s);
     return r > 0 ? r : 0;
 }
 

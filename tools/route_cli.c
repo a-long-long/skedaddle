@@ -82,6 +82,12 @@ int main(int argc, char **argv)
         else if (strcmp(a, "--maneuvers") == 0)     want_man = 1;
         else if (strcmp(a, "--avoid-toll") == 0)    opt.avoid_toll = 1;
         else if (strcmp(a, "--avoid-unpaved") == 0) opt.avoid_unpaved = 1;
+        /* 路线偏好三档：0 不限 / 1 尽量避免（软惩罚）/ 2 完全避开（硬排除）。
+           验收用：同一对起终点跑 0/1/2，展开数与里程应可区分。 */
+        else if ((v = tc_arg_val(a, "--pref-toll=")))     opt.pref_toll = atoi(v);
+        else if ((v = tc_arg_val(a, "--pref-ferry=")))    opt.pref_ferry = atoi(v);
+        else if ((v = tc_arg_val(a, "--pref-unpaved=")))  opt.pref_unpaved = atoi(v);
+        else if ((v = tc_arg_val(a, "--pref-add=")))      opt.pref_add = atof(v);
         /* 关掉 via=way 两段限制（单点限制仍生效）。只用于 A/B 对照：
            同一对起终点跑两遍，里程变长说明两段限制真的拦住了东西。 */
         else if (strcmp(a, "--no-restr2") == 0)     opt.no_restr2 = 1;

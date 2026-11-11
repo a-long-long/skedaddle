@@ -33,6 +33,32 @@ double edge_cost(const Router *r, const uint8_t *er, double *meters)
     return m * 3.6 / (double)sp;
 }
 
+/* 搜索专用代价：在物理代价上叠加"路线偏好"软惩罚。
+ *
+ * ★★ 只允许 route.c 的**边展开**调用（正向 + 反向）。三个绝对不能用的地方：
+ *   1) lmdist.c 建地标表 —— lm.bin 是全图共享的物理距离表，掺进偏好会让
+ *      h 随用户设置漂移，表与当前设置不匹配；
+ *   2) route.c 结果回填 —— 它取 meters 后按 EF_SPEED 重算 seg_ds，
+ *      total_s 必须保持"这条路实际要开多久"（result.c 有 Σseg_ds==total_s 自检）；
+ *   3) navsim / ETA 显示 —— 同理。
+ *   反过来，h 是物理时间下界，而 g 被放大 ⇒ admissible 依旧成立。
+ * ★ 三个偏好全不是 1 档时直接返回 edge_cost 的**原值**（不乘 1.0），
+ *   保证缺省配置下搜索展开数、路线与逐字节出图与改动前完全相同。 */
+double edge_cost_pref(const Router *r, const uint8_t *er, double *meters)
+{
+    double w = edge_cost(r, er, meters);
+    const RouteOpts *o = &r->opt;
+    if (o->pref_toll != 1 && o->pref_ferry != 1 && o->pref_unpaved != 1)
+        return w;
+    uint16_t fl = sk_get_u16(er + EF_FLAGS);
+    double pen = (o->pref_add > 0.0) ? o->pref_add : ROUTE_PREF_ADD;
+    double add = 0.0;
+    if (o->pref_toll == 1 && (fl & EF_TOLL))         add += pen;
+    if (o->pref_ferry == 1 && (fl & EF_FERRY))       add += pen;
+    if (o->pref_unpaved == 1 && (fl & EF_UNPAVED))   add += pen;
+    return add > 0.0 ? w * (1.0 + add) : w;
+}
+
 /* 大圆距离：sk_fast_dist_m 是等距投影近似，跨纬度大时会失真，
    一旦高估就破坏 admissible（A* 会给出次优解）。
    正向搜索朝终点估，反向搜索朝起点估（两边必须各自 admissible）。

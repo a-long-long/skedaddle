@@ -126,6 +126,17 @@ Router *router_create(const MapSet *ms, const RouteOpts *opt)
     return r;
 }
 
+/* 面板改完路线偏好后同步到已建好的 Router（不必重建 30MB 状态表）。
+ * ★ 只改 opt 的三个偏好字段：heur_w / lm 表 / 状态表都保持原样，
+ *   下一次 nav_request 起生效（Router 不在算路中时调用，无竞态）。 */
+void router_set_prefs(Router *r, int pref_toll, int pref_ferry, int pref_unpaved)
+{
+    if (!r) return;
+    r->opt.pref_toll     = pref_toll;
+    r->opt.pref_ferry    = pref_ferry;
+    r->opt.pref_unpaved  = pref_unpaved;
+}
+
 void router_destroy(Router *r)
 {
     if (!r) return;
@@ -619,8 +630,9 @@ static void expand_dir(Router *r, int dir, uint64_t ck, StEnt *e0,
                 const uint8_t *er = s->edges.data + ei * SK_EDGE_BYTES;
                 uint16_t fl = sk_get_u16(er + EF_FLAGS);
                 if (fl & EF_NO_ACCESS) continue;
-                if (r->opt.avoid_toll && (fl & EF_TOLL)) continue;
-                if (r->opt.avoid_unpaved && (fl & EF_UNPAVED)) continue;
+                if ((r->opt.avoid_toll || r->opt.pref_toll == 2) && (fl & EF_TOLL)) continue;
+                if ((r->opt.avoid_unpaved || r->opt.pref_unpaved == 2) && (fl & EF_UNPAVED)) continue;
+                if (r->opt.pref_ferry == 2 && (fl & EF_FERRY)) continue;
                 if (check_restr) {
                     if (restr_debug())
                         fprintf(stderr, "DBGf nd=%u in=%u prev2=%u ei=%llu\n",
@@ -635,7 +647,7 @@ static void expand_dir(Router *r, int dir, uint64_t ck, StEnt *e0,
                 }
 
                 double meters = 0;
-                double w = edge_cost(r, er, &meters);
+                double w = edge_cost_pref(r, er, &meters);
                 if (w <= 0) continue;
 
                 uint32_t to = sk_get_u32(er + EF_TO);
@@ -693,10 +705,11 @@ static void expand_dir(Router *r, int dir, uint64_t ck, StEnt *e0,
                     if (sk_get_u32(er + EF_TO) != nd) continue;
                     uint16_t fl = sk_get_u16(er + EF_FLAGS);
                     if (fl & EF_NO_ACCESS) continue;
-                    if (r->opt.avoid_toll && (fl & EF_TOLL)) continue;
-                    if (r->opt.avoid_unpaved && (fl & EF_UNPAVED)) continue;
+                    if ((r->opt.avoid_toll || r->opt.pref_toll == 2) && (fl & EF_TOLL)) continue;
+                    if ((r->opt.avoid_unpaved || r->opt.pref_unpaved == 2) && (fl & EF_UNPAVED)) continue;
+                    if (r->opt.pref_ferry == 2 && (fl & EF_FERRY)) continue;
                     double meters = 0;
-                    double w = edge_cost(r, er, &meters);
+                    double w = edge_cost_pref(r, er, &meters);
                     if (w > 0 && w < bw) { bw = w; bei = ei; }
                 }
                 if (bei == REDGE_SEAM) continue;

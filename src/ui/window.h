@@ -77,6 +77,8 @@ typedef struct {
     int           need_redraw;
     int           max_class;     /* LOD：当前画到哪一级道路 */
     int           lod_area;      /* LOD：小面画点阈值（设置 lod_area，2~12） */
+    /* 路线偏好：0 不限 / 1 尽量避免 / 2 完全避开（三值语义见 SETTINGS_SCHEMA）。 */
+    int           pref_toll, pref_ferry, pref_unpaved;
     int           dragging;
     int           last_x, last_y;
     int           down_x, down_y;
@@ -122,6 +124,9 @@ typedef struct {
     int           sim_follow;    /* 视口跟着车头 */
     int           sim_speed_idx; /* 倍速档（SPEEDS[] 下标） */
     uint64_t      sim_tick;      /* 上一帧的时刻，用来算真实 dt */
+    int           heading_up;      /* 车头朝上（模拟导航时把 view.rot 接 sim.heading_deg） */
+    int           rot_from_heading;/* 上一帧的 rot 是本功能写的 ⇒ 关闭时要清零，
+                                    但手动 Ctrl+拖动转的 rot 不许被覆盖 */
 
     /* ---- 外部定位信号源（NMEA 接入，抄 OsmAnd「Use NMEA as location source」）----
      * 经 TCP/UDP/串口从外部 GNSS/蓝牙 GPS 接收机接来的 NMEA 流解析出的定位。

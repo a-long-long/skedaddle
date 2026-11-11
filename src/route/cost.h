@@ -12,6 +12,9 @@ uint8_t fallback_speed(uint8_t cls);
 /* 单边代价：mode_time=1 返回秒，否则返回米；meters 回传米（用于 navsim 自检）。 */
 double edge_cost(const Router *r, const uint8_t *er, double *meters);
 
+/* 搜索专用：叠加路线偏好软惩罚。只许 route.c 边展开调用，见 cost.c 注释。 */
+double edge_cost_pref(const Router *r, const uint8_t *er, double *meters);
+
 /* 启发式下界：大圆距离，与地标下界取 max（admissible 且 consistent）。 */
 double heur(const Router *r, int dir, int32_t lat_e7, int32_t lon_e7);
 

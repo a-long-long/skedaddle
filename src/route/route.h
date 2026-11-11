@@ -171,6 +171,13 @@ typedef struct {
  *   40 万~600 万。顶定得越高，撞顶时第 1 遍白付的越多（实测 60 万展开 ≈ 1 s）。 */
 #define ROUTE_ADAPT_TRY 200000u
 
+/* 路线偏好软惩罚：档位 1（尽量避免）给命中的边加 60% 代价。
+ * ★ 只作用于**搜索代价 g**（edge_cost_pref），不进 RouteResult.total_s /
+ *   seg_ds，也不进地标表 lmdist —— ETA 与 h 保持"物理时间"口径：
+ *   用户选"尽量避开收费"改变的是走哪条路，不是这条路开起来要多久。
+ *   h 仍以物理时间为下界 ⇒ 对放大后的 g 依旧 admissible，A* 不会失最优性。 */
+#define ROUTE_PREF_ADD 0.6
+
     /* 启发式权重 w（OsmAnd 的 heuristicCoefficient，RoutePlanner.cpp:746）：
      *   入堆优先级 f = g + w·h。
      * w=1 是标准 A*（保证最优，默认）；w>1 是"加权 A*"——堆更偏向目标方向，
@@ -184,11 +191,25 @@ typedef struct {
      *   （skedaddle_restr_ab 的对拍就这么干 —— 它必须两边同 w，里程差才只反映转向限制）。 */
     double   heur_w_hi;
     uint64_t adapt_try;
+
+    /* 路线偏好（三值）：0 不限 / 1 尽量避免（软惩罚 ROUTE_PREF_ADD）/
+     * 2 完全避开（在边展开处硬 continue）。三个面各管一个 EF_* 位。
+     * ★ 与老的 avoid_toll / avoid_unpaved 并存：那是 CLI 与多方案面板的
+     *   硬开关，语义不变；2 档等价于把它们打开，1 档是本次新增的"偏好"。
+     * 一律指名初始化，缺省 0 = 与改动前逐位一致（负向对照锚点）。 */
+    int      pref_toll;
+    int      pref_ferry;
+    int      pref_unpaved;
+    /* 软惩罚系数（1 档用）：<=0 取 ROUTE_PREF_ADD。调参/验收旋钮，
+       让"负向对照必须能失败"有抓手：给个很大的值应能明显改变路线。 */
+    double   pref_add;
 } RouteOpts;
 
 typedef struct Router Router;
 
 Router *router_create(const MapSet *ms, const RouteOpts *opt);
+/* 面板改完路线偏好后同步到已建好的 Router（不必重建 30MB 状态表）。 */
+void    router_set_prefs(Router *r, int pref_toll, int pref_ferry, int pref_unpaved);
 void    router_destroy(Router *r);
 
 /* 地标下界表有没有真的加载上（0 = 没有，退回纯直线启发式）。

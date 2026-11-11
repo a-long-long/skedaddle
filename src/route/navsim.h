@@ -61,6 +61,12 @@ double navsim_remaining_m(const NavSim *s);
 /* 剩余时间（秒）：剩余各段按自己的限速求和。★ 不是 total_s * 剩余比例。 */
 double navsim_remaining_s(const NavSim *s);
 
+/* ETA 动态校准接口（预留）：注册一个回调把"按限速算的剩余秒数"替换为
+ * "按实时路况估计的剩余秒数"。传 NULL 或从不调用 = 恒等变换（默认）。
+ * 将来接路况数据源时只需实现并注册回调，本模块及以下所有显示点
+ * （导航条 / 离屏审计 / navsim_cli）一起生效，无需逐个改格式化代码。 */
+void navsim_set_eta_calibrator(double (*fn)(double, const NavSim *));
+
 /* 偏航判定。threshold_m <= 0 时用默认 60 m。
  * 只认 gps：没注入过定位点就永远不算偏航（车头是沿路线插值的，不可能偏）。 */
 int  navsim_offroute(const NavSim *s, double threshold_m);
