@@ -18,11 +18,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include "search/search.h"
 #include "utils/geo.h"
 #include "tool_common.h"
 
+
+static int read_word(const char *path, char *buf, size_t cap)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    size_t n = fread(buf, 1, cap - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    while (n > 0 && (buf[n-1] == '\n' || buf[n-1] == '\r')) buf[--n] = '\0';
+    return 0;
+}
 
 static int parse_ll(const char *s, double *lat, double *lon)
 {
@@ -44,6 +56,8 @@ int main(int argc, char **argv)
     const char *q = NULL;
     const char *q_file = NULL;   /* --q-file: UTF-8 文件读查询串（Windows
                                     命令行传中文会被 MSYS2 转码，验收会假红） */
+    const char *ext_path = NULL; /* --ext: 外部 POI CSV，验证新加数据可被检索 */
+    const char *miss_file = NULL;/* --miss-file: 负向对照词（必须搜不到） */
     int limit = 20, repeat = 20, recall_check = 0;
     int fails = 0;
 
@@ -54,6 +68,8 @@ int main(int argc, char **argv)
         if ((v = tc_arg_val(a, "--db=")))          db = v;
         else if ((v = tc_arg_val(a, "--q=")))      q = v;
         else if ((v = tc_arg_val(a, "--q-file="))) q_file = v;
+        else if ((v = tc_arg_val(a, "--ext=")))    ext_path = v;
+        else if ((v = tc_arg_val(a, "--miss-file="))) miss_file = v;
         else if ((v = tc_arg_val(a, "--near=")))   near_s = v;
         else if ((v = tc_arg_val(a, "--limit=")))  limit = atoi(v);
         else if ((v = tc_arg_val(a, "--repeat="))) repeat = atoi(v);
@@ -63,12 +79,9 @@ int main(int argc, char **argv)
 
     char qbuf[256];
     if (q_file) {
-        FILE *f = fopen(q_file, "rb");
-        if (!f) { printf("ASSERT-FAIL    打不开查询文件 %s\n", q_file); return 1; }
-        size_t nr = fread(qbuf, 1, sizeof(qbuf) - 1, f);
-        fclose(f);
-        qbuf[nr] = '\0';
-        while (nr > 0 && (qbuf[nr-1] == '\n' || qbuf[nr-1] == '\r')) qbuf[--nr] = '\0';
+        if (read_word(q_file, qbuf, sizeof(qbuf)) != 0) {
+            printf("ASSERT-FAIL    打不开查询文件 %s\n", q_file); return 1;
+        }
         q = qbuf;
     }
 
@@ -88,6 +101,53 @@ int main(int argc, char **argv)
     printf("中心          %s%.5f,%.5f\n", have_center ? "" : "(未给) ", clat, clon);
 
     SearchHit hits[64];
+
+    /* ---- 外部 POI：新加的 POI 数据没进过建库器，靠运行期补充索引 ---- */
+    if (ext_path) {
+        SearchExtPoi *ext = NULL;
+        int n_ext = 0;
+        if (search_ext_load_csv(ext_path, &ext, &n_ext) != 0)
+            FAIL("外部 POI 解析失败 %s\n", ext_path);
+        int added = search_add_external(d, ext, n_ext);
+        printf("\n外部POI      %s 载入 %d 条，并入搜索 %d 条\n",
+               ext_path, n_ext, added);
+        if (n_ext <= 0) FAIL("外部 POI 文件 %s 没有有效行\n", ext_path);
+        if (added != n_ext) FAIL("外部 POI 只并入 %d/%d 条\n", added, n_ext);
+        /* 逐条自检：搜自己的全名必须命中自己，坐标 / kind / 权重逐字段一致。
+           这条断言覆盖「解析 → 索引 → 子串复核 → 打分 → top-K」全链路。 */
+        for (int i = 0; i < n_ext; i++) {
+            int n = 0;
+            if (search_query(d, ext[i].name, 0, 0, 0, 0, 0, 64,
+                             hits, 64, &n, NULL) != 0)
+                FAIL("查询外部 POI「%s」返回错误\n", ext[i].name);
+            int found = 0;
+            for (int k = 0; k < n; k++) {
+                if (strcmp(hits[k].name, ext[i].name) == 0 &&
+                    fabs(hits[k].lat - ext[i].lat) < 1e-7 &&
+                    fabs(hits[k].lon - ext[i].lon) < 1e-7 &&
+                    hits[k].kind == SEARCH_EXT_KIND &&
+                    hits[k].weight == ext[i].weight) { found = 1; break; }
+            }
+            printf("  %-22s %s\n", ext[i].name, found ? "命中" : "★未命中");
+            if (!found) FAIL("外部 POI「%s」搜不到自己\n", ext[i].name);
+        }
+        free(ext);
+    }
+
+    /* ---- 负向对照：不灌外部数据时，同一个词必须 0 条 ----
+       否则上面那条「能搜到」判据没有分辨力（词本身就在库里也会绿）。 */
+    if (miss_file) {
+        char mb[256];
+        if (read_word(miss_file, mb, sizeof(mb)) != 0)
+            FAIL("打不开负向对照词文件 %s\n", miss_file);
+        else {
+            int n = 0;
+            search_query(d, mb, 0, 0, 0, 0, 0, limit, hits, 64, &n, NULL);
+            printf("\n负向对照    「%s」→ %d 条（期望 0）\n", mb, n);
+            if (n != 0)
+                FAIL("负向对照：「%s」不该被搜到，却返回 %d 条\n", mb, n);
+        }
+    }
 
     /* ---- 1~3. 关键词查询 + 命中 + 排序 + 性能 ---- */
     const char *words[] = { "中关村", "西二旗", "天安门", "五道口" };

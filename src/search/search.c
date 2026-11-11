@@ -25,6 +25,10 @@
 struct SearchDb {
     sqlite3      *db;
     sqlite3_stmt *st_one;     /* SELECT ... FROM place WHERE id=? */
+    /* 运行期外部 POI 补充索引（见 search.h）。NULL/0 ⇒ 走纯 DB 路径，
+       查询结果与接入外部 POI 之前逐条一致。 */
+    SearchExtPoi *ext;
+    int           n_ext;
 };
 
 /* ---- UTF-8 ---- */
@@ -258,6 +262,45 @@ static int contains_ci(const char *hay, const char *needle)
     return 0;
 }
 
+/* 单条候选的复核 / 过滤 / 打分。DB 行与外部 POI **共用这一份**，
+ * 否则两路排序分迟早漂移（门牌那次两端各写一份规范化就踩过）。
+ * 返回 1 = 已加入候选表。 */
+static int cand_push(const char *nm, double la, double lo, int kind, int weight,
+                     const char *qn, int q_has_digit, int kind_max,
+                     int have_center, double clat, double clon, double max_dist_m,
+                     Cand *cand, int cap, int *nc)
+{
+    if (*nc >= cap) return 0;
+    /* ★ 子串复核：gram 全中不等于连续；外部 POI 没走 gram 召回，同样要复核 */
+    if (!contains_ci(nm, qn)) return 0;
+    if (kind_max > 0 && kind > kind_max) return 0;
+    if (kind >= 14 && !q_has_digit) return 0;
+
+    SearchHit h;
+    snprintf(h.name, sizeof(h.name), "%s", nm);
+    h.lat = la; h.lon = lo; h.kind = kind; h.weight = weight;
+    h.dist_m = -1;
+
+    double dist = -1;
+    if (have_center) {
+        dist = sk_haversine_m(clat, clon, la, lo);
+        if (max_dist_m > 0 && dist > max_dist_m) return 0;
+        h.dist_m = dist;
+    }
+    double base = have_center ? dist / (1.0 + h.weight * 0.05)
+                              : 1000.0 / (1.0 + (double)h.weight);
+    int exact  = (strcmp(h.name, qn) == 0);
+    int prefix = !exact && (strncmp(h.name, qn, strlen(qn)) == 0);
+    double qm   = exact ? 3.0 : (prefix ? 2.0 : 1.0);
+    int extra   = (int)strlen(h.name) - (int)strlen(qn);
+    if (extra < 0) extra = 0;
+    h.score = base * (1.0 + extra * 0.03) / qm;
+    cand[*nc].h = h;
+    cand[*nc].score = h.score;
+    (*nc)++;
+    return 1;
+}
+
 SearchDb *search_open(const char *db_path)
 {
     if (!db_path) return NULL;
@@ -279,7 +322,66 @@ void search_close(SearchDb *d)
     if (!d) return;
     if (d->st_one) sqlite3_finalize(d->st_one);
     if (d->db) sqlite3_close(d->db);
+    free(d->ext);
     free(d);
+}
+
+/* ---- 外部 POI -------------------------------------------------------------
+ * CSV 格式与 render/labels.c 原来的 poi_ext_load() 逐字兼容：同一份文件、
+ * 同一套缺省值与钳位。把解析收在这里是为了让"画"和"搜"看到完全相同的
+ * 条目集合（否则显示 3 个点、搜索 2 个点这类问题极难归因）。
+ * ------------------------------------------------------------------------- */
+int search_ext_load_csv(const char *path, SearchExtPoi **out, int *n_out)
+{
+    if (n_out) *n_out = 0;
+    if (out)   *out = NULL;
+    if (!out || !n_out || !path || !*path) return 0;
+
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;                       /* 没这份文件 = 空表，正常 */
+
+    SearchExtPoi *v = NULL;
+    int n = 0, cap = 0, rc = 0;
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
+        char name[64]; double la, lo; int w = 50, sub = 0, got;
+        got = sscanf(line, "%63[^,],%lf,%lf,%d,%d", name, &la, &lo, &w, &sub);
+        if (got < 3) continue;
+        if (la < -90.0 || la > 90.0 || lo < -180.0 || lo > 180.0) continue;
+        if (got < 4) w = 50;
+        if (sub < 0) sub = 0; else if (sub > 5) sub = 5;
+        if (n >= SEARCH_EXT_MAX) break;     /* 软上限：截断而不是吃满内存 */
+        if (n == cap) {
+            int nc = cap ? cap * 2 : 256;
+            SearchExtPoi *q = realloc(v, (size_t)nc * sizeof(SearchExtPoi));
+            if (!q) { rc = -1; break; }
+            v = q; cap = nc;
+        }
+        SearchExtPoi *it = &v[n++];
+        snprintf(it->name, sizeof(it->name), "%s", name);
+        it->lat = la; it->lon = lo;
+        it->kind = SEARCH_EXT_KIND;
+        it->weight = w; it->sub = sub;
+    }
+    fclose(f);
+    if (rc != 0) { free(v); return -1; }
+    *out = v; *n_out = n;
+    return 0;
+}
+
+int search_add_external(SearchDb *d, const SearchExtPoi *items, int n)
+{
+    if (!d || !items || n <= 0) return 0;
+    if (d->n_ext >= SEARCH_EXT_MAX) return 0;
+    int add = n;
+    if (add > SEARCH_EXT_MAX - d->n_ext) add = SEARCH_EXT_MAX - d->n_ext;
+    SearchExtPoi *q = realloc(d->ext, (size_t)(d->n_ext + add) * sizeof(SearchExtPoi));
+    if (!q) return 0;
+    d->ext = q;
+    memcpy(d->ext + d->n_ext, items, (size_t)add * sizeof(SearchExtPoi));
+    d->n_ext += add;
+    return add;
 }
 
 int search_query(SearchDb *d, const char *q,
@@ -332,7 +434,12 @@ int search_query(SearchDb *d, const char *q,
     if (lim > LIMIT_MAX) lim = LIMIT_MAX;
     if (lim > cap) lim = cap;
 
-    Cand *cand = malloc((size_t)(ids.n > 0 ? ids.n : 1) * sizeof(Cand));
+    /* 候选表要同时装 DB 召回和外部 POI：容量按两路上界之和一次开够。
+       ★ 外部数据为空时 ncap 与改动前完全相同（(ids.n?ids.n:1) ⇒ 0 条时 +1），
+         后续逐条复核/打分逻辑一字未变 ⇒ 查询结果逐条不变。 */
+    size_t ncap = (size_t)(ids.n > 0 ? ids.n : 0)
+                + (size_t)(d->n_ext > 0 ? d->n_ext : 0) + 1;
+    Cand *cand = malloc(ncap * sizeof(Cand));
     int nc = 0;
     if (cand && d->st_one) {
         for (int i = 0; i < ids.n; i++) {
@@ -342,36 +449,25 @@ int search_query(SearchDb *d, const char *q,
             const unsigned char *nm = sqlite3_column_text(d->st_one, 0);
             if (!nm) continue;
 
-            SearchHit h;
-            snprintf(h.name, sizeof(h.name), "%s", (const char *)nm);
-            h.lat    = sqlite3_column_double(d->st_one, 1);
-            h.lon    = sqlite3_column_double(d->st_one, 2);
-            h.kind   = sqlite3_column_int(d->st_one, 3);
-            h.weight = sqlite3_column_int(d->st_one, 4);
-            h.dist_m = -1;
-
-            /* ★ 子串复核：gram 全中不等于连续 */
-            if (!contains_ci(h.name, qn)) continue;
-            if (kind_max > 0 && h.kind > kind_max) continue;
-            if (h.kind >= 14 && !q_has_digit) continue;
-
-            double dist = -1;
-            if (have_center) {
-                dist = sk_haversine_m(clat, clon, h.lat, h.lon);
-                if (max_dist_m > 0 && dist > max_dist_m) continue;
-                h.dist_m = dist;
-            }
-            double base = have_center ? dist / (1.0 + h.weight * 0.05)
-                                      : 1000.0 / (1.0 + (double)h.weight);
-            int exact  = (strcmp(h.name, qn) == 0);
-            int prefix = !exact && (strncmp(h.name, qn, strlen(qn)) == 0);
-            double qm   = exact ? 3.0 : (prefix ? 2.0 : 1.0);
-            int extra   = (int)strlen(h.name) - (int)strlen(qn);
-            if (extra < 0) extra = 0;
-            h.score = base * (1.0 + extra * 0.03) / qm;
-            cand[nc].h = h;
-            cand[nc].score = h.score;
-            nc++;
+            cand_push((const char *)nm,
+                      sqlite3_column_double(d->st_one, 1),
+                      sqlite3_column_double(d->st_one, 2),
+                      sqlite3_column_int(d->st_one, 3),
+                      sqlite3_column_int(d->st_one, 4),
+                      qn, q_has_digit, kind_max,
+                      have_center, clat, clon, max_dist_m,
+                      cand, (int)ncap, &nc);
+        }
+    }
+    /* ★ 外部 POI：不经 bigram 召回（它们从没进过 gram 表），直接全量复核。
+       cand_push 与 DB 行共用同一份过滤与排序分，所以两路结果可以直接混排。 */
+    if (cand) {
+        for (int i = 0; i < d->n_ext; i++) {
+            const SearchExtPoi *e = &d->ext[i];
+            cand_push(e->name, e->lat, e->lon, e->kind, e->weight,
+                      qn, q_has_digit, kind_max,
+                      have_center, clat, clon, max_dist_m,
+                      cand, (int)ncap, &nc);
         }
     }
     free(ids.v);

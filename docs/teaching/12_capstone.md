@@ -21,7 +21,7 @@
 | 每帧渲染（视口投影→软件光栅→管线） | L5 / L6 / L7 | `src/ui/offscreen_shot.c`（`offscreen_shot_main`、`render_buffer`、`write_bmp24`、`app_offscreen_audit`）、`map/map_view.c`（`mv_project`、`mv_visible_bbox`） | `src/ui/offscreen_shot.c:194-647`（`offscreen_shot_main` 完整体）；关键段见第三节 |
 | 用户交互（搜索→路由→导航语音） | L8 / L9 / L10 | `tools/route_cli.c`（`router_route_ll`、`maneuver_build`）、`src/ui/window.c`（`app_nav_plan_sync`）、`route/maneuver.c`、`route/voice.c`、`ui/voice_wire.c` | `tools/route_cli.c:46-338`（main 完整体）；`--maneuvers` 块见第三节 |
 | Qt 外壳（跨平台段 · 可选，第 16 课） | L16 | `src/ui_qt/qt_main.cpp`、`map_canvas.cpp`、`main_window.cpp` | `CMakeLists.txt:530-595`（`skedaddle` 目标） |
-| 门禁 | L11 | `scripts/regress.sh`、`scripts/check_layers.sh`、`tools/core_no_sdl.c` | `scripts/regress.sh:1-839`（关键判据函数节选见 3.6 节；完整脚本见 `11_gates.md` 内嵌，全文 839 行） |
+| 门禁 | L11 | `scripts/regress.sh`、`scripts/check_layers.sh`、`tools/core_no_sdl.c` | `scripts/regress.sh:1-863`（关键判据函数节选见 3.6 节；完整脚本见 `11_gates.md` 内嵌，全文 863 行） |
 
 纯 DAG 底座：`utils ← pbf ← map ← route ← render ← ui ← ui_qt`（L15 平台抽象、L1 坐标系为全程底座）。
 
@@ -879,7 +879,7 @@ area_lod_tier() {             # area_lod_tier <名字> <zoom> <dotted_lo> <dotte
 }
 ```
 
-完整脚本见 `11_gates.md` 的 `scripts/regress.sh` 内嵌（全文 839 行）
+完整脚本见 `11_gates.md` 的 `scripts/regress.sh` 内嵌（全文 863 行）
 
 ## 四、与其他功能之间的联系
 

@@ -191,6 +191,30 @@ int app_init(App *a, const char *graph_dir, int w, int h,
     if (!a->sdb)
         fprintf(stderr, "提示: 搜索库 %s 打不开，搜索不可用\n", places);
 
+    /* ★ 新加的 POI 也要能直接搜到：标注层在 label_cache_init() 里已把外部
+       CSV 整表载进 a->places.ext，这里原样转给搜索库的运行期补充索引，
+       不重复读文件、不写 places.db（它是可随时重建的只读抽取产物）。
+       poi_source 只管「画哪种 POI」，搜索始终是「库 ∪ 外部」并集。
+       ★ 没有 CSV 时 n_ext=0 ⇒ 搜索结果与改动前逐条一致（负向对照锚）。 */
+    if (a->sdb && a->places.n_ext > 0) {
+        SearchExtPoi *ep = (SearchExtPoi *)calloc((size_t)a->places.n_ext,
+                                                   sizeof(SearchExtPoi));
+        if (ep) {
+            for (int i = 0; i < a->places.n_ext; i++) {
+                const LabelItem *it = &a->places.ext[i];
+                snprintf(ep[i].name, sizeof(ep[i].name), "%s", it->name);
+                ep[i].lat = it->lat; ep[i].lon = it->lon;
+                ep[i].kind = it->kind; ep[i].weight = it->weight;
+                ep[i].sub = it->sub;
+            }
+            int added = search_add_external(a->sdb, ep, a->places.n_ext);
+            if (added != a->places.n_ext)
+                fprintf(stderr, "提示: 外部 POI 并入搜索 %d/%d 条\n",
+                        added, a->places.n_ext);
+            free(ep);
+        }
+    }
+
     /* 用户轨迹/收藏库（tracks.db，与 places.db 分开：那是抽取产物、只读）。
        打不开/不存在都照常跑——只是没有历史轨迹可加载（导入时会现场建库）。
        ★ 必须先 gpx_store_init：App 是调用方的裸结构体（未初始化），

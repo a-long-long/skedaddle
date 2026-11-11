@@ -1,5 +1,6 @@
 #include "render/labels.h"
 #include "render/band.h"
+#include "search/search.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -87,30 +88,27 @@ static void poi_ext_load(LabelCache *lc)
 {
     const char *path = getenv("SKEDADDLE_POI_EXT");
     if (!path || !*path) path = "products/poi_ext.csv";
-    FILE *f = fopen(path, "r");
-    if (!f) return;
-    char line[512];
-    while (fgets(line, sizeof(line), f)) {
-        if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
-        char name[64]; double la, lo; int w = 50, sub = 0, n;
-        n = sscanf(line, "%63[^,],%lf,%lf,%d,%d", name, &la, &lo, &w, &sub);
-        if (n < 3) continue;
-        if (la < -90.0 || la > 90.0 || lo < -180.0 || lo > 180.0) continue;
-        if (n < 4) w = 50;
-        if (sub < 0) sub = 0; else if (sub > 5) sub = 5;
-        if (lc->n_ext >= lc->ext_cap) {
-            int nc = lc->ext_cap ? lc->ext_cap * 2 : 256;
-            LabelItem *q = (LabelItem *)realloc(lc->ext,
-                                                (size_t)nc * sizeof(LabelItem));
-            if (!q) break;
-            lc->ext = q; lc->ext_cap = nc;
-        }
-        LabelItem *it = &lc->ext[lc->n_ext++];
-        snprintf(it->name, sizeof(it->name), "%s", name);
-        it->lat = la; it->lon = lo; it->kind = 11; it->weight = w;
-        it->sub = sub;   /* 0=通用蓝圆；1~5 分形状配色，见上 */
+    /* ★ 与搜索层共用同一份 CSV 解析：显示和检索必须看到完全相同的条目集合，
+       否则「画了 3 个点只搜到 2 个」这类问题极难归因。
+       render -> search 是允许方向（见 scripts/check_layers.sh）。 */
+    SearchExtPoi *items = NULL;
+    int n = 0;
+    if (search_ext_load_csv(path, &items, &n) != 0 || n <= 0) {
+        free(items);
+        return;
     }
-    fclose(f);
+    lc->ext = (LabelItem *)calloc((size_t)n, sizeof(LabelItem));
+    if (!lc->ext) { free(items); return; }
+    for (int i = 0; i < n; i++) {
+        LabelItem *it = &lc->ext[i];
+        snprintf(it->name, sizeof(it->name), "%s", items[i].name);
+        it->lat = items[i].lat; it->lon = items[i].lon;
+        it->kind = 11;
+        it->weight = items[i].weight;
+        it->sub = items[i].sub;
+    }
+    lc->n_ext = lc->ext_cap = n;
+    free(items);
     if (lc->n_ext)
         fprintf(stderr, "外部POI: %s 载入 %d 条\n", path, lc->n_ext);
 }

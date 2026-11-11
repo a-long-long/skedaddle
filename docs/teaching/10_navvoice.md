@@ -507,7 +507,7 @@ void nav_voice_frame(NavVoiceCtx *c, uint64_t now_ms)
 
 ### 3.4 策略层实现 `src/route/voice.c`（关键逻辑，完整）
 
-> 下面给出 `voice.c` 的核心函数，全部为**完整体**（无 `...` 省略）。文件 `src/route/voice.c` 共 898 行，含全部告警扫描与冷却逻辑；此处列出教学主线所涉及的全部关键函数，其余（如 `alarm_push`、`alarm_priority`、`alarm_type_priority`）为辅助函数，可于 `src/route/voice.c` 查阅完整实现。
+> 下面给出 `voice.c` 的核心函数，全部为**完整体**（无 `...` 省略）。文件 `src/route/voice.c` 共 941 行，含全部告警扫描与冷却逻辑；此处列出教学主线所涉及的全部关键函数，其余（如 `alarm_push`、`alarm_priority`、`alarm_type_priority`）为辅助函数，可于 `src/route/voice.c` 查阅完整实现。
 
 ```c
 /* voice.c —— 语音播报策略（抄写自 OsmAnd，2026-10-25）

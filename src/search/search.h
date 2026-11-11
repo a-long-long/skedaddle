@@ -2,6 +2,7 @@
 #define SKEDADDLE_SEARCH_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 /* ---------------------------------------------------------------------------
  * 地名 / POI 搜索（阶段 7）
@@ -41,6 +42,44 @@ typedef struct {
 } SearchHit;
 
 typedef struct SearchDb SearchDb;
+
+/* ---------------------------------------------------------------------------
+ * 外部 POI（products/poi_ext.csv，SKEDADDLE_POI_EXT 可覆盖路径）
+ *
+ * 地图自带 POI 走 place/gram 表，bigram 倒排在**建库时**生成；外部 POI 是
+ * 运行期附加的一份数据，从没进过建库器，所以原先只能画图标、搜不到。
+ * 这里把它做成内存补充索引：查询时对每条做与 DB 行完全相同的子串复核 /
+ * 过滤 / 打分，再和 DB 候选一起排序取 top-K。
+ *
+ * 为什么不写进 gram 表：places_auto.db 是**只读抽取产物**（sync_maps.sh
+ * 随时整库重建），运行时往里写既破坏"产物可删可重建"的约定，也会让每次
+ * 启动都改库文件。内存索引随进程生灭，零持久化、旧库零改动。
+ * ------------------------------------------------------------------------- */
+typedef struct {
+    char   name[64];
+    double lat, lon;
+    int    kind;      /* 恒为 11（设施 POI），与 place.kind 同语义 */
+    int    weight;
+    int    sub;       /* 0~5 子类配色，标注层用；搜索层原样透传 */
+} SearchExtPoi;
+
+#define SEARCH_EXT_KIND 11
+#define SEARCH_EXT_MAX  200000    /* 线性复核的软上限，防一份误传的巨型 CSV 吃满内存 */
+
+/* 载入 CSV（UTF-8，'#' 注释、空行忽略）：
+ *     名称,纬度,经度[,权重[,子类]]
+ * 权重缺省 50、子类缺省 0（钳 0~5）；坐标越界的行丢弃。
+ * 文件不存在 / 打不开 ⇒ 返回 0 且 *n_out=0（空表，不是错误）。
+ * 成功时 *out 是 malloc 出来的数组，调用方 free()。返回 0 / -1（内存不足）。
+ * ★ 标注层（render/labels.c）与本层共用**同一份**解析，避免两处格式漂移。 */
+int search_ext_load_csv(const char *path, SearchExtPoi **out, int *n_out);
+
+/* 把外部 POI 并入已打开的搜索库（可多次调用，逐次追加），返回实际并入条数。
+ * ★ 外部 POI 与库里 POI 在搜索里是**并集**：显示层 poi_source 是"二选一"的
+ *   渲染口径，搜索层不该屏蔽任何一边 —— 用户新加的数据要能被检索到，屏蔽
+ *   库里的反而会减少结果（门牌 kind 14 早就是"只进搜索永不画"的先例）。
+ * ★ items==NULL / n<=0 ⇒ 零追加，查询结果逐条不变（负向对照锚）。 */
+int search_add_external(SearchDb *d, const SearchExtPoi *items, int n);
 
 /* 只读打开。失败返回 NULL（库文件不存在/不是 sqlite）。 */
 SearchDb *search_open(const char *db_path);

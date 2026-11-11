@@ -470,6 +470,12 @@ if [ -x "$BUILD/skedaddle" ] || [ -x "$BUILD/skedaddle.exe" ]; then
         --shot=/tmp/skedaddle_regress/nomap.png --shot-nomap
 fi
 run search      "查询 中关村"  "$BUILD/skedaddle_search_cli"
+# 新加的 POI 数据（外部 CSV）没进过建库器，靠运行期补充索引也要能被直接搜到。
+# ★ 负向对照单独一条：不灌外部数据时同一个词必须 0 条，否则上面那条判据是假绿。
+run search_ext_poi "外部POI" "$BUILD/skedaddle_search_cli" \
+    --ext="$ROOT/tests/poi_ext_search.csv" --repeat=0
+run search_ext_negative "负向对照" "$BUILD/skedaddle_search_cli" \
+    --miss-file="$ROOT/tests/poi_ext_miss.txt" --repeat=0
 # 地名库自检：每条 place 都得能反查出 bigram，kind 不许超出 PLK_ROAD。
 # 以前缺这条判据的代价是实打实踩到的：skedaddle_places_build 刚加上路名那一刻，库里
 # 5.7 万条被自检判为非法，而当时 21 项里没有一项会报警（地图照画、路照通）。
