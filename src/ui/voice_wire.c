@@ -34,8 +34,10 @@ void nav_voice_frame(NavVoiceCtx *c, uint64_t now_ms)
      *    ★ 编排本身在 route/voice.c 的 voice_tick() 里（speedLimit →
      *      arrival → alarm → turn），这里只负责取状态 + 发声。 */
     VoiceFrame vf;
-    int n = voice_tick(c->vr, c->rr, c->man, mi, to_go, speed_ms, remain,
-                       c->sim->arrived, now_ms, &vf);
+    const VoiceAlarm *al = (c->alarms && c->n_alarms > 0) ? c->alarms : NULL;
+    int n_al = al ? c->n_alarms : 0;
+    int n = voice_tick_ex(c->vr, c->rr, c->man, mi, to_go, speed_ms, remain,
+                          c->sim->arrived, now_ms, al, n_al, &vf);
 
     /* ★★ 暂停时不播常规播报（偏航重算期间不该出声）。
      *   但**到达那一帧是例外**：到达时会把 sim_paused 置 1（模拟停下），

@@ -18,7 +18,7 @@
 | 工具/脚本 | 职责 | 路径与行号区间 |
 |---|---|---|
 | `scripts/check_layers.sh` | 解析真实 `#include`（剥块注释与行注释）算模块依赖图，与方向表比对，违规打印文件行号并 `exit 1` | `scripts/check_layers.sh:1-178`（完整体见第三节） |
-| `scripts/regress.sh` | 全量回归；`ASSERT-OK/ASSERT-FAIL` 双判据（退出码 + 标记）；覆盖渲染/路由/语音/平台/门禁等几十个用例 | `scripts/regress.sh:1-839`（关键判据函数见第三节；完整源码已内嵌于 3.6 节，全文 839 行） |
+| `scripts/regress.sh` | 全量回归；`ASSERT-OK/ASSERT-FAIL` 双判据（退出码 + 标记）；覆盖渲染/路由/语音/平台/门禁等几十个用例 | `scripts/regress.sh:1-857`（关键判据函数见第三节；完整源码已内嵌于 3.6 节，全文 857 行） |
 | `CMakeLists.txt`（分层段） | 分层链接：模块库按 DAG 顺序定义，`skedaddle_core` 聚合；已移除 `-Wl,--start-group`，链接器单趟解析即第二道防线 | `CMakeLists.txt:266-391` |
 | `tools/core_no_sdl.c` | 架构边界门禁：核心与 Qt 前端零 SDL 符号；对照体必须含 SDL（负向对照，证明检查器非空壳） | `tools/core_no_sdl.c:1-229`（完整体见第三节） |
 | `tools/blend_equiv.c` | alpha 混色与 SDL 软渲染器逐像素等价对照（去 SDL 化合法链 SDL2） | `tools/blend_equiv.c:1-159`（完整体见第三节） |
@@ -878,9 +878,9 @@ int main(void)
 }
 ```
 
-### 3.6 回归门禁：`scripts/regress.sh`（关键判据函数，完整体；完整源码内嵌于本节末尾，全文 839 行）
+### 3.6 回归门禁：`scripts/regress.sh`（关键判据函数，完整体；完整源码内嵌于本节末尾，全文 857 行）
 
-`regress.sh` 共 839 行，逐用例串起全量回归。其核心是**双判据**：命令必须出现期望标记且不得出现 `ASSERT-FAIL` 且退出码为 0。下列是承载判据逻辑的完整函数与关键调用点。注意 `layer_dirs`（`regress.sh:325`）与 `skedaddle_core_no_sdl`/`core_no_sdl_sdl`（`regress.sh:311-313`）正是把分层门禁与 SDL 边界门禁接进回归；`area_lod_tier` 用**确定性量** `areas_dotted` 而非时间。
+`regress.sh` 共 857 行，逐用例串起全量回归。其核心是**双判据**：命令必须出现期望标记且不得出现 `ASSERT-FAIL` 且退出码为 0。下列是承载判据逻辑的完整函数与关键调用点。注意 `layer_dirs`（`regress.sh:343`）与 `skedaddle_core_no_sdl`/`core_no_sdl_sdl`（`regress.sh:327-333`）正是把分层门禁与 SDL 边界门禁接进回归；`area_lod_tier` 用**确定性量** `areas_dotted` 而非时间。
 
 ```sh
 # run <名字> <必须出现的标记> <命令...>
@@ -972,10 +972,10 @@ if [ -x "$ROOT/scripts/check_layers.sh" ]; then
 fi
 ```
 
-> 完整源码 · `scripts/regress.sh` (全文 839 行)
+> 完整源码 · `scripts/regress.sh` (全文 857 行)
 
 ```bash
-> 完整源码 · `scripts/regress.sh`（逐字内嵌，全文 839 行）
+> 完整源码 · `scripts/regress.sh`（逐字内嵌，全文 857 行）
 #!/usr/bin/env bash
 #
 # 一键回归：改完渲染 / 路网 / 图集相关代码后跑一遍，确认没有悄悄退化。
@@ -993,7 +993,11 @@ fi
 set -u
 cd "$(dirname "$0")/.."
 ROOT=$PWD
-BUILD=$ROOT/build
+# ★ 缺省仍是仓库根的 build/（Linux 主机口径）。Windows 副机用 build_rel
+#   （Qt6/ucrt64）时可用 SKEDADDLE_BUILD_DIR 指过去，不必改动任何判据：
+#     SKEDADDLE_BUILD_DIR=$PWD/build_rel ./scripts/regress.sh
+#   ★ 只改「到哪儿找可执行文件」，不改用例本身 ⇒ 跨机跑的是同一套门禁。
+BUILD=${SKEDADDLE_BUILD_DIR:-$ROOT/build}
 GRAPH=$ROOT/products/graph
 
 DO_BUILD=0
@@ -1243,6 +1247,20 @@ run skedaddle_voice_selftest "VOICE-OK" "$BUILD/skedaddle_voice_selftest"
 # ---- 语音播报**端到端**（走生产接线 nav_voice_frame，验证"窗口真的播了"）----
 # 用 SKEDADDLE_TTS_DRYRUN 截下 sk_tts_speak 交出去的话来断言；单函数自测抓不到接线 bug。
 run skedaddle_voice_e2e "VOICE-E2E-OK" "$BUILD/skedaddle_voice_e2e"
+
+# ---- 旋转视图（车头朝上）坐标链：数值判据，不靠看 BMP ----
+run skedaddle_mapview_selftest "MAPVIEW-OK" "$BUILD/skedaddle_mapview_selftest"
+
+# ---- 旋转视图离屏出图：走同一份像素审计，证明四角 bbox 没把要素裁掉 ----
+# ★ rot=0 的常规 shot 用例在上文；这里补 45°/90°，是「车头朝上」的
+#   渲染侧闭环。旋转时分带并行会主动落回串行（见 paint.c 的 rot guard），
+#   所以这两条同时也在守「落回串行后没缺块」。
+run rot45_shot "ASSERT-OK" "$BUILD/skedaddle" --shot-offscreen --graph="$GRAPH" \
+    --lat=39.90 --lon=116.40 --zoom=13 --w=1280 --h=800 --rot=45 \
+    --out="$SHOTS/rot45_shot.bmp"
+run rot90_shot "ASSERT-OK" "$BUILD/skedaddle" --shot-offscreen --graph="$GRAPH" \
+    --lat=39.90 --lon=116.40 --zoom=13 --w=1280 --h=800 --rot=90 \
+    --out="$SHOTS/rot90_shot.bmp"
 
 # ---- 多方案对比（阶段 12）----
 run skedaddle_alts_selftest "ALTS-OK" "$BUILD/skedaddle_alts_selftest"
@@ -1819,7 +1837,7 @@ echo "=== 结果: $pass 通过 / $fail 失败   日志与截图: $SHOTS"
 
 ### 3.7 新增判据与「讲义也要被验收」（2026-11-06 补）
 
-前面 3.6 节内嵌的 `regress.sh` 是**当前源码全文**（839 行，由
+前面 3.6 节内嵌的 `regress.sh` 是**当前源码全文**（857 行，由
 `scripts/regen_tutorial_blocks.py` 逐字生成）。这一节单讲最近两轮 UI / 渲染改动
 往门禁里加了什么、为什么每条都必须能失败 —— 回归基线仍是 **87 通过 / 0 失败**。
 2026-11-06 教程按「先核心代码、最后跨平台」物理重编号后，又补了 `check_tutorial_tracks.py`

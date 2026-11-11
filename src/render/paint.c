@@ -1228,6 +1228,11 @@ static void areas_task(void *arg, int tid)
 static int paint_areas_banded(Raster *rs, const AreaCtx *ctx, int32_t *bball,
                               uint64_t na, double zoom, int nband, PaintStats *st)
 {
+    /* 与 paint_roads_banded 同一条纪律：旋转视图下「bbox 两角点的屏幕 y」
+       不再包住整个面（另外两角可能更靠上/下），按 y 分带会漏画。
+       ⇒ 直接落回串行（本就按投影后的坐标逐要素裁剪，旋转安全）。
+       rot==0 时这一支恒不进，输出与改造前逐字节一致。 */
+    if (ctx->P->rot != 0.0) return -1;
     BandView bv;
     band_init(&bv, rs, nband);
     for (int t = 0; t < bv.n; t++) s_bkt_n[t] = 0;
@@ -1467,6 +1472,8 @@ static void lines_task(void *arg, int tid)
 static int paint_lines_banded(Raster *rs, const LineCtx *ctx, int32_t *lball,
                               uint64_t nl, double zoom, int nband, PaintStats *st)
 {
+    /* 同 paint_areas_banded / paint_roads_banded：旋转视图落回串行。 */
+    if (ctx->P->rot != 0.0) return -1;
     BandView bv;
     band_init(&bv, rs, nband);
     for (int t = 0; t < bv.n; t++) s_bkt_n[t] = 0;

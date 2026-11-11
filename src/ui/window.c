@@ -944,11 +944,43 @@ static void nav_announce_reset(App *a)
  * ★★ 这里只是一层**薄封装**：真正干活的接线在 src/ui/voice_wire.c 的
  *   nav_voice_frame()（生产与无头自测共用同一份）⇒ 接线坏了自测必然变红
  *   （原先接线长在 App 里，自测够不着，只能复刻一遍 ⇒ 判据假绿）。 */
+/* 一帧最多交给语音层的点状告警数。路线前方 1.5 km 内同屏出现 8 个以上
+ * 测速点的概率极低；超出的按 SQL 返回序截断（不影响正确播报，只是不叠加）。 */
+#define NAV_ALARM_CAP 8
+
 static void nav_announce_at(App *a, uint64_t now_ms)
 {
     if (!a->have_rr || !a->sim_on) return;
 
-    NavVoiceCtx c;
+    /* ---- 点状告警：places.db 的 alarm 表 → 投影到路线折线 ----
+     * ★ 复用 LabelCache 已打开的 SQLite 句柄（另开连接会破坏并发假设）。
+     * ★ 旧库没有 alarm 表 ⇒ prepare 失败 ⇒ 静默返回 0 ⇒ 传 NULL/0 给
+     *   voice_tick_ex ⇒ 与接入 alarm 数据之前**逐位一致**（负向对照锚点）。
+     * ★ 当前北京库 35 个点，每帧一次走 alarm_latlon 索引的范围查询可忽略；
+     *   将来接全国库（几十万点）要在这里加「车移动 >50 m 或 500 ms」节流，
+     *   别把 SQL 塞进每帧热路径。 */
+    LabelAlarm la[NAV_ALARM_CAP];
+    VoiceAlarm va[NAV_ALARM_CAP];
+    int n_al = 0;
+    if (a->has_places && a->rr.n >= 2 && a->rr.lat_e7 && a->rr.lon_e7 &&
+        a->rr.seg_m) {
+        double along = a->rr.total_m - navsim_remaining_m(&a->sim);
+        if (along < 0.0) along = 0.0;
+        n_al = label_cache_query_alarms(&a->places,
+                                        a->rr.lat_e7, a->rr.lon_e7,
+                                        a->rr.seg_m, a->rr.n, along,
+                                        la, NAV_ALARM_CAP);
+        /* POD → VoiceAlarm：labels.h 刻意不 include route/voice.h（避免
+         * mapset.h 反向 include 时的环），转换放在 ui 层这一侧。 */
+        for (int i = 0; i < n_al; i++) {
+            va[i].type   = la[i].type;
+            va[i].inst   = la[i].inst;
+            va[i].dist_m = la[i].dist_m;
+            va[i].len_m  = 0.0;          /* 点状告警没有区间长度 */
+        }
+    }
+
+    NavVoiceCtx c = {0};
     c.vr        = &a->vr;
     c.rr        = &a->rr;
     c.man       = &a->man;
@@ -956,6 +988,8 @@ static void nav_announce_at(App *a, uint64_t now_ms)
     c.voice_on  = a->voice_on;
     c.paused    = a->sim_paused;
     c.ann_finished = &a->ann_finished;
+    c.alarms    = n_al > 0 ? va : NULL;
+    c.n_alarms  = n_al;
     nav_voice_frame(&c, now_ms);
 }
 
@@ -1062,9 +1096,14 @@ void app_nav_sim_tick(App *a)
         a->view.lon = a->sim.car_lon;
     }
     /* 车头朝上：投影层本来就有 rot（含 mv_unproject / Ctrl+拖动），这里只负责
-       把航向接过去。★ 只在"本功能写过 rot"时清零，免得把用户手动旋转的角度抹掉。 */
+       把航向接过去。★ 只在"本功能写过 rot"时清零，免得把用户手动旋转的角度抹掉。
+       ★ 真实 GNSS 接入时用 ext_course（NMEA 的方位角，0=北、顺时针），
+         与 sim.heading_deg 同一口径；外部定位失效则不再写 rot。 */
     if (a->heading_up && a->sim_on && a->sim_follow) {
         a->view.rot = a->sim.heading_deg;
+        a->rot_from_heading = 1;
+    } else if (a->heading_up && a->ext_valid && !a->sim_on) {
+        a->view.rot = a->ext_course;
         a->rot_from_heading = 1;
     } else if (a->rot_from_heading) {
         a->view.rot = 0.0;

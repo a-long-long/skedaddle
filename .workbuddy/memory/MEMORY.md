@@ -7,6 +7,7 @@
 - ★★★ `skedaddle_graph_extract --out=` 必须与脚本 `OUT_ROOT`(=`products/graph`) 逐字一致；传错留孤副本。删重复前 `md5sum` + 确认无脚本依赖。
 - 产物终态 `products/graph/<省>/` = `disp.idx + lanes.bin + t_*`；tile 化失败致命、无兜底，唯一显示源 = disp tile。
 - 验收 `./scripts/regress.sh`：Linux 主机 87/0；Windows 副机仅 beijing ⇒ 多省/places_auto.db/rev.bin/lm.bin 用例 FAIL，非回归。编译零警告（-Werror）；改渲染补 `bmpdiff.py 旧 新`。`--ui-test` 已进 regress（须隔离 ini）；完成即 commit + push origin main。前端只有 `skedaddle`（SDL 已移除）。
+- ★ Windows 副机跑全量 regress：`SKEDADDLE_BUILD_DIR=$PWD/build_rel ./scripts/regress.sh`，运行期 PATH 必须同时含 `dist/skedaddle-release`（disp_runtime 等工具缺它 ⇒ rc=127）+ `/d/Qt/6.11.2/mingw_64/bin` + `ucrt64/bin`。11-11 口径 67/24（24 条全是缺 7 省数据）。改 `regress.sh` 后必跑 `regen_tutorial_blocks.py`（不带 --check）→ 再 `--check`；★ 用 Edit 改讲义会翻 CRLF ⇒ --check 假红，生成器再跑一次即归一化。
 - ★★ 删文件/删 include 前必须 grep 该符号/该头全部引用（删 `window_sdl.c` 让 `app_run` 悬空；只 grep `label_` 漏 `NamePool`）。
 - ★ `osmid.bin` 已停生成+停校验；重建：`git pull` 后删各省 `osmid.bin` 跑 regress 87/0。
 
@@ -66,6 +67,13 @@
 - ★ `check_tutorial_tracks.py` 用排序取第一个目录 ⇒ 重编号残留的旧编号目录（只装 `out.bmp`/`tut.exe`）会顶掉同号真目录报假 FAIL；删残留即恢复（11-07 清 12 个）。
 - `tutorial/mini/_parts/` 唯一人写源；`regen_mini_chain.py` 生成 steps/diffs（`--check` 过期 rc=1）；`check_mini_chain.py` 守编译运行+gates+负向对照，未接 regress。末课 MAP.md 是 mini ↔ src 18 行对照（有门禁）。
 - ★ C 注释里 `NN_*/` 会提前闭合块注释炸 -Werror；`steps/stepNN_slug/` 回 `docs/` 是 4 层 `../../../../`。负向对照测 RUN 要改「被检查的数据」，别把条件改常量 0。
+
+## 导航闭环五项（11-11，`99350be` avoid/ETA + `55dbaba` 门牌 + 本次 alarm/车头朝上）
+- ★ 路线偏好 `pref_*` 三档只改搜索代价 `g`（`edge_cost_pref()`，软惩罚 `ROUTE_PREF_ADD=0.6` × 加法因子），**不碰** `total_s`/`seg_ds`/lmdist/navsim ETA；`h` 仍是物理时间下界 ⇒ admissible。硬排除 `=2` 与旧 `avoid_*` 合并 continue。ETA 校准只留 `navsim_set_eta_calibrator()` 挂在 `navsim_remaining_s()` 唯一收敛点，缺省 NULL 恒等。
+- 门牌 `kind 14` 复用 place 表，照抄路名「只进搜索永不画」；`search_normalize_addr()` 两端共用，`search_query()` 只在查询串含数字时召回 `kind>=14`（否则挤占候选）。旧库无 kind14 行天然返回 0。MSYS2 中文命令行转 GBK ⇒ `search_cli --q-file=<UTF-8>`。
+- ★★ 测速告警：建库端**独立 `alarm` 表**（不复用 place，避免污染 bigram/Top-N），北京 35 点；查询端 `label_cache_query_alarms()` 复用 `LabelCache.db`，投影到路线折线（60m 吸附 / 1.5km 上限），旧库无表 `prepare` 失败静默返回 0。语音端 `voice_scan_alarm_ex()` / `voice_tick_ex()` 把点状与边标志位告警放**同一张候选表**共用 `alarm_priority()`；`voice_scan_alarm()` / `voice_tick()` 是 `NULL/0` 薄封装 ⇒ 无数据时逐位不变。★ `inst = 1000000 + alarm.id`（错开段下标，防撞 `alarm_slot`）；★ `NavVoiceCtx` 加字段后所有构造点必须 `= {0}`（野值 n_alarms 会读野指针）。e2e C 类用**内存 SQLite** 自洽，注入 `n_al=0` 实测 rc=1 判据有分辨力。
+- ★★★ 车头朝上：投影层原先只有 `mv_proj`/`mv_unproject` 认 rot。四个接口必须一起修：①`mv_visible_bbox` 旋转时反投影**四角**取 min/max（两角口径 bbox 偏小 ⇒ 地理裁剪整块丢要素）②`mv_pan_pixels`/`mv_zoom_at` 屏幕位移要经 `R(+rot)` 反变换（共用 `screen_to_world_vec`）③`mv_fit_bbox` 四角按 `R(-rot)` 算屏幕跨度（45° 差 √2）④`paint_nav_car` 屏幕角 = `heading - rot`。★ `paint_areas_banded`/`paint_lines_banded` 加 `rot!=0 → return -1` 落回串行（与 roads 已有 guard 同纪律）。★ 指北针北向是 `(-R·sin rot, -R·cos rot)`，原 `+R·sin` 反号。点指北针/手动旋转必须同时清 `heading_up`，否则下一帧被航向覆盖。
+- 判据：`skedaddle_mapview_selftest`（MAPVIEW-OK，数值+车标像素）+ regress `rot45_shot`/`rot90_shot`；改前发布包 exe vs 改后 `--rot=0` 出图 md5 相同、bmpdiff 0/1024000。`--rot=` 必须同时加进 `offscreen_shot.c` 和 `qt_main.cpp` 参数白名单。
 
 ## 分层与模块边界
 - 终态 DAG 零环：`utils ← pbf ← map ← route ← render ← ui ← ui_qt`（search/settings 横切）。★★ `-Wl,--start-group` 已移除 ⇒ 反向依赖立刻 undefined-reference；查符号归属别只 grep 函数前缀（`mapset.h` 那行 `render/labels.h` 承重 NamePool）。

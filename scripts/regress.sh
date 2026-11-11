@@ -15,7 +15,11 @@
 set -u
 cd "$(dirname "$0")/.."
 ROOT=$PWD
-BUILD=$ROOT/build
+# ★ 缺省仍是仓库根的 build/（Linux 主机口径）。Windows 副机用 build_rel
+#   （Qt6/ucrt64）时可用 SKEDADDLE_BUILD_DIR 指过去，不必改动任何判据：
+#     SKEDADDLE_BUILD_DIR=$PWD/build_rel ./scripts/regress.sh
+#   ★ 只改「到哪儿找可执行文件」，不改用例本身 ⇒ 跨机跑的是同一套门禁。
+BUILD=${SKEDADDLE_BUILD_DIR:-$ROOT/build}
 GRAPH=$ROOT/products/graph
 
 DO_BUILD=0
@@ -265,6 +269,20 @@ run skedaddle_voice_selftest "VOICE-OK" "$BUILD/skedaddle_voice_selftest"
 # ---- 语音播报**端到端**（走生产接线 nav_voice_frame，验证"窗口真的播了"）----
 # 用 SKEDADDLE_TTS_DRYRUN 截下 sk_tts_speak 交出去的话来断言；单函数自测抓不到接线 bug。
 run skedaddle_voice_e2e "VOICE-E2E-OK" "$BUILD/skedaddle_voice_e2e"
+
+# ---- 旋转视图（车头朝上）坐标链：数值判据，不靠看 BMP ----
+run skedaddle_mapview_selftest "MAPVIEW-OK" "$BUILD/skedaddle_mapview_selftest"
+
+# ---- 旋转视图离屏出图：走同一份像素审计，证明四角 bbox 没把要素裁掉 ----
+# ★ rot=0 的常规 shot 用例在上文；这里补 45°/90°，是「车头朝上」的
+#   渲染侧闭环。旋转时分带并行会主动落回串行（见 paint.c 的 rot guard），
+#   所以这两条同时也在守「落回串行后没缺块」。
+run rot45_shot "ASSERT-OK" "$BUILD/skedaddle" --shot-offscreen --graph="$GRAPH" \
+    --lat=39.90 --lon=116.40 --zoom=13 --w=1280 --h=800 --rot=45 \
+    --out="$SHOTS/rot45_shot.bmp"
+run rot90_shot "ASSERT-OK" "$BUILD/skedaddle" --shot-offscreen --graph="$GRAPH" \
+    --lat=39.90 --lon=116.40 --zoom=13 --w=1280 --h=800 --rot=90 \
+    --out="$SHOTS/rot90_shot.bmp"
 
 # ---- 多方案对比（阶段 12）----
 run skedaddle_alts_selftest "ALTS-OK" "$BUILD/skedaddle_alts_selftest"

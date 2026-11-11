@@ -455,9 +455,11 @@ static void draw_compass(Raster *rs, App *a, const CLay *L)
     for (int t = 0; t < 360; t += 8)
         rpoint(rs, (int)(cx + R*cos(t*M_PI/180.0)),
                     (int)(cy + R*sin(t*M_PI/180.0)), 70, 80, 100);
-    /* N 指针：指向屏幕角 rot（顺时针） */
+    /* N 指针：正投影是 R(-rot)，北向 (0,-R) 转完落在 (-R·sin rot, -R·cos rot)。
+     * ★ 原先写成 +R·sin rot（与投影公式反号），rot=90 时本该指左却指右。
+     *   rot=0 时 sin=0、cos=1 ⇒ 与改造前逐像素一致（且此时本就不画）。 */
     double ang = a->view.rot * M_PI / 180.0;
-    int nx = (int)(cx + R * sin(ang));
+    int nx = (int)(cx - R * sin(ang));
     int ny = (int)(cy - R * cos(ang));
     rline(rs, cx, cy, nx, ny, 210, 60, 50);
     if (a->font) rtext(a->font, rs, nx - 4, ny - 12, "N", 210, 60, 50, 0);
@@ -731,6 +733,10 @@ void chrome_act(App *a, int id, int x, int y)
         app_nav_clear(a);
         break;
     case CH_COMPASS:
+        /* 点指北针 = 回正北。★ 必须同时关掉车头朝上，否则下一帧
+           app_nav_sim_tick 又会把 rot 写回航向，看起来像"点了没反应"。 */
+        a->heading_up = 0;
+        a->rot_from_heading = 0;
         a->view.rot = 0.0; a->need_redraw = 1;
         break;
     default:

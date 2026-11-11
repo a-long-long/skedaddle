@@ -905,3 +905,94 @@ void paint_road_labels(Raster *rs, const MapView *v, Font *font,
     label_flush(rs);
     if (st) st->road_labels_drawn = drawn;
 }
+
+
+/* ------------------------------------------------------------------------
+ * 沿路告警点（places.db 的 alarm 表 → route/voice.c 的告警编排）
+ *
+ * 为什么放在这里：LabelCache 本来就持有 places.db 的只读句柄，告警点在同一
+ * 库里；复用句柄就不用再开一条 sqlite 连接（sqlite 连接不是并发安全的）。
+ *
+ * ★ 旧库兼容：老 places_auto.db 没有 alarm 表 ⇒ prepare 失败 ⇒ 直接返回 0，
+ *   voice_tick 的告警段继续用 edge_flags 的隧道/收费/桥梁，静默降级不报错。
+ * ★ 当前数据规模（北京 35 个点）下每帧查一次 SQL 的成本可忽略；将来接
+ *   全国库（几十万点）时应在这里加「车移动 >50m 或 500ms」节流 + 缓存
+ *   绝对里程，别把 SQL 塞进每帧热路径。
+ * ---------------------------------------------------------------------- */
+int label_cache_query_alarms(LabelCache *lc,
+                             const int32_t *lat_e7, const int32_t *lon_e7,
+                             const uint32_t *seg_m, uint32_t npts,
+                             double along_m, LabelAlarm *out, int cap)
+{
+    if (!lc || !lc->db || !out || cap <= 0 || !lat_e7 || !lon_e7 || !seg_m ||
+        npts < 2 || along_m < 0.0) return 0;
+
+    /* 1) 车头在路线上的位置：只用于给 SQL 一个 bbox 粗筛（走 alarm_latlon 索引） */
+    double acc = 0.0, total = 0.0;
+    for (uint32_t i = 0; i + 1 < npts; i++) total += (double)seg_m[i];
+    if (along_m >= total) return 0;
+    uint32_t si = 0; double t = 0.0;
+    for (si = 0; si + 1 < npts; si++) {
+        double l = (double)seg_m[si];
+        if (acc + l >= along_m) { t = l > 0.0 ? (along_m - acc) / l : 0.0; break; }
+        acc += l;
+    }
+    if (si + 1 >= npts) return 0;
+    double la0 = (lat_e7[si] + (lat_e7[si+1] - lat_e7[si]) * t) / 1e7;
+    double lo0 = (lon_e7[si] + (lon_e7[si+1] - lon_e7[si]) * t) / 1e7;
+
+    sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(lc->db,
+            "SELECT id,lat,lon,type FROM alarm "
+            "WHERE lat BETWEEN ?1 AND ?2 AND lon BETWEEN ?3 AND ?4",
+            -1, &st, NULL) != SQLITE_OK)
+        return 0;                       /* 老库无 alarm 表：静默降级 */
+    sqlite3_bind_double(st, 1, la0 - 0.02);
+    sqlite3_bind_double(st, 2, la0 + 0.02);
+    sqlite3_bind_double(st, 3, lo0 - 0.03);
+    sqlite3_bind_double(st, 4, lo0 + 0.03);
+
+    /* 等距近似：屏幕外 2km 内用平面坐标足够，误差远小于 60m 吸附阈值 */
+    const double kx = 111320.0 * cos(la0 * 3.14159265358979323846 / 180.0);
+    const double ky = 110540.0;
+    const double max_d2 = 60.0 * 60.0;
+    int n = 0;
+
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        int    id   = sqlite3_column_int(st, 0);
+        double la   = sqlite3_column_double(st, 1);
+        double lon  = sqlite3_column_double(st, 2);
+        int    type = sqlite3_column_int(st, 3);
+        double px = (lon - lo0) * kx, py = (la - la0) * ky;
+        double best_d2 = max_d2, best_s = -1.0;
+
+        /* 2) 只扫 [along-50, along+1500] 的段，长途路线不会退化成全路线扫 */
+        double a = 0.0;
+        for (uint32_t i = 0; i + 1 < npts; i++) {
+            double len = (double)seg_m[i];
+            if (a + len < along_m - 50.0) { a += len; continue; }
+            if (a > along_m + LABEL_ALARM_MAX_DIST_M) break;
+            double ax = (lon_e7[i]   / 1e7 - lo0) * kx;
+            double ay = (lat_e7[i]   / 1e7 - la0) * ky;
+            double bx = (lon_e7[i+1] / 1e7 - lo0) * kx;
+            double by = (lat_e7[i+1] / 1e7 - la0) * ky;
+            double dx = bx - ax, dy = by - ay;
+            double dd = dx * dx + dy * dy;
+            double tt = dd > 0.0 ? ((px - ax) * dx + (py - ay) * dy) / dd : 0.0;
+            if (tt < 0.0) tt = 0.0;
+            if (tt > 1.0) tt = 1.0;
+            double qx = ax + tt * dx, qy = ay + tt * dy;
+            double d2 = (px - qx) * (px - qx) + (py - qy) * (py - qy);
+            if (d2 < best_d2) { best_d2 = d2; best_s = a + tt * len; }
+            a += len;
+        }
+        if (best_s > along_m && best_s - along_m <= LABEL_ALARM_MAX_DIST_M) {
+            out[n].type   = type;
+            out[n].inst   = LABEL_ALARM_INST_BASE + id;  /* 表主键：位置恒定的实例身份 */
+            out[n].dist_m = best_s - along_m;
+            if (++n >= cap) break;
+        }
+    }
+    sqlite3_finalize(st);
+    return n;
+}

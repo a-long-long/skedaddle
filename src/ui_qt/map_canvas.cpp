@@ -548,8 +548,10 @@ void MapCanvas::drawCompass(QPainter &p)
     p.setBrush(Qt::NoBrush);
     p.drawEllipse(QPoint(cx, cy), R, R);
 
+    /* 北向 (0,-R) 经正投影 R(-rot) 后落在 (-R·sin rot, -R·cos rot)。
+     * ★ 原先是 +R·sin rot，与 mv_proj 的旋转方向反号（rot=90 指右而非指左）。 */
     double ang = m_a->view.rot * M_PI / 180.0;
-    double nx = cx + R * sin(ang), ny = cy - R * cos(ang);
+    double nx = cx - R * sin(ang), ny = cy - R * cos(ang);
     p.setPen(QPen(QColor(210, 60, 50), 2));
     p.drawLine(QPoint(cx, cy), QPointF(nx, ny));
     QFont f = p.font();
@@ -576,6 +578,8 @@ void MapCanvas::mousePressEvent(QMouseEvent *e)
 #endif
     if (m_compassRect.isValid() && m_compassRect.contains(ep.toPoint())) {
         m_a->view.rot = 0.0;                 /* 点指北针回正北 */
+        m_a->heading_up = 0;                 /* 否则下一帧又把 rot 写回航向 */
+        m_a->rot_from_heading = 0;
         m_a->need_redraw = 1;
         renderNow();
         return;
@@ -602,6 +606,9 @@ void MapCanvas::mouseMoveEvent(QMouseEvent *e)
         else update();
     }
     if (m_rotating) {
+        /* 手动旋转与「车头朝上」互斥：不关掉的话下一帧航向会把手动角度覆盖。 */
+        m_a->heading_up = 0;
+        m_a->rot_from_heading = 0;
         m_a->view.rot += (ex - m_lastx) * 0.3;
         if (m_a->view.rot > 180.0)  m_a->view.rot -= 360.0;
         if (m_a->view.rot < -180.0) m_a->view.rot += 360.0;

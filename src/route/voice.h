@@ -205,6 +205,17 @@ typedef struct {
 int  voice_scan_alarm(const RouteResult *rr, double from_m, double speed_ms,
                       VoiceAlarm *out);
 
+/* 扩展扫描：把「外部点状告警」（places.db 的 alarm 表：测速摄像头等）与
+ * edge_flags 的隧道/收费站/桥梁放进**同一张候选表**，用同一个
+ * alarm_priority() 与「同分取近」规则选优 —— 官方 Navigator.findAlarm
+ * 遍历的就是「构建路线时一次性生成的全部 Alarm」，这里补上点标注后
+ * 与官方形态更接近。
+ *
+ * ★ extra == NULL 或 n_extra <= 0 ⇒ 与 voice_scan_alarm() **逐位一致**
+ *   （voice_scan_alarm 就是本函数的薄封装，负向对照锚点）。 */
+int  voice_scan_alarm_ex(const RouteResult *rr, double from_m, double speed_ms,
+                         const VoiceAlarm *extra, int n_extra, VoiceAlarm *out);
+
 /* ---------------------------------------------------------------------------
  * 4) 播报节奏（抄 nav-desktop VoiceRouter 的状态与冷却）
  *
@@ -356,5 +367,17 @@ typedef struct {
 int  voice_tick(VoiceRouter *vr, const RouteResult *rr, const ManeuverList *ml,
                 int man_idx, double to_go_m, double speed_ms, double remain_m,
                 int arrived, uint64_t now_ms, VoiceFrame *out);
+
+/* 扩展编排：额外接收一帧的点状告警候选（由 ui 层查 places.db 的 alarm 表、
+ * 投影到路线折线上得到），交给 voice_scan_alarm_ex() 与边标志位告警合并。
+ *
+ * ★ extra_alarms == NULL 或 n_extra_alarms <= 0 ⇒ 与 voice_tick()
+ *   **逐位一致**（voice_tick 就是本函数的薄封装）⇒ 旧库无 alarm 表、
+ *   或没在导航时，产品行为完全不变，是本次数据接入的负向对照锚点。 */
+int  voice_tick_ex(VoiceRouter *vr, const RouteResult *rr, const ManeuverList *ml,
+                   int man_idx, double to_go_m, double speed_ms, double remain_m,
+                   int arrived, uint64_t now_ms,
+                   const VoiceAlarm *extra_alarms, int n_extra_alarms,
+                   VoiceFrame *out);
 
 #endif /* SKEDADDLE_VOICE_H */

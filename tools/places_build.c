@@ -107,7 +107,7 @@ enum {
  * ---------------------------------------------------------------------- */
 typedef struct {
     uint64_t nodes_seen, nodes_tagged, ways_seen, ways_named;
-    uint64_t rows_place, rows_gram;
+    uint64_t rows_place, rows_gram, rows_alarm;
     uint64_t dup_dropped, no_gram, name_too_long, way_too_big;
     uint64_t blacklisted, numeric_name, dup_sameplace;
     uint64_t road_rows, road_dup, road_noname;
@@ -226,13 +226,14 @@ static int keyset_seen(KeySet *s, uint64_t key)
  * ---------------------------------------------------------------------- */
 typedef struct {
     sqlite3       *db;
-    sqlite3_stmt  *ins_place, *ins_gram;
+    sqlite3_stmt  *ins_place, *ins_gram, *ins_alarm;
     sqlite3_int64  next_id;
 } Sink;
 
 static const char *kSchema =
     "DROP TABLE IF EXISTS place;"
     "DROP TABLE IF EXISTS gram;"
+    "DROP TABLE IF EXISTS alarm;"
     "DROP INDEX IF EXISTS place_latlon;"
     "CREATE TABLE place(  id     INTEGER PRIMARY KEY,"
     "                     name   TEXT    NOT NULL,"
@@ -243,7 +244,17 @@ static const char *kSchema =
     "                     sub    INTEGER NOT NULL DEFAULT 0);"
     "CREATE TABLE gram(   gram     TEXT    NOT NULL,"
     "                     place_id INTEGER NOT NULL,"
-    "                     PRIMARY KEY(gram, place_id)) WITHOUT ROWID;";
+    "                     PRIMARY KEY(gram, place_id)) WITHOUT ROWID;"
+    /* 沿路告警点（测速摄像头 / 执法点）：与 place 表完全解耦。
+       ★ 不复用 place 表：告警点绝大多数无 name，而 place.name NOT NULL +
+         emit_row 的 !name 过滤 + selftest 断言会把它们全灭；且塞进去会
+         污染搜索结果与标注 Top-N。独立表的旧库兼容 = 无表即 0 个告警。 */
+    "CREATE TABLE alarm(  id     INTEGER PRIMARY KEY,"
+    "                     lat    REAL    NOT NULL,"
+    "                     lon    REAL    NOT NULL,"
+    "                     type   INTEGER NOT NULL,"
+    "                     maxspeed_kmh INTEGER NOT NULL DEFAULT 0,"
+    "                     direction    INTEGER NOT NULL DEFAULT 0);";
 
 static int sink_open(Sink *s, const char *path)
 {
@@ -267,7 +278,10 @@ static int sink_open(Sink *s, const char *path)
             "INSERT INTO place(id,name,lat,lon,kind,weight,sub) VALUES(?1,?2,?3,?4,?5,?6,?7)",
             -1, &s->ins_place, NULL) != SQLITE_OK ||
         sqlite3_prepare_v2(s->db, "INSERT OR REPLACE INTO gram(gram,place_id) VALUES(?1,?2)",
-            -1, &s->ins_gram, NULL) != SQLITE_OK) {
+            -1, &s->ins_gram, NULL) != SQLITE_OK ||
+        sqlite3_prepare_v2(s->db,
+            "INSERT INTO alarm(lat,lon,type,maxspeed_kmh,direction) VALUES(?1,?2,?3,?4,?5)",
+            -1, &s->ins_alarm, NULL) != SQLITE_OK) {
         fprintf(stderr, "prepare 失败: %s\n", sqlite3_errmsg(s->db));
         return -1;
     }
@@ -286,6 +300,10 @@ static int sink_finish(Sink *s)
                      NULL, NULL, &err) != SQLITE_OK) {
         fprintf(stderr, "建索引失败: %s\n", err); rc = -1;
     }
+    if (sqlite3_exec(s->db, "CREATE INDEX alarm_latlon ON alarm(lat,lon)",
+                     NULL, NULL, &err) != SQLITE_OK) {
+        fprintf(stderr, "建告警索引失败: %s\n", err); rc = -1;
+    }
     return rc;
 }
 
@@ -293,6 +311,7 @@ static void sink_close(Sink *s)
 {
     if (s->ins_place) sqlite3_finalize(s->ins_place);
     if (s->ins_gram)  sqlite3_finalize(s->ins_gram);
+    if (s->ins_alarm) sqlite3_finalize(s->ins_alarm);
     if (s->db)        sqlite3_close(s->db);
     memset(s, 0, sizeof(*s));
 }
@@ -690,6 +709,44 @@ static int make_addr_name(const char *street, const char *house,
     return l > 0;
 }
 
+/* ---- 沿路告警点（测速摄像头 / 执法点）----
+ * type 字面 4 = src/route/voice.h 的 VOICE_ALARM_SPEED_CAMERA。tools 不
+ * include route 头（分层），改枚举时这两处必须同步（双处锚定）。 */
+#define ALARM_TYPE_SPEED_CAMERA 4
+
+static int emit_alarm(Builder *b, BuildStats *st, double lat, double lon,
+                      int maxspeed_kmh)
+{
+    sqlite3_stmt *s = b->sink.ins_alarm;
+    sqlite3_reset(s);
+    sqlite3_bind_double(s, 1, lat);
+    sqlite3_bind_double(s, 2, lon);
+    sqlite3_bind_int(s, 3, ALARM_TYPE_SPEED_CAMERA);
+    sqlite3_bind_int(s, 4, maxspeed_kmh);
+    sqlite3_bind_int(s, 5, 0);        /* direction：暂不做方向过滤 */
+    if (sqlite3_step(s) != SQLITE_DONE) return -1;
+    st->rows_alarm++;
+    return 0;
+}
+
+/* 命中测速/执法点的 tag。★ 不要求 name：OSM 上这类点绝大多数无 name，
+   走 place 表会在 emit_row 的 !name 处全灭。maxspeed 顺带存下来给将来
+   做「限速播报」用，当前只播「前方有测速摄像头」。 */
+static int alarm_node_tags(PbfBlock *blk, const uint32_t *k, const uint32_t *v,
+                           size_t n, int *maxspeed_kmh)
+{
+    const char *hw  = kv_get(blk, k, v, n, "highway");
+    const char *enf = kv_get(blk, k, v, n, "enforcement");
+    const char *ts  = kv_get(blk, k, v, n, "traffic_sign");
+    int hit = (hw && strcmp(hw, "speed_camera") == 0) ||
+              (enf && *enf && strcmp(enf, "no") != 0) ||
+              (ts && strstr(ts, "maxspeed") != NULL);
+    if (!hit) return 0;
+    const char *ms = kv_get(blk, k, v, n, "maxspeed");
+    *maxspeed_kmh = ms ? atoi(ms) : 0;
+    return 1;
+}
+
 /* 去掉空白后全是数字的名字（"551"、"226"）是编号，不是地名。
  * 实测北京抽上来一百多条这种，混在搜索结果里很难解释为"搜索质量"。 */
 static int name_is_numeric(const char *s)
@@ -791,6 +848,15 @@ static int handle_tagged_node(Builder *b, PbfBlock *blk, int64_t osm_id,
     BuildStats *st = &b->st;
     st->nodes_tagged++;
     if (n == 0) return 0;
+
+    /* ---- 沿路告警点（测速摄像头 / 执法点）----
+     * 写独立 alarm 表，不进 place/gram；不 return —— 同一个 node 也可能
+     * 同时是门牌或有名字的 POI，各走各的表互不干扰。 */
+    {
+        int ms = 0;
+        if (alarm_node_tags(blk, keys, vals, n, &ms))
+            emit_alarm(b, st, lat_e7 / 1e7, lon_e7 / 1e7, ms);
+    }
 
     /* ---- 门牌（addr:*）：kind 14 只进搜索、永不画 ----
      * 用 osm_key 槽位 3，避免与同一 node 上可能同时存在的 POI 行（槽位 1）
@@ -1201,7 +1267,7 @@ static void acc_stats(BuildStats *tot, const BuildStats *st)
 {
 #define ACC(f) tot->f += st->f
     ACC(nodes_seen); ACC(nodes_tagged); ACC(ways_seen); ACC(ways_named);
-    ACC(rows_place); ACC(rows_gram); ACC(dup_dropped); ACC(no_gram);
+    ACC(rows_place); ACC(rows_gram); ACC(rows_alarm); ACC(dup_dropped); ACC(no_gram);
     ACC(name_too_long); ACC(way_too_big);
     ACC(blacklisted); ACC(numeric_name); ACC(dup_sameplace);
     ACC(road_rows); ACC(road_dup);
@@ -1347,6 +1413,16 @@ static int selftest(const char *db_path)
     }
     sqlite3_finalize(all);
     sqlite3_finalize(one);
+
+    /* alarm 表是 11-11 加的：旧库没有这张表 ⇒ 只打印提示，绝不算 fails
+       （regress 的 places_selftest 必须能跑存量库）。 */
+    sqlite3_stmt *al = NULL;
+    if (sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM alarm", -1, &al, NULL) == SQLITE_OK &&
+        sqlite3_step(al) == SQLITE_ROW)
+        printf("告警点        %lld 条\n", (long long)sqlite3_column_int64(al, 0));
+    else
+        printf("告警点        无 alarm 表（旧库，静默降级）\n");
+    if (al) sqlite3_finalize(al);
     sqlite3_close(db);
 
     if (rows == 0)                { printf("ASSERT-FAIL    库里一条地名都没有\n"); fails++; }
@@ -1463,9 +1539,10 @@ int main(int argc, char **argv)
     B.tot.ms_finish = now_ms() - t0 - B.tot.ms_build;
 
     printf("\n合计\n");
-    printf("  place %llu  gram %llu  重复 %llu  超长截断 %llu\n",
+    printf("  place %llu  gram %llu  alarm %llu  重复 %llu  超长截断 %llu\n",
            (unsigned long long)B.tot.rows_place,
            (unsigned long long)B.tot.rows_gram,
+           (unsigned long long)B.tot.rows_alarm,
            (unsigned long long)B.tot.dup_dropped,
            (unsigned long long)B.tot.name_too_long);
     printf("  bbox  %.4f,%.4f .. %.4f,%.4f\n",

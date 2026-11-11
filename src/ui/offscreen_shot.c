@@ -208,6 +208,7 @@ int offscreen_shot_main(int argc, char **argv)
     double lat = 0, lon = 0;
     int have_center = 0;
     double zoom = 12;
+    double rot = 0.0;          /* --rot=<度>：车头朝上/手动旋转视角的离屏验收入口 */
     int w = 1280, h = 800, max_class = 4;
     const char *font = NULL;   /* NULL = 默认字体（宋体） */
     int font_size = 0;         /* <=0 = 默认字号 */
@@ -252,6 +253,9 @@ int offscreen_shot_main(int argc, char **argv)
             zoom = atof(argv[i] + 7);
             zoom_given = 1;
         }
+        /* 旋转视图（度，顺时针）。缺省 0 ⇒ 与不加此参数的出图逐字节一致，
+           是「车头朝上」渲染改动的负向对照锚点。 */
+        else if (strncmp(argv[i], "--rot=", 6) == 0) rot = atof(argv[i] + 6);
         /* 注意 n 是"字面量长度"，不是长度+1：
            strncmp(s, "--w=", 5) 会连字符串结尾的 '\0' 一起比，永远不相等。 */
         else if (strncmp(argv[i], "--w=", 4) == 0) w = atoi(argv[i] + 4);
@@ -356,6 +360,7 @@ int offscreen_shot_main(int argc, char **argv)
     }
     if (have_center == 3) { a.view.lat = lat; a.view.lon = lon; }
     a.view.zoom = zoom;
+    a.view.rot = rot;
     a.view.w = w; a.view.h = h;
     a.max_class = max_class;
     if (settings_ovl) { a.settings_open = 1; a.settings_ovl = 1; }

@@ -401,8 +401,8 @@ static int alarm_push(AlarmCand **cand, size_t *n, size_t *cap,
     return 0;
 }
 
-int voice_scan_alarm(const RouteResult *rr, double from_m, double speed_ms,
-                      VoiceAlarm *out)
+int voice_scan_alarm_ex(const RouteResult *rr, double from_m, double speed_ms,
+                        const VoiceAlarm *extra, int n_extra, VoiceAlarm *out)
 {
     if (!out) return 0;
     memset(out, 0, sizeof *out);
@@ -505,6 +505,29 @@ int voice_scan_alarm(const RouteResult *rr, double from_m, double speed_ms,
         }
     }
 
+    /* ---- 外部点状告警（places.db 的 alarm 表：测速摄像头等）----
+     * 官方 Alarms.fromSegments 只认「段」是因为它没有点标注表；本项目补上
+     * alarm 表后，把这些点当成**同一批候选**塞进 cand，共用同一个
+     * alarm_priority() 打分 ⇒ 摄像头（priority 1）能压过隧道/收费站。
+     *
+     * ★ inst 必须是「位置恒定的身份」：alarm 表的主键（见
+     *   label_cache_query_alarms），不能用「本次扫到的第几个」——
+     *   否则同一摄像头在两帧拿到不同 inst ⇒ 已播级别记到别的告警头上。
+     * ★ 与边标志位告警的 inst（段下标，非负）错开：点状用 alarm 表主键
+     *   加 LABEL_ALARM_INST_BASE 的大偏移，保证 (type,inst) 不撞槽。 */
+    if (extra && n_extra > 0) {
+        for (int k = 0; k < n_extra; k++) {
+            if (extra[k].type <= VOICE_ALARM_NONE ||
+                extra[k].type >= VOICE_ALARM_COUNT) continue;
+            double d = extra[k].dist_m;
+            if (d < 0.0 || d > VOICE_ALARM_MAX_DIST_M) continue;
+            if (alarm_push(&cand, &n_cand, &cap_cand, extra[k].type, d,
+                           extra[k].len_m, from_m + d, extra[k].inst) != 0) {
+                free(cand); return 0;
+            }
+        }
+    }
+
     /* 选最优：官方 Navigator.findAlarm —— priority 小者优，同 priority 取近的。
      * 官方遍历的是**全部**告警；这里同样遍历全部候选（数量很小）。 */
     int best = -1;
@@ -531,6 +554,13 @@ int voice_scan_alarm(const RouteResult *rr, double from_m, double speed_ms,
     }
     free(cand);
     return found;
+}
+
+int voice_scan_alarm(const RouteResult *rr, double from_m, double speed_ms,
+                     VoiceAlarm *out)
+{
+    /* 薄封装：无外部点状告警 ⇒ 与改造前逐位一致（负向对照锚点）。 */
+    return voice_scan_alarm_ex(rr, from_m, speed_ms, NULL, 0, out);
 }
 
 /* ---------------------------------------------------------------------------
@@ -843,9 +873,11 @@ static void frame_push(VoiceFrame *f, const char *text)
     f->n++;
 }
 
-int voice_tick(VoiceRouter *vr, const RouteResult *rr, const ManeuverList *ml,
-               int man_idx, double to_go_m, double speed_ms, double remain_m,
-               int arrived, uint64_t now_ms, VoiceFrame *out)
+int voice_tick_ex(VoiceRouter *vr, const RouteResult *rr, const ManeuverList *ml,
+                  int man_idx, double to_go_m, double speed_ms, double remain_m,
+                  int arrived, uint64_t now_ms,
+                  const VoiceAlarm *extra_alarms, int n_extra_alarms,
+                  VoiceFrame *out)
 {
     if (!out) return 0;
     out->n = 0;
@@ -871,7 +903,8 @@ int voice_tick(VoiceRouter *vr, const RouteResult *rr, const ManeuverList *ml,
         double along = rr->total_m - remain_m;
         if (along < 0.0) along = 0.0;
         VoiceAlarm al;
-        if (voice_scan_alarm(rr, along, speed_ms, &al)) {
+        if (voice_scan_alarm_ex(rr, along, speed_ms,
+                                extra_alarms, n_extra_alarms, &al)) {
             if (voice_router_maybe_say_alarm(vr, &al, buf, sizeof buf, now_ms))
                 frame_push(out, buf);
         }
@@ -894,4 +927,15 @@ int voice_tick(VoiceRouter *vr, const RouteResult *rr, const ManeuverList *ml,
      * ★ 这里只把"该播"这个决定做出来，文本由调用方取（官方同款分层）。 */
     (void)arrived;
     return out->n;
+}
+
+int voice_tick(VoiceRouter *vr, const RouteResult *rr, const ManeuverList *ml,
+               int man_idx, double to_go_m, double speed_ms, double remain_m,
+               int arrived, uint64_t now_ms, VoiceFrame *out)
+{
+    /* 薄封装：无外部点状告警 ⇒ 与改造前逐位一致（负向对照锚点）。
+     * ★ 老 places.db 没有 alarm 表 ⇒ label_cache_query_alarms() 返回 0
+     *   ⇒ ui 层传进来的也是 NULL/0 ⇒ 产品行为完全不变。 */
+    return voice_tick_ex(vr, rr, ml, man_idx, to_go_m, speed_ms, remain_m,
+                         arrived, now_ms, NULL, 0, out);
 }

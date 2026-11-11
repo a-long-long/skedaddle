@@ -20,6 +20,16 @@ typedef struct {
                         语义与 tools/places_build.c 的 PSUB_* 对齐；其余 kind 恒 0 */
 } LabelItem;
 
+/* 沿路告警点（places.db 的 alarm 表）查询结果。
+ * ★ 刻意不 include route/voice.h：mapset.h 会反向 include 本头拿 NamePool，
+ *   在公共头里拉进 route 层会造成 include 环；用 POD 过渡，ui/window.c
+ *   负责转成 VoiceAlarm。type 与 VOICE_ALARM_* 双处锚定（当前只用 4 测速）。 */
+typedef struct {
+    int    type;
+    int    inst;      /* alarm 表主键：已播级别的实例身份，绝不能用序号 */
+    double dist_m;    /* 沿路线距当前位置还有多远 */
+} LabelAlarm;
+
 typedef struct {
     sqlite3   *db;
     LabelItem *items;
@@ -37,6 +47,21 @@ typedef struct {
     int        poi_source;        /* 0=地图自带（缺省） 1=外部文件 */
     int        cached_poi_source; /* 上次查询时 poi_source 的值（切换须重查） */
 } LabelCache;
+
+/* 查 alarm 表并把点投影到路线折线上，返回前方 LABEL_ALARM_MAX_DIST_M 内
+   的点数（旧库无 alarm 表 ⇒ prepare 失败 ⇒ 静默返回 0，不报错）。
+   ★ 必须放在 LabelCache 定义之后（本头被 mapset.h 反向 include 拿 NamePool，
+     前置声明不够用）。rr 用基本数组传入以避开公共头的类型依赖。 */
+#define LABEL_ALARM_MAX_DIST_M 1500.0
+/* 点状告警 inst 的偏移：route/voice.c 里「边标志位告警」的 inst 是**段下标**
+ * （非负、通常 < 几万）。VoiceRouter 用 (type,inst) 记已播级别，若这里也用
+ * 小的表主键，虽然当前 type 不重叠，将来 alarm 表加隧道/收费类型就会撞槽
+ * ⇒ 统一加一个大偏移，保证与段下标不冲突。 */
+#define LABEL_ALARM_INST_BASE 1000000
+int label_cache_query_alarms(LabelCache *lc,
+                             const int32_t *lat_e7, const int32_t *lon_e7,
+                             const uint32_t *seg_m, uint32_t npts,
+                             double along_m, LabelAlarm *out, int cap);
 
 int  label_cache_init(LabelCache *lc, const char *db_path);
 void label_cache_free(LabelCache *lc);

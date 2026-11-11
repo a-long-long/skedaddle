@@ -193,6 +193,7 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--sim") == 0) { /* 同上 */ }
         else if (strncmp(argv[i], "--sim-sec=", 11) == 0) { /* 同上 */ }
         else if (strncmp(argv[i], "--sim-deviate=", 14) == 0) { /* 同上 */ }
+        else if (strncmp(argv[i], "--rot=", 6) == 0) { /* 旋转视角，同上 */ }
         else { fprintf(stderr, "未知参数 %s\n", argv[i]); return 2; }
     }
 

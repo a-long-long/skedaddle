@@ -702,6 +702,10 @@ sk_link_tool(skedaddle_voice_selftest skedaddle_route skedaddle_map skedaddle_ge
 #   ⇒ 接线坏掉时判据假绿，负向对照第 8 项就是这么被抓住的）。
 add_executable(skedaddle_voice_e2e tools/voice_e2e.c)
 sk_link_tool(skedaddle_voice_e2e skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
+# 旋转视图（车头朝上）坐标链：投影/反投影互逆、四角 bbox、缩放锚点、拖动、
+# fit_bbox、车标像素。★ 必须链 render（paint_nav_car 在 navdraw.c）。
+add_executable(skedaddle_mapview_selftest tools/mapview_selftest.c)
+sk_link_tool(skedaddle_mapview_selftest skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 add_executable(skedaddle_alts_selftest tools/alts_selftest.c tools/tool_common.c)
 sk_link_tool(skedaddle_alts_selftest skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 

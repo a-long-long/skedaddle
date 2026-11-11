@@ -155,8 +155,11 @@ void paint_nav_car(Raster *rs, const MapView *v,
     mv_project(v, lat, lon, &x, &y);
     if (x < -40 || y < -40 || x > v->w + 40 || y > v->h + 40) return;
 
-    /* 屏幕坐标下：航向 0 = 正北 = -y。右手方向 = (cos h, sin h)。 */
-    double h = heading_deg * M_PI / 180.0;
+    /* 屏幕坐标下：航向 0 = 正北 = -y。右手方向 = (cos h, sin h)。
+     * ★ 车头朝上：地图已经转了 v->rot（= 航向），车标的屏幕角要减掉它，
+     *   于是 rot == heading 时车标恒指屏幕正上方，地图在脚下旋转。
+     *   rot==0 时 h 与改造前逐位一致。 */
+    double h = (heading_deg - v->rot) * M_PI / 180.0;
     double dx =  sin(h), dy = -cos(h);          /* 车头指向 */
     double px =  cos(h), py =  sin(h);          /* 右手 */
 

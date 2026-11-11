@@ -46,8 +46,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
+#include <sqlite3.h>
 
 #include "map/road_tags.h"
+#include "render/labels.h"        /* LabelCache / LabelAlarm：点状告警的查询入口 */
 
 static int g_fail = 0;
 #define CHECK(cond, msg) do {                                            \
@@ -290,7 +293,7 @@ static void run_sim(Fixture *f, double dt, double max_seconds, Log *lg)
     sim.speed_mul = 1.0;
 
     uint8_t ann_finished = 0;
-    NavVoiceCtx c;
+    NavVoiceCtx c = {0};
     c.vr           = &f->vr;
     c.rr           = &f->rr;
     c.man          = &f->ml;
@@ -588,7 +591,7 @@ static void case_a8_finish_not_blocked_by_pause(void)
     sim.arrived = 1;
 
     uint8_t ann_finished = 0;
-    NavVoiceCtx c;
+    NavVoiceCtx c = {0};
     c.vr           = &f.vr;
     c.rr           = &f.rr;
     c.man          = &f.ml;
@@ -634,7 +637,7 @@ static void case_a9_pause_silences_regular(void)
     navsim_start(&sim, &f.rr);
 
     uint8_t ann_finished = 0;
-    NavVoiceCtx c;
+    NavVoiceCtx c = {0};
     c.vr           = &f.vr;
     c.rr           = &f.rr;
     c.man          = &f.ml;
@@ -761,6 +764,257 @@ static void case_b2_same_text_cooldown(void)
     }
 }
 
+/* ===========================================================================
+ * C 类：点状告警数据链路（places.db 的 alarm 表 → 投影 → 语音）
+ *
+ * 为什么用**内存 SQLite** 而不是 products 目录下的地名库文件：
+ *   判据必须自洽、可复现、在任何机器上都能跑（Linux 主机没有北京库也一样）。
+ *   这里直接 CREATE TABLE alarm + 手工 INSERT，把「表结构 / 索引 / 坐标」
+ *   全部摆成确定值；生产库那一层由 skedaddle_places_build --selftest 覆盖。
+ *
+ * ★ 走的是**同一份生产代码**：label_cache_query_alarms()（render/labels.c）、
+ *   voice_scan_alarm_ex() / voice_tick_ex()（route/voice.c）、
+ *   nav_voice_frame()（ui/voice_wire.c）⇒ 任何一段接线断了都会变红。
+ * ========================================================================= */
+
+static sqlite3 *make_alarm_db(int with_table)
+{
+    sqlite3 *db = NULL;
+    if (sqlite3_open(":memory:", &db) != SQLITE_OK) return NULL;
+    if (with_table) {
+        /* 与 skedaddle_places_build 的 DDL 同形（列顺序/索引名一致） */
+        const char *ddl =
+            "CREATE TABLE alarm(  id INTEGER PRIMARY KEY,"
+            " lat REAL NOT NULL, lon REAL NOT NULL, type INTEGER NOT NULL,"
+            " maxspeed_kmh INTEGER NOT NULL DEFAULT 0,"
+            " direction INTEGER NOT NULL DEFAULT 0);"
+            "CREATE INDEX alarm_latlon ON alarm(lat,lon);";
+        char *err = NULL;
+        if (sqlite3_exec(db, ddl, NULL, NULL, &err) != SQLITE_OK) {
+            sqlite3_free(err);
+            sqlite3_close(db);
+            return NULL;
+        }
+    }
+    return db;
+}
+
+static void alarm_db_put(sqlite3 *db, int id, double lat, double lon, int type)
+{
+    char sql[256];
+    snprintf(sql, sizeof sql,
+             "INSERT INTO alarm(id,lat,lon,type) VALUES(%d,%.10f,%.10f,%d)",
+             id, lat, lon, type);
+    sqlite3_exec(db, sql, NULL, NULL, NULL);
+}
+
+/* 造一条 4×500 m 的合成路线，返回 (lat,lon) 在**折线上**里程 s 米处的坐标。
+ * ★ 必须用 lat_e7/lon_e7 插值，而不是重新按经纬度公式算：
+ *   label_cache_query_alarms() 内部就是用 e7 整数做投影的，用同一套坐标
+ *   才能让「点恰好在路线上」成立（否则横向偏差会污染 60 m 吸附判据）。 */
+static void fx_at_m(const Fixture *f, double s, double *lat, double *lon)
+{
+    double a = 0.0;
+    for (uint32_t i = 0; i + 1 < f->rr.n; i++) {
+        double len = (double)f->seg_m[i];
+        if (a + len >= s || i + 2 == f->rr.n) {
+            double t = len > 0.0 ? (s - a) / len : 0.0;
+            *lat = (f->lat_e7[i] + (f->lat_e7[i+1] - f->lat_e7[i]) * t) / 1e7;
+            *lon = (f->lon_e7[i] + (f->lon_e7[i+1] - f->lon_e7[i]) * t) / 1e7;
+            return;
+        }
+        a += len;
+    }
+    *lat = f->lat_e7[0] / 1e7;
+    *lon = f->lon_e7[0] / 1e7;
+}
+
+/* 把 window.c 的 POD → VoiceAlarm 转换照抄一遍（点状告警 len_m 恒 0）。 */
+static void pod_to_voice(const LabelAlarm *la, int n, VoiceAlarm *va)
+{
+    for (int i = 0; i < n; i++) {
+        va[i].type   = la[i].type;
+        va[i].inst   = la[i].inst;
+        va[i].dist_m = la[i].dist_m;
+        va[i].len_m  = 0.0;
+    }
+}
+
+/* C1：完整数据链路正向 —— 表里的测速点真的被念出来。
+ *
+ * 摆 5 个点，只有前两个该被召回：
+ *   id1 前方 100 m、正在路线上                ⇒ 召回
+ *   id2 前方 200 m、正在路线上                ⇒ 召回（inst 必须与 id1 不同）
+ *   id3 前方 1800 m > 1500 m 上限             ⇒ 丢弃
+ *   id4 横向偏 0.002°（≈170 m）> 60 m 吸附    ⇒ 丢弃
+ *   id5 就在车头（best_s == along_m）         ⇒ 丢弃（只报前方）
+ * 之后把结果喂给生产接线，断言 DRYRUN 里出现「有测速摄像头」。
+ */
+static void case_c1_alarm_db_to_voice(void)
+{
+    Fixture f;
+    fx_uniform(&f, 4, 500.0, 60.0, NULL);      /* 总 2000 m */
+    int type[2] = { MAN_START, MAN_ARRIVE };
+    const char *road[2] = { "起始路", NULL };
+    double gap[2] = { 0.0, 2000.0 };
+    fx_maneuvers(&f, type, road, gap, 2);
+    voice_router_reset(&f.vr);
+
+    double lat, lon;
+    sqlite3 *db = make_alarm_db(1);
+    CHECK(db != NULL, "C1 内存 alarm 库应能建立");
+    if (!db) return;
+
+    fx_at_m(&f, 100.0, &lat, &lon);
+    alarm_db_put(db, 1, lat, lon, VOICE_ALARM_SPEED_CAMERA);
+    fx_at_m(&f, 200.0, &lat, &lon);
+    alarm_db_put(db, 2, lat, lon, VOICE_ALARM_SPEED_CAMERA);
+    fx_at_m(&f, 1800.0, &lat, &lon);
+    alarm_db_put(db, 3, lat, lon, VOICE_ALARM_SPEED_CAMERA);
+    fx_at_m(&f, 100.0, &lat, &lon);
+    alarm_db_put(db, 4, lat, lon + 0.002, VOICE_ALARM_SPEED_CAMERA);
+    fx_at_m(&f, 0.0, &lat, &lon);
+    alarm_db_put(db, 5, lat, lon, VOICE_ALARM_SPEED_CAMERA);
+
+    LabelCache lc;
+    memset(&lc, 0, sizeof lc);
+    lc.db = db;                       /* 只借句柄，不走 label_cache_init */
+    LabelAlarm la[8];
+    int n = label_cache_query_alarms(&lc, f.lat_e7, f.lon_e7, f.seg_m,
+                                     f.rr.n, 0.0, la, 8);
+    printf("--- C1 alarm 查询：%d 条 ---\n", n);
+    for (int i = 0; i < n; i++)
+        printf("  [%d] type=%d inst=%d dist=%.1f m\n",
+               i, la[i].type, la[i].inst, la[i].dist_m);
+
+    CHECK(n == 2, "C1 只应召回前方 100/200 m 两个点（远/偏/身后点都该丢）");
+    if (n == 2) {
+        CHECK(la[0].inst != la[1].inst,
+              "C1 两个摄像头的 inst 必须不同（同类型不同位置算不同实例）");
+        CHECK(la[0].inst == LABEL_ALARM_INST_BASE + 1 ||
+              la[1].inst == LABEL_ALARM_INST_BASE + 1,
+              "C1 inst 由 alarm 表主键派生（位置恒定）");
+        CHECK(fabs(la[0].dist_m - 100.0) < 5.0 ||
+              fabs(la[1].dist_m - 100.0) < 5.0,
+              "C1 应有一个点投影到前方 100 m 处");
+        CHECK(la[0].type == VOICE_ALARM_SPEED_CAMERA,
+              "C1 type 应原样透传为测速摄像头");
+    }
+
+    /* ---- 投影结果 → 生产接线 → TTS ---- */
+    VoiceAlarm va[8];
+    pod_to_voice(la, n, va);
+    NavSim sim;
+    CHECK(navsim_start(&sim, &f.rr) == 0, "C1 navsim_start 应成功");
+
+    uint8_t ann_finished = 0;
+    NavVoiceCtx c = {0};
+    c.vr = &f.vr;  c.rr = &f.rr;  c.man = &f.ml;  c.sim = &sim;
+    c.voice_on = 1; c.paused = 0; c.ann_finished = &ann_finished;
+    c.alarms = n > 0 ? va : NULL;
+    c.n_alarms = n;
+
+    Log lg;
+    memset(&lg, 0, sizeof lg);
+    dry_reset();
+    nav_voice_frame(&c, 5000);
+    dry_collect(&lg, 5.0);
+    dump("C1", &lg);
+    CHECK(log_count(&lg, "有测速摄像头") == 1,
+          "C1 alarm 表里的测速点必须经生产接线念出来，且恰好一次");
+
+    sqlite3_close(db);
+}
+
+/* C2：两级负向对照
+ *   ① 同样的 DB 与路线，但 ctx 不传点状告警 ⇒ 一句摄像头都不许有；
+ *   ② 旧库（没有 alarm 表）⇒ 查询静默返回 0，不报错、不崩。
+ * ★ 判「成功」看的是「有没有念出来」，不是输出行数。 */
+static void case_c2_alarm_negative(void)
+{
+    Fixture f;
+    fx_uniform(&f, 4, 500.0, 60.0, NULL);
+    int type[2] = { MAN_START, MAN_ARRIVE };
+    const char *road[2] = { "起始路", NULL };
+    double gap[2] = { 0.0, 2000.0 };
+    fx_maneuvers(&f, type, road, gap, 2);
+
+    /* ① voice_tick（旧 API）与 ctx.n_alarms=0 都不该产生摄像头播报 */
+    voice_router_reset(&f.vr);
+    VoiceAlarm va[1];
+    va[0].type = VOICE_ALARM_SPEED_CAMERA;
+    va[0].inst = LABEL_ALARM_INST_BASE + 9;
+    va[0].dist_m = 100.0;
+    va[0].len_m = 0.0;
+
+    VoiceFrame vf;
+    CHECK(voice_tick(&f.vr, &f.rr, &f.ml, 1, 20000.0, 16.67, 2000.0,
+                     0, 1000, &vf) >= 0, "C2 旧 API 应可调用");
+    int old_has_camera = 0;
+    for (int i = 0; i < vf.n; i++)
+        if (strstr(vf.text[i], "测速摄像头")) old_has_camera = 1;
+    CHECK(!old_has_camera, "C2 旧 voice_tick 不该凭空播报测速摄像头");
+
+    voice_router_reset(&f.vr);
+    NavSim sim;
+    navsim_start(&sim, &f.rr);
+    uint8_t ann_finished = 0;
+    NavVoiceCtx c = {0};
+    c.vr = &f.vr;  c.rr = &f.rr;  c.man = &f.ml;  c.sim = &sim;
+    c.voice_on = 1; c.paused = 0; c.ann_finished = &ann_finished;
+    c.alarms = va;  c.n_alarms = 0;      /* ★ 显式 0：与接入前逐位一致 */
+    Log lg;
+    memset(&lg, 0, sizeof lg);
+    dry_reset();
+    nav_voice_frame(&c, 5000);
+    dry_collect(&lg, 5.0);
+    CHECK(log_count(&lg, "测速摄像头") == 0,
+          "C2 n_alarms=0 时不得播报摄像头（负向对照必须能失败）");
+
+    /* ② 旧库没有 alarm 表 ⇒ prepare 失败 ⇒ 静默降级 */
+    sqlite3 *old = make_alarm_db(0);
+    CHECK(old != NULL, "C2 旧库内存句柄应能建立");
+    if (old) {
+        LabelCache lc;
+        memset(&lc, 0, sizeof lc);
+        lc.db = old;
+        LabelAlarm la[8];
+        int n = label_cache_query_alarms(&lc, f.lat_e7, f.lon_e7, f.seg_m,
+                                         f.rr.n, 0.0, la, 8);
+        CHECK(n == 0, "C2 旧库无 alarm 表时必须静默返回 0（不报错）");
+        sqlite3_close(old);
+    }
+}
+
+/* C3：合并选优 —— 摄像头（priority 1）必须压过收费站（priority 6）。
+ * 负向锚点：不加点状告警时，同一个路线扫出来的确实是收费站。 */
+static void case_c3_alarm_merge_priority(void)
+{
+    Fixture f;
+    uint8_t flags[4] = { EF_TOLL, 0, 0, 0 };  /* 段 0 起点有收费站 */
+    fx_uniform(&f, 4, 500.0, 60.0, flags);
+
+    VoiceAlarm out;
+    CHECK(voice_scan_alarm(&f.rr, 0.0, 16.67, &out) == 1,
+          "C3 负向锚点：无边外告警时应扫到收费站");
+    CHECK(out.type == VOICE_ALARM_TOLL,
+          "C3 负向锚点：扫出的应是收费站（不是摄像头）");
+
+    VoiceAlarm extra[1];
+    extra[0].type = VOICE_ALARM_SPEED_CAMERA;
+    extra[0].inst = LABEL_ALARM_INST_BASE + 7;
+    extra[0].dist_m = 60.0;
+    extra[0].len_m = 0.0;
+    CHECK(voice_scan_alarm_ex(&f.rr, 0.0, 16.67, extra, 1, &out) == 1,
+          "C3 合并后应扫到一个告警");
+    CHECK(out.type == VOICE_ALARM_SPEED_CAMERA,
+          "C3 摄像头 priority 1 应压过收费站 priority 6");
+    CHECK(out.inst == LABEL_ALARM_INST_BASE + 7,
+          "C3 选中的实例身份必须是点状告警的 inst（不能被段下标覆盖）");
+    CHECK(fabs(out.dist_m - 60.0) < 1e-6,
+          "C3 距离应原样透传（不被收费站的距离污染）");
+}
+
 int main(void)
 {
     dry_open();
@@ -776,6 +1030,9 @@ int main(void)
     case_a9_pause_silences_regular();
     case_b1_order();
     case_b2_same_text_cooldown();
+    case_c1_alarm_db_to_voice();
+    case_c2_alarm_negative();
+    case_c3_alarm_merge_priority();
 
     sk_setenv("SKEDADDLE_TTS_DRYRUN", "");
     sk_unlink(g_dry_path);

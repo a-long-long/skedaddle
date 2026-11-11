@@ -32,7 +32,12 @@ extern "C" {
  *   sim          模拟导航状态（只读：剩余里程 / 速度 / 已到达标志）
  *   voice_on     语音总开关（V 键 / Qt『设置』菜单）
  *   paused       模拟是否暂停（偏航重算时为 1）⇒ 暂停时不播**常规**播报
- *   ann_finished "导航结束"收尾语是否已播（可写，保证恰好一次） */
+ *   ann_finished "导航结束"收尾语是否已播（可写，保证恰好一次）
+ *   alarms/n_alarms 本帧的点状告警候选（places.db 的 alarm 表投影到路线后
+ *                  的结果，由 window.c 查好再传入）；NULL/0 ⇒ 不启用，
+ *                  与接入 alarm 数据之前**逐位一致**（负向对照锚点）。
+ * ★ 新增字段后所有构造点必须零初始化（NavVoiceCtx c = {0}）：
+ *   未初始化的 n_alarms 是随机值，会让薄封装读到野指针。 */
 typedef struct {
     VoiceRouter       *vr;
     const RouteResult *rr;
@@ -41,6 +46,8 @@ typedef struct {
     int                voice_on;
     int                paused;
     uint8_t           *ann_finished;
+    const VoiceAlarm  *alarms;
+    int                n_alarms;
 } NavVoiceCtx;
 
 /* 播报一帧（生产接线函数）。
