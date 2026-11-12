@@ -200,6 +200,13 @@ typedef struct {
     int      pref_toll;
     int      pref_ferry;
     int      pref_unpaved;
+    /* 出行方式（route/profile.h 的 RouteProfile）：0 驾车 / 1 骑行 / 2 步行。
+     * ★ 缺省 0 = 与改动前逐位一致。它同时影响：
+     *   - 搜索代价 g 的有效速度（cost.c:edge_cost → edge_speed_kmh）
+     *   - 边展开的可达性硬排除（route.c 正/反两侧，与 avoid_* / pref_*=2 并列）
+     *   - 结果回填的 seg_ds / total_s 与 route_check 自检（同一个速度入口）
+     *   唯独**不影响** heur() 与 lm.bin：h 仍是物理时间下界 ⇒ admissible。 */
+    int      profile;
     /* 软惩罚系数（1 档用）：<=0 取 ROUTE_PREF_ADD。调参/验收旋钮，
        让"负向对照必须能失败"有抓手：给个很大的值应能明显改变路线。 */
     double   pref_add;
@@ -210,6 +217,9 @@ typedef struct Router Router;
 Router *router_create(const MapSet *ms, const RouteOpts *opt);
 /* 面板改完路线偏好后同步到已建好的 Router（不必重建 30MB 状态表）。 */
 void    router_set_prefs(Router *r, int pref_toll, int pref_ferry, int pref_unpaved);
+/* 出行方式切换同样不必重建 Router：下一次算路前同步 opt.profile 即可。
+ * ★ 传进来的值统一经 route_profile_clamp 钳制（脏 ini 不许静默走错档）。 */
+void    router_set_profile(Router *r, int profile);
 void    router_destroy(Router *r);
 
 /* 地标下界表有没有真的加载上（0 = 没有，退回纯直线启发式）。

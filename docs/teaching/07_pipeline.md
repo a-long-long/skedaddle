@@ -17,23 +17,23 @@
 
 | 关键函数 / 结构体 | 文件:行号区间 | 职责 |
 |---|---|---|
-| `paint_frame` | `window.c:1190-1454` | 一帧的 9 步编排（底图→要素→标注→覆盖层→夜间→chrome） |
-| `app_render_to_buf` | `window.c:1456-1473` | 绑定像素缓冲后调 `paint_frame`，Qt 与离屏共用唯一入口 |
-| `PaintStats` | `paint.h:51-67` | 分阶段计时/计数（含 `areas_dotted` 等确定性量） |
+| `paint_frame` | `window.c:1309-1573` | 一帧的 9 步编排（底图→要素→标注→覆盖层→夜间→chrome） |
+| `app_render_to_buf` | `window.c:1575-1592` | 绑定像素缓冲后调 `paint_frame`，Qt 与离屏共用唯一入口 |
+| `PaintStats` | `paint.h:57-73` | 分阶段计时/计数（含 `areas_dotted` 等确定性量） |
 | `paint_route` / `RSeg` | `navdraw.c:49-123` / `navdraw.c:15` | 路线折线：白描边 + 蓝芯/(已走灰) 两遍 |
-| `paint_nav_car` / `fill_triangle` | `navdraw.c:151-178` / `navdraw.c:127-149` | 车头三角箭头（蓝芯白边），按航向旋转 |
-| `paint_nomap_banner` + `nfill/nrect/ntext` | `navdraw.c:548-631` / `navdraw.c:29-47` | 无图区提示横幅（"你为什么看不到东西"） |
+| `paint_nav_car` / `fill_triangle` | `navdraw.c:151-181` / `navdraw.c:127-149` | 车头三角箭头（蓝芯白边），按航向旋转 |
+| `paint_nomap_banner` + `nfill/nrect/ntext` | `navdraw.c:551-634` / `navdraw.c:29-47` | 无图区提示横幅（"你为什么看不到东西"） |
 | `app_offscreen_audit` | `audit.c:79-217`（声明 `audit.h:43-44`） | 像素计数 + 断言共享模块（被 `offscreen_shot` 复用） |
-| `paint_chrome` / `draw_nomap` | `chrome.c:610-628` / `chrome.c:396-415` | nav-desktop 风格界面层（11 类元素）+ 无图卡片 |
-| `paint_place_labels` / `paint_road_labels` | `labels.c:388-503` / `labels.c:509-560` | 地名/POI/路名标注：SQL 缓存、行政区名分级、白描边与避让格（§3.6） |
-| `bbox_moved_far` / `admin_font` / `font_draw_halo` | `labels.c:188-202` / `19-33` / `36-52` | 缓存重查判据 / 大字字体 / 白描边压实 |
-| `glyph_sharpen` | `font.c:233-251` | 8-bit 字形 alpha 的 S 曲线锐化（§3.6） |
+| `paint_chrome` / `draw_nomap` | `chrome.c:612-630` / `chrome.c:396-415` | nav-desktop 风格界面层（11 类元素）+ 无图卡片 |
+| `paint_place_labels` / `paint_road_labels` | `labels.c:667-825` / `labels.c:831-887` | 地名/POI/路名标注：SQL 缓存、行政区名分级、命令列表与避让格（§3.6） |
+| `bbox_moved_far` / `admin_font` / `label_task` / `label_flush` | `labels.c:217-231` / `labels.c:21-28` / `labels.c:614-643` / `labels.c:647-665` | 缓存重查判据 / 大字字体 / 白描边命令执行 / 字形预热与分带 flush |
+| `glyph_sharpen` | `font.c:236-254` | 8-bit 字形 alpha 的 S 曲线锐化（§3.6） |
 
 > 说明：`paint_frame` 实际位于 `src/ui/window.c`（非 `render/paint.c`）；`render/paint.c` 提供的是被 `paint_frame` 调用的要素绘制函数（`paint_areas/roads/lines/contours` 等）。本课聚焦编排主流程与覆盖层、审计、chrome。
 
 ## 三、完整实现代码
 
-### 1. `paint_frame` 的 9 步流程（`window.c:1190-1454`）
+### 1. `paint_frame` 的 9 步流程（`window.c:1309-1573`）
 
 ```c
 static void paint_frame(Raster *rs, App *a, PaintStats *st)
@@ -151,16 +151,10 @@ static void paint_frame(Raster *rs, App *a, PaintStats *st)
     TICK(ms_lines);
     if (a->font) {
         /* 地名库是全局一份（places.db 跨省通用），只需查一次 */
-        paint_place_labels(rs, &a->view, &a->places, a->font, st,
+        paint_place_labels(rs, &a->view, &a->places, a->font, a->font_size, st,
                            a->show_poi, a->show_labels);
         paint_road_labels(rs, &a->view, a->font, st);
     }
-    /* ★ 这道 `if(a->font)` 门控是"文字全丢"的总开关：一旦 `font_open_default`
-     *   返回 NULL（fonts/ 没随包、系统字体路径解析不到等），地名/路名被**静默**
-     *   丢弃，而线/面/色块照常画——用户看到"有图无线无字"，极难联想到是字体挂了。
-     *   修复见第 16 课：`app_init`（`window.c:141-158`）在字体彻底失败时置位
-     *   `a->font_missing` 并打**响亮 stderr 告警**，让根因一眼可见。
-     *   离线可用 `skedaddle_font_probe` 或离屏诊断的 `font (已加载|★加载失败)` 确认。 */
     TICK(ms_labels);
 #undef TICK
 
@@ -309,7 +303,7 @@ static void paint_frame(Raster *rs, App *a, PaintStats *st)
 }
 ```
 
-### 2. `app_render_to_buf` —— 唯一共享渲染入口（`window.c:1456-1473`）
+### 2. `app_render_to_buf` —— 唯一共享渲染入口（`window.c:1575-1592`）
 
 ```c
 int app_render_to_buf(App *a, void *px, int w, int h, size_t stride,
@@ -341,7 +335,8 @@ int app_render_to_buf(App *a, void *px, int w, int h, size_t stride,
 > `SKEDADDLE_FONT_SHARP=1.0` 可关闭做逐像素对照），让笔画核心实心、
 > 边缘过渡收窄；每个码点只算一次，零逐帧开销。`render/labels.c` 的
 > `halo_enabled()` 则在**所有比例尺**把普通地名与路名的黑影换成
-> `font_draw_halo()` 白描边，并把贴边标签钳进画布（避免只剩半截字）；
+> `label_task()` 的 `LCMD_HALO` 分支画白描边（8 邻域铺白 + 主色两次压实），由 `label_flush()`
+> 统一预热字形后分带执行，并把贴边标签钳进画布（避免只剩半截字）；
 > `admin_on` 只负责低 zoom 的区域名大字分级。曾把白描边限制在 z<14，
 > 结果 500 米 / 200 米档完全没吃到修复 —— 用户实测反馈后放开。
 > `SKEDADDLE_LABEL_HALO=0` 恢复旧黑影路径，配合 `SKEDADDLE_FONT_SHARP=1.0`
@@ -811,7 +806,7 @@ void paint_chrome(Raster *rs, App *a)
 #### 6.1 数据与缓存：`place` 表不是每帧都查
 
 `paint_frame` 第 6 步调 `paint_place_labels` / `paint_road_labels`。地名来自
-`places_auto.db` 的 `place(name,lat,lon,kind,weight)`，SQL 是（`labels.c:221-225`）：
+`places_auto.db` 的 `place(name,lat,lon,kind,weight)`，SQL 是（`labels.c:270-275`）：
 
 ```c
 SELECT name,lat,lon,kind,weight FROM place
@@ -822,7 +817,7 @@ ORDER BY weight DESC LIMIT ?6;
 
 视口四边外扩 30% 以扛住小幅平移。三个绑定参数全是**性能与正确性的交换点**：
 
-- `?5 kind_max`：`kind_max_for_zoom()`（`labels.c:170-180`）按 zoom 分档，z<6 只放行 kind 1，z≥14 放行到 12；
+- `?5 kind_max`：`kind_max_for_zoom()`（`labels.c:199-209`）按 zoom 分档，z<6 只放行 kind 1，z≥14 放行到 12；
 - `?6 LIMIT`：z<14 取 **1200**、z≥14 取 400 —— 中低 zoom 视口大、候选多，全局 Top-400 会把郊区低权重村名全截断，文字就只剩城区那半屏；
 - `?7`：POI 总开关（关时 `kind<>11` 生效，见 §6.5）。
 
@@ -832,7 +827,7 @@ ORDER BY weight DESC LIMIT ?6;
 
 - **现象**：新进程 `--shot-offscreen --zoom=15` 首帧字都在；但**同一个进程里**从 z10 一路放大到 z15，字越来越少直至没有。
 - **定位**：旧 `bbox_moved_far()` 只把四角位移按"上次缓存 bbox 跨度"归一化。**纯缩放时位移恰与跨度成正比**，比值恒 <0.2（0.5 档约 0.08~0.14）⇒ 判据永远说"没动"；而 z≥14 的 `kind_max` 恒 12、档位也不变 ⇒ 缓存长时间不刷新。旧视口的 Top-400 大地名投影到高 zoom 小视口被裁光。
-- **修法**：先比 **bbox 跨度比**（0.5 档缩放跨度变 0.707 / 1.414 倍，必然触发），再加 zoom 差 ≥0.25 的显式判据；路名门槛 `15.0 → 14.0`（后为补 1~10 公里档再降到 12）。以下为 `labels.c:188-202` 完整体：
+- **修法**：先比 **bbox 跨度比**（0.5 档缩放跨度变 0.707 / 1.414 倍，必然触发），再加 zoom 差 ≥0.25 的显式判据；路名门槛 `15.0 → 14.0`（后为补 1~10 公里档再降到 12）。以下为 `labels.c:217-231` 完整体（2026-11-12 回源核对，与当前源码逐字一致）：
 
 ```c
 static int bbox_moved_far(const double *a, const double *b)
@@ -857,37 +852,81 @@ static int bbox_moved_far(const double *a, const double *b)
 #### 6.3 案例 B：1 / 2 / 5 / 10 公里档「没有区域名」
 
 - **定位结论：不是缓存、也不是数据缺失**。kind≤2 的市 / 区名过去和村名 / POI 画成同一种 14px 小字 + 橙圈，没有视觉层级；加上路名门槛 14 让 1~10 公里档一条路名都没有 ⇒ 用户看到的就是"只有一堆小字，没有区域名"。
-- **修法**：`admin_font(pt = font_size*2)`（`labels.c:19-33`）新开一份大字 Font，z<14 对 kind≤2 用大字 + 白描边 + 小定位点，kind==3 镇名加白描边形成第二级；按**文字包围盒占格**、冲突时退回普通小字（固定占 3×3 会平白挤掉十几个小地名）。路名门槛 14→12。
+- **修法**：`admin_font(pt = font_size*2)`（`labels.c:21-28`）新开一份大字 Font，z<14 对 kind≤2 用大字 + 白描边 + 小定位点，kind==3 镇名加白描边形成第二级；按**文字包围盒占格**、冲突时退回普通小字（固定占 3×3 会平白挤掉十几个小地名）。路名门槛 14→12。
 - **★ 字体坑**：`admin_font` 必须走 `font_open_default()`（多面候选链 + CJK 回退）。**不能复用 `a->font_big`**：单文件 `font_open` 没有 CJK 回退，中文全变方框 —— 与第 16 课 `qt_font.cpp` 注册 CJK 字体是同一类问题。
 - **数据上限（别误当 bug）**：项目里**没有 area / boundary 标注链路**（`paint_areas` 不接 `Font`、`AF_*` 无 name 字段），"按行政区面绘制名称"需要重抽数据。路名等级按 zoom 放开（`paint.c` 三处统一走 `road_name_cls_max()`：z12 主干 cls≤2、z14 次干 cls≤3、z16 支路/胡同 cls≤4，2026-11-06）；z17 仍偏稀是视口内要素本身少（~1 km²），不是门槛截断。
 
 #### 6.4 案例 C：POI 过大、z12 字发灰、下半屏没字
 
-- POI 半径 `6 → 4`，`SKEDADDLE_POI_R=6` 可复现旧值（`labels.c:362-372`）。
-- `stb_truetype` **不做 hinting**，14px CJK 笔画大量落在 coverage 80~180 的半透明像素上 ⇒ `font.c:233-251` 的 `glyph_sharpen()` 对缓存位图做 S 曲线 `v=(a-128)*k+128`（k 默认 1.6），每码点只算一次、零逐帧开销。
-- 白描边是"同一字形偏移 8 次铺白再叠主色"，邻近偏移的白会盖到笔画核心、把主色**洗淡成灰字**。修法是把主色再绘一次压实：有效覆盖率 `1-(1-a)²`（a=0.6 → 0.84）。以下为 `labels.c:36-52` 完整体：
+- POI 半径 `6 → 4`（2026-11-10 起按 zoom 分档：z<15→4 / z15~16→5 / z≥17→6），`SKEDADDLE_POI_R=6` 可复现旧恒定值（`poi_radius_for_zoom()`，`labels.c:510-526`）。
+- `stb_truetype` **不做 hinting**，14px CJK 笔画大量落在 coverage 80~180 的半透明像素上 ⇒ `font.c:236-254` 的 `glyph_sharpen()` 对缓存位图做 S 曲线 `v=(a-128)*k+128`（k 默认 1.6），每码点只算一次、零逐帧开销。
+- 白描边是"同一字形偏移 8 次铺白再叠主色"，邻近偏移的白会盖到笔画核心、把主色**洗淡成灰字**。修法是把主色再绘一次压实：有效覆盖率 `1-(1-a)²`（a=0.6 → 0.84）。**2026-11-10 标注并行化后，绘制不再走串行的 `font_draw_halo()` helper（该函数 2026-11-12 已删除）**，而是先由 `lcmd_push()` 把每条文字压成 `LabelCmd`（`labels.c:563-603`），再由 `label_flush()` 预热字形、`band_run()` 分带执行 `label_task()`。以下为 `labels.c:605-665` 完整体（当前真实实现）：
 
 ```c
-static void font_draw_halo(Font *f, Raster *rs, int x, int y,
-                           const char *s, uint8_t r, uint8_t g, uint8_t b)
+static const int dx8[8] = { -1, 0, 1, -1, 1, -1, 0, 1 };
+static const int dy8[8] = { -1,-1,-1,  0, 0,  1, 1, 1 };
+
+typedef struct {
+    BandView *bv;
+    LabelCmd *cmd;
+    int       n;
+} LabelJob;
+
+static void label_task(void *arg, int tid)
 {
-    static const int dx[8] = { -1, 0, 1, -1, 1, -1, 0, 1 };
-    static const int dy[8] = { -1,-1,-1,  0, 0,  1, 1, 1 };
-    for (int i = 0; i < 8; i++)
-        font_draw(f, rs, x + dx[i], y + dy[i], s, 255, 255, 255, 0);
-    /* ★ 白描边是拿同一个字形偏移 8 次叠出来的：14px CJK 笔画本身只有 1~2px
-     * 宽，邻近偏移的白会先铺到笔画核心上，主色再以覆盖率 alpha 混合就被
-     * 「洗淡」成灰字（z12 密集底图上尤其明显，观感就是模糊）。同色再绘一次
-     * 把有效覆盖率压回实心：1-(1-a)^2，例如 a=0.6 -> 0.84。描边隔离作用不变。 */
-    font_draw(f, rs, x, y, s, r, g, b, 0);
-    /* 与描边共用一个总开关：SKEDADDLE_LABEL_HALO=0 时连字形压实一起关掉，
-     * 保证「双关 + SKEDADDLE_POI_R=6」能逐字节复现改动前的出图。 */
-    if (halo_enabled())
-        font_draw(f, rs, x, y, s, r, g, b, 0);
+    LabelJob *j = (LabelJob *)arg;
+    Raster *rs = &j->bv->band[tid];
+    int b_lo = rs->clip.y, b_hi = b_lo + rs->clip.h;
+    for (int i = 0; i < j->n; i++) {
+        const LabelCmd *c = &j->cmd[i];
+        if (c->yhi < b_lo || c->ylo >= b_hi) continue;
+        switch (c->type) {
+        case LCMD_HALO:
+            for (int k = 0; k < 8; k++)
+                font_draw_a_pre(c->font, rs, c->x + dx8[k], c->y + dy8[k],
+                                c->text, 255, 255, 255, 0, 255);
+            /* 同色再绘两次把覆盖率压回实心（1-(1-a)^2），串行时代的 2 次主色
+               口径不变 —— 顺序与次数都不能变。 */
+            font_draw_a_pre(c->font, rs, c->x, c->y, c->text, c->r, c->g, c->b, 0, 255);
+            font_draw_a_pre(c->font, rs, c->x, c->y, c->text, c->r, c->g, c->b, 0, 255);
+            break;
+        case LCMD_SHADOW:
+            font_draw_a_pre(c->font, rs, c->x, c->y, c->text, c->r, c->g, c->b, 1, 255);
+            break;
+        case LCMD_POI:
+            draw_poi_marker(rs, c->x, c->y, c->poi_kind, c->sub, c->R);
+            break;
+        case LCMD_DOT:
+            fill_disc(rs, c->x, c->y, 2, raster_rgb(rs, c->r, c->g, c->b));
+            break;
+        }
+    }
+}
+
+/* 决策完的命令一次性执行：带数由 SKEDADDLE_BANDS 决定（0/不足阈值 = 串行，
+ * 但走的仍是同一条命令路径 ⇒ 与旧逐条绘制逐字节一致）。 */
+static void label_flush(Raster *rs)
+{
+    int n = s_lcmd_n;
+    s_lcmd_n = 0;
+    if (n <= 0) return;
+    /* ★ 预热（主线程串行）：执行器用无锁只读查找的前提是"全部字形已在
+       缓存"——串行（单带）路径同样走 glyph_find，不预热首帧会整段缺字。
+       首帧建字形（stbtt 光栅化）就发生在这一步；稳态帧缓存已热，这里只剩
+       每码点一次哈希。不预热的话 8 线程直接 glyph_get 会把字形锁打成热点
+       （实测 21ms -> 129ms，比串行还慢 6 倍）。 */
+    for (int i = 0; i < n; i++)
+        if (s_lcmd[i].text) font_warm_text(s_lcmd[i].font, s_lcmd[i].text);
+    int nband = (n >= SK_BAND_MIN_LABELS) ? band_pick_count() : 1;
+    BandView bv;
+    band_init(&bv, rs, nband);
+    LabelJob j;
+    j.bv = &bv; j.cmd = s_lcmd; j.n = n;
+    band_run(&bv, label_task, &j);
 }
 ```
 
-- `halo_enabled()` 曾只在 z<14 生效，结果 500 米 / 200 米档完全吃不到修复 ⇒ 现在**全比例尺**白描边 + 贴边标签钳进画布（避免只剩半截字）；`admin_on` 只管低 zoom 的大字分级，两者解耦。
+- `halo_enabled()`（`labels.c:41-49`）曾只在 z<14 生效，结果 500 米 / 200 米档完全吃不到修复 ⇒ 现在**全比例尺**白描边 + 贴边标签钳进画布（避免只剩半截字）；`admin_on` 只管低 zoom 的大字分级，两者解耦。★ **2026-11-12 已删除串行 helper `font_draw_halo()`**——并行化把白描边内联进命令列表后它成了零调用死代码，也是当时编译唯一的 `-Wunused-function` 警告源；删掉这 18 行后零警告门禁恢复，`labels.c` 行号整体上移 18 行。读源码时别把它当成执行路径。
 - **★ 口径作废**：白描边全比例尺生效后，旧讲义里「z14/z15 像素 0.000% ⇒ 分级只在低 zoom」这条负向对照**不再成立**。现在要三关齐关才能逐字节复现改动前出图：
 
 | 环境变量 | 默认 | 关掉后的行为 |
@@ -904,11 +943,11 @@ static void font_draw_halo(Font *f, Raster *rs, int x, int y,
 
 | 层 | 修法 | 位置 |
 |---|---|---|
-| 图标 | 循环里 `if (show_poi) draw_poi_marker(...)`；关时所有矢量标记都不画 | `labels.c:499` |
-| 文字 + 避让格 | 循环开头 `if (!show_poi && it->kind == 11) continue;` ⇒ kind 11（设施类 POI）名称不画、也不占格；kind≤3 的行政地名 / 村名 / 小区不受影响 | `labels.c:434` |
-| SQL 名额 | `AND (?7 OR kind<>11)`，把 Top-N 坑位让给真正的行政地名 —— 否则关掉 POI 后屏幕会**更空**，名额被一排排不画的 POI 占光了 | `labels.c:224` |
+| 图标 | 循环里 `if (show_poi) draw_poi_marker(...)`；关时所有矢量标记都不画 | `labels.c:636`（`LCMD_POI`） |
+| 文字 + 避让格 | 循环开头 `if (!show_poi && it->kind == 11) continue;` ⇒ kind 11（设施类 POI）名称不画、也不占格；kind≤3 的行政地名 / 村名 / 小区不受影响 | `labels.c:717` |
+| SQL 名额 | `AND (?7 OR kind<>11)`，把 Top-N 坑位让给真正的行政地名 —— 否则关掉 POI 后屏幕会**更空**，名额被一排排不画的 POI 占光了 | `labels.c:270-275` |
 
-- **缓存必须跟着开关走**：`LabelCache` 加了 `cached_poi` 字段，判据里多一条 `lc->cached_poi != show_poi`（`labels.c:406`）⇒ 面板 / 菜单一勾一取消立刻重查，不用重启、也不必等 bbox 变化。
+- **缓存必须跟着开关走**：`LabelCache` 加了 `cached_poi` 字段，判据里多一条 `lc->cached_poi != show_poi`（`labels.c:680`）⇒ 面板 / 菜单一勾一取消立刻重查，不用重启、也不必等 bbox 变化。
 - **标签也跟着改**：原名「POI 图标」只覆盖图标，语义升级后改叫「POI 显示」。改一处标签要动六处：`SETTINGS_SCHEMA`（`settings.c`）、内置英文表（`i18n.c`）、`lang/en.xml` + `scripts/gen_lang.py` 生成的 6 个语言包、Qt 菜单与 `--ui-test` 断言文案、Android `strings.xml` 的 `opt_poi`。
 - **负向对照（默认行为零改动）**：`show_poi=1` 时 z13 / z15 出图与改动前 `cmp` **逐字节一致**；`show_poi=0` 时 z13 `poi_icons` 270→0、地名文字 275→217（少掉的 58 条正是 kind 11 设施名），z15 `poi_icons` 141→0、地名文字 141→54，**路名一条不变**（268）；on/off 像素差 0.8%~0.9%，全部落在消失的 POI 上。
 
@@ -917,7 +956,7 @@ static void font_draw_halo(Font *f, Raster *rs, int x, int y,
 - **规格**：**比例尺越大，区域名 / 地名 / 路名越详细；反之越简略。** 这条不能只靠"看着挺密"，要能拿数字量。
 - **现象（z9→z17 逐档扫描）**：地名端符合（85→138→213→278，`kind_max_for_zoom()` 逐档放开）；路名端**反着来**：z14 峰值 125 条 → z15 60 条 → z16 13 条 → z17 只剩 3 条。放大到步行尺度，一屏反而没几个路名。
 - **根因**：`paint.c` 三处路名收集点（`364` / `435` / `540`）门槛恒为 `cls <= 2`。`cls` 越小等级越高（与 `paint_roads_tiled` 里 `eff_max` 的 LOD 同序）⇒ 只收快速路与主干道。放大后视口本身变小（z17 约 1 km²），主干道在屏里就那么几条，次干道 / 支路 / 胡同再多也一律不标名。
-- **修法**：新增 `road_name_cls_max(zoom)`（`paint.c:246-251`），三处收集点统一调用：z12 起主干 `cls<=2`、z14 起次干 `cls<=3`、z16 起支路 / 胡同 `cls<=4`。它与道路绘制本身的 LOD 阈值（`eff_max`）**同序、不同阈**——"画出来的路"和"标出来的路"共用一套等级语义，别各写一份。
+- **修法**：新增 `road_name_cls_max(zoom)`（`paint.c:270-275`），三处收集点统一调用：z12 起主干 `cls<=2`、z14 起次干 `cls<=3`、z16 起支路 / 胡同 `cls<=4`。它与道路绘制本身的 LOD 阈值（`eff_max`）**同序、不同阈**——"画出来的路"和"标出来的路"共用一套等级语义，别各写一份。
 
 | zoom | 路名 改前 | 路名 改后 |
 |---|---|---|
@@ -959,3 +998,68 @@ static void font_draw_halo(Font *f, Raster *rs, int x, int y,
 - **验收**：能口述一帧的 9 步渲染顺序，并说明"为什么 Qt 前端和离屏共用 `app_render_to_buf`"——因为像素绑定 + `paint_frame` 编排是两套前端唯一的共同点，分开写会两处漂移、破坏像素等价。
 - **验收（标注层）**：能说清"没字"的四步排查顺序（字体 → 缓存 → 阈值/避让 → 数据），解释纯缩放为什么骗过旧的 bbox 判据，以及为什么白描边全比例尺之后旧的「z14 像素 0%」口径作废。
 - **验收（标注层 · LOD 与开关）**：能口头画出「比例尺越大越详细」这条规格在代码里的三个落点——`kind_max_for_zoom()`（地名档位）、`road_name_cls_max()`（路名等级）、`LIMIT ?6`（候选名额）；并说清一个 POI 总开关为什么要同时改图标、文字/避让格、SQL 名额三处，少改一处分别会看到什么怪现象。
+
+## 六、源码演进补记（2026-11-12 同步）
+
+> 本课主线写于 2026-11-06/07，之后 `src/` 在 11-10、11-11 两批提交里长大了
+> 约 3000 行。本节列出**讲义与当前源码的差异**，避免把历史诊断案例当成当前实现说明。
+> §3 的 `paint_frame` 完整体与 §6.4 的白描边完整体已按 2026-11-12 的源码重贴；
+> §6 的五个案例保留当时的现象、判据与数字，是**历史记录**，不是逐字实现。
+
+### 1. 渲染分带并行（2026-11-10，第 6 课 / 第 7 课）
+
+- 新增 `src/render/band.{c,h}`：`band_init()` / `band_run()` / `band_pick_count()`，
+  线程池按扫描带切画布，带数由 `SKEDADDLE_BANDS` 决定（0=串行 / N=强制 / 缺省核数≤8）。
+- `paint.c` 增加 `paint_areas_banded()`（`:1228-1283`）、`paint_lines_banded()`、
+  `paint_roads_banded()`；串行与并行共用同一份 `*_emit()` 单要素函数，出图逐字节一致、1.7~1.9×。
+- 旋转视角（`rot!=0`）时三个 banded 入口返回 `-1` 落回串行，见 §六.4。
+- 面要素 LOD 从编译期宏 `AREA_DOT_PX` 变成设置项 `lod_area`（`paint_set_area_dot_px()`，
+  `paint.c:57-62`；缺省 4，钳 2~12）。
+
+### 2. 标注阶段命令列表并行（2026-11-10，§6.4）
+
+- 网格避让是**先到先得的链式决策 ⇒ 决策必须串行**；绘制压成 `LabelCmd`
+  （`labels.c:563-576`）由 `lcmd_push()`（`:584-603`）收集，`label_flush()`（`:647-665`）
+  先在主线程 `font_warm_text()` 预热全部字形，再 `band_run()` 分带执行 `label_task()`（`:614-643`）。
+- worker 走 `font_draw_a_pre()` 无锁只读查找；不预热会让 8 线程把 `glyph_get` 的锁打成热点
+  （实测标注 21ms → 129ms，比串行还慢 6 倍）。**串行（单带）路径同样要预热**。
+- 文字的 `y` 是基线，CJK 字形顶会超出 hhea ascent（28px 实测 22 行 vs metrics 12）
+  ⇒ 行包围盒必须用 `font_vbox()`（`font.c:410-434`），估小了就是带边界上方缺字。
+- 串行时代的 `font_draw_halo()` **已于 2026-11-12 删除**（此前是零调用死代码、编译唯一
+  `-Wunused-function` 警告源）；它的「8 邻域铺白 + 主色两次压实」口径完整保留在
+  `label_task()` 的 `LCMD_HALO` 分支里，执行路径换成命令列表 + 分带并行。本课所有
+  `labels.c` 函数行号因此上移 18 行（996 → 978 行）。
+
+### 3. POI 体系四件套（2026-11-10，§6.5）
+
+- `poi_source`（0 地图自带 / 1 外部文件）：`products/poi_ext.csv`，格式
+  `名称,纬度,经度[,权重[,子类]]`；`poi_ext_load()`（`labels.c:69-96`）与搜索层共用
+  `search_ext_load_csv()`，保证「画出来的」和「搜得到的」是同一份条目。
+- `place` 表加 `sub` 列（0 蓝圆 / 1 紫方交通 / 2 褐圆教育 / 3 红十字医疗 / 4 绿圆旅游 /
+  5 琥珀生活），`poi_style()`（`:411-428`）；旧库无列回退 `0 AS sub`。
+- `poi_radius_for_zoom()`（`:510-526`）按 zoom 分档，半径随 `LCMD_POI.R` 下发给 worker；
+  `SKEDADDLE_POI_R` 覆盖作负向对照锚。
+
+### 4. 导航五项与外部 POI 检索（2026-11-11，第 5 / 8 / 9 / 10 课）
+
+- 路线偏好 `pref_*` 三档只改搜索代价 `g`（`edge_cost_pref()`，`src/route/cost.c`），
+  不碰 `total_s` / ETA；`navsim_set_eta_calibrator()` 只留接口、缺省 NULL 恒等。
+- 门牌级搜索：`addr:street` + `addr:housenumber` 建成 `kind 14`，只进搜索永不画；
+  `search_query()` 仅在查询串含数字时召回，避免挤占候选。
+- 测速告警：建库端独立 `alarm` 表（`tools/places_build.c`），查询端
+  `label_cache_query_alarms()`（`labels.c:902-978`），语音端 `voice_scan_alarm_ex()` /
+  `voice_tick_ex()` 把点状与边标志位告警放进同一张候选表。
+- 车头朝上：`mv_visible_bbox()` 旋转时反投影**四角**取 min/max，`mv_pan_pixels()` /
+  `mv_zoom_at()` 共用 `screen_to_world_vec()`，`mv_fit_bbox()` 四角按 `R(-rot)`，
+  `paint_nav_car()` 屏幕角改为 `heading - rot`；新增 `tools/mapview_selftest.c`（`MAPVIEW-OK`）
+  与 `--rot=<度>` 离屏入口。第 5 课的 `map_view.c:90-96` 等行号是 11-07 基线，读时以当前源码为准。
+- 新省 PBF 与外部 CSV 都能直接检索：`search_add_external()`（`src/search/search.c`）
+  在运行期建内存索引，不写只读抽取产物；regress 新增 `search_ext_poi` / `search_ext_negative`。
+
+### 5. 验收口径的变化
+
+- `scripts/regress.sh` 现支持 `SKEDADDLE_BUILD_DIR`（缺省仍是 `build/`，Linux 主机
+  应指 `build_rel`），并新增 `skedaddle_mapview_selftest` / `rot45_shot` / `rot90_shot` /
+  `search_ext_poi` / `search_ext_negative` 五条用例 —— **旧的「87/0」不再代表当前用例集**。
+- 第 11 课内嵌的 `regress.sh` 全文由 `scripts/regen_tutorial_blocks.py` 生成，已同步到 863 行；
+  本课的逐字块是手工维护，改动 `window.c` / `labels.c` 后须按本节回源重贴。

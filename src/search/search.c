@@ -1,9 +1,11 @@
 #include "search/search.h"
+#include "search/addr.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <math.h>
 #include <sqlite3.h>
 
 #include "utils/geo.h"
@@ -80,6 +82,31 @@ int search_normalize_addr(const char *in, char *out, size_t cap)
         if ((a == 0xE5 && b == 0x8F && c == 0xB7) ||   /* 号 */
             (a == 0xE8 && b == 0x99 && c == 0x9F)) {   /* 號 */
             o -= 3; out[o] = '\0';
+        }
+    }
+
+    /* 地址层深化（2026-11-12）：含数字且能拆出「街道 + 号码」时，把
+       「88号3单元 / 88号楼」这类附加部分削掉，只留建库端同款的检索核。
+       ★ 普通地名（无数字或没有街道后缀）完全不走这条 ⇒ 仍是恒等变换，
+         既有搜索判据逐条不变（负向对照锚点）。
+       ★ 建库端 make_addr_name 的输入本来就是「街道+号码」，拆出来的核
+         与原串相同 ⇒ **存量 places_auto.db 无需重建**。
+       ★ addr_core_key 不回调本函数（addr.c 顶部有说明），无递归。 */
+    if (o >= 4) {
+        int has_digit = 0;
+        for (size_t i = 0; i < o; i++)
+            if (out[i] >= '0' && out[i] <= '9') { has_digit = 1; break; }
+        if (has_digit) {
+            AddrParts ap;
+            char core[256];
+            if (addr_split(out, &ap) == 0 && *ap.street && *ap.number &&
+                addr_core_key(&ap, core, sizeof(core)) > 0) {
+                size_t cl = strlen(core);
+                if (cl > 0 && cl < o) {
+                    memcpy(out, core, cl + 1);
+                    o = cl;
+                }
+            }
         }
     }
     return (int)o;
@@ -481,4 +508,64 @@ int search_query(SearchDb *d, const char *q,
     if (elapsed_ms)
         *elapsed_ms = (uint64_t)((double)(clock() - t0) / CLOCKS_PER_SEC * 1000);
     return 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * 逆地理编码：见 search.h 的契约。
+ *
+ * ★ 为什么用「每级取最近」而不是全局最近：用户点在天安门附近时，最近的
+ *   place 可能是一条路名或门牌，单取它会丢掉「北京市 / 东城区」这两级，
+ *   显示出来的地址反而没用。分级各取最近再合成，才是地址该有的层级。
+ * ★ kind 分组与 places_build.c 的 PLK_* 常量双处锚定（search 层不能
+ *   include 建库端头）：1/2 省市、3/4/6/7/9 区县片区、13 路名、14 门牌。
+ * ------------------------------------------------------------------------- */
+int search_reverse(SearchDb *d, double lat, double lon, double radius_m,
+                   char *out, size_t cap)
+{
+    if (!d || !d->db || !out || cap == 0) return -1;
+    out[0] = '\0';
+    if (radius_m <= 0.0) radius_m = 3000.0;
+
+    /* 粗 bbox：1° 纬 ≈ 111320 m；经距按 cos(lat) 放大（极区钳到 0.01）。 */
+    double dlat = radius_m / 111320.0;
+    double cs = cos(lat * 3.14159265358979323846 / 180.0);
+    if (cs < 0.01) cs = 0.01;
+    double dlon = radius_m / (111320.0 * cs);
+
+    sqlite3_stmt *st = NULL;
+    static const char *sql =
+        "SELECT name,kind,lat,lon FROM place "
+        "WHERE lat BETWEEN ?1 AND ?2 AND lon BETWEEN ?3 AND ?4 "
+        "AND kind IN (1,2,3,4,6,7,9,13,14)";
+    if (sqlite3_prepare_v2(d->db, sql, -1, &st, NULL) != SQLITE_OK) return -1;
+    sqlite3_bind_double(st, 1, lat - dlat);
+    sqlite3_bind_double(st, 2, lat + dlat);
+    sqlite3_bind_double(st, 3, lon - dlon);
+    sqlite3_bind_double(st, 4, lon + dlon);
+
+    char best[4][96] = { {0}, {0}, {0}, {0} };
+    double bd[4] = { radius_m + 1, radius_m + 1, radius_m + 1, radius_m + 1 };
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        const unsigned char *nm = sqlite3_column_text(st, 0);
+        if (!nm || !*nm) continue;
+        int kind = sqlite3_column_int(st, 1);
+        int g;
+        if      (kind == 1 || kind == 2) g = 0;
+        else if (kind == 3 || kind == 4 || kind == 6 || kind == 7 || kind == 9) g = 1;
+        else if (kind == 13) g = 2;
+        else if (kind == 14) g = 3;
+        else continue;
+        double dm = sk_haversine_m(lat, lon,
+                                   sqlite3_column_double(st, 2),
+                                   sqlite3_column_double(st, 3));
+        if (dm < bd[g]) {
+            bd[g] = dm;
+            snprintf(best[g], sizeof(best[g]), "%s", (const char *)nm);
+        }
+    }
+    sqlite3_finalize(st);
+
+    const char *parts[4] = { best[0], best[1], best[2], best[3] };
+    addr_join(parts, 4, out, cap);
+    return *out ? 0 : 1;
 }

@@ -7,6 +7,34 @@
 
 ---
 
+## 定位：单机离线内核，不追云端能力
+
+> 这一节是**项目边界**，不是功能路线图。改动前请先读
+> [`CONSUMER-NAV-GAP-2026-11-12.md`](CONSUMER-NAV-GAP-2026-11-12.md)。
+
+本项目是「**构建期固化数据 + 单机离线内核**」：PBF 在构建期编译成只读产物，运行时
+`mmap` 按需加载，**无账号、无网络请求、无遥测、无竞价排名**，一切渲染/算路/搜索都
+发生在本机。这与现行商业导航「**云端数据服务 + 采集终端**」是两种物种，不是成熟度差异。
+
+因此：
+
+- **明确不追 L1（云端数据飞轮型）**：实时路况与动态避堵、红绿灯倒计时、融合历史/信号/
+  天气的预测 ETA、违章与事故预警、POI 营业状态、实时公交、街景与 3D 影像、AI 对话式
+  搜索。这些能力的共同前提是**亿级用户轨迹回传 + 云端算力 + 第三方数据资质**——高德
+  红绿灯倒计时的官方说明是靠上亿用户经过路口的等待时间算出来的、不接信号机；Google
+  称每秒纳入 500 万次路况更新。再写十万行 C 代码也不会让它们出现，要拥有就必须转型为
+  「服务端 + 客户端 + 数据运营」，同时放弃上面那几项当前优势。**这是路线选择，不是功能差距。**
+- **L2（本地可实现型）按确定性判据逐步补齐**：多出行方式 profile、地址层、历史、单位制、
+  数据覆盖、DEM 等高线等。判据一律用像素 / 计数 / 展开数 / 退出码 + 负向对照，
+  不引入运行时网络依赖。
+- **L3（产品化与合规型）按定位取舍**：上架、账号体系、车机互联、测绘资质相关能力，
+  默认不做。
+
+一句话：**强项是可复现、可审计、完全离线的工程内核；短板是任何需要"活数据"的东西。**
+别把 L1 写进 TODO，也别拿商业 App 的功能数当本项目的验收口径。
+
+---
+
 ## 特性
 
 | 方面 | 说明 |
@@ -70,15 +98,17 @@ cmake --build build -j8
 # Linux / macOS
 source env.sh && cmake -B build && cmake --build build -j8
 
-# Windows（MSVC + vcpkg 装好 sdl2 / SDL2_ttf / sqlite3 / zlib / protobuf-c）
-cmake -B build -A x64 && cmake --build build --config Release
+# Windows（MSYS2 UCRT64：Qt6 / sqlite3 / zlib / protobuf-c）
+# ★ 编译期 PATH 绝不能放 Qt bin（会加载旧 libstdc++，退出码 1 且 stderr 为空）
+./build_release.sh
 ```
 
-Windows 注意：入口 `main()` 直接用（CMake 不接管 WinMain，不依赖 SDL 的 main 重定义）；
-数学函数无需显式链 `libm`（仅类 Unix 平台链）；峰值内存走 `psapi`。
-字体优先级：`--font=` 命令行 > `SKEDADDLE_FONT` 环境变量 > 平台候选链。
+Windows 注意：入口 `main()` 直接用（CMake 不接管 WinMain）；数学函数无需显式链
+`libm`（仅类 Unix 平台链）；峰值内存走 `psapi`。运行期 PATH 需含 Qt bin、`ucrt64/bin`
+与 `dist/skedaddle-release`。字体优先级：`--font=` 命令行 > `SKEDADDLE_FONT`
+环境变量 > 平台候选链。
 
-平台层契约由 `tools/plat_selftest.c` **正反双向**钉住（回归门禁第 46/47 项）：
+平台层契约由 `tools/plat_selftest.c` **正反双向**钉住（回归门禁含这两类用例）：
 正向断言"该成功的必须成功"（含 spawn 自身并原样带回退出码），负向断言"该失败的
 必须失败"（不存在路径 / 空 PATH / 起不来的进程）。本机只有 POSIX 能真跑，Windows
 分支按同一契约编写——新增平台分支时先在 skedaddle_plat_selftest 里补契约，再动业务代码。
@@ -90,8 +120,9 @@ Windows 注意：入口 `main()` 直接用（CMake 不接管 WinMain，不依赖
 > 再包成 `QImage(Format_RGB32)` 由 `paintEvent` blit；无头出图 `src/ui/offscreen_shot.c` 同样
 > 零 SDL（malloc 缓冲 + 内建 24 位 BMP writer）。**渲染 / 算路 / 搜索核心一行不改**。
 
-`skedaddle` 用 **Qt 做真控件**（QMainWindow 菜单栏 / QLineEdit 搜索 / QDockWidget 步骤面板 /
-QToolBar 右栏按钮），地图仍走现有 C 光栅化器，仅把最终像素缓冲交给 Qt 显示。
+`skedaddle` 用 **Qt 做真控件**（QMainWindow 菜单栏 / QLineEdit 搜索 / 步骤面板；
+★ 不放 QToolBar —— 切换时会抬高并移动画布，按钮一律做成画布子浮层），地图仍走
+现有 C 光栅化器，仅把最终像素缓冲交给 Qt 显示。
 
 ```bash
 cmake -B build -DCMAKE_PREFIX_PATH=<Qt5 前缀>   # 找得到 Qt5Widgets 即可
@@ -102,13 +133,14 @@ QT_QPA_PLATFORM=offscreen ./build/skedaddle --shot=x.png # 无人值守出图
 
 要点（踩过的坑）：
 
-- **像素格式**：小端机 `SDL_CreateRGBSurface(…,32,0,0,0,0)` 默认 ARGB8888
-  （内存序 B,G,R,A），对应 `QImage::Format_RGB32`。用 `Format_RGBA8888` 整帧全透黑屏、
-  `Format_RGBX8888` 红蓝互换。
-- **SDL 信号伞**：`SDL_Init` 默认给 SIGINT/SIGTERM 装 parachute 处理器，把退出请求
-  塞进 SDL 事件队列——Qt 应用不 `SDL_PollEvent`，信号被整个吞掉（进程杀不掉只能
-  SIGKILL）。Qt 入口必须**先于** `app_init` 执行
-  `SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS,"1")` + `SDL_Init(…| SDL_INIT_NOPARACHUTE)`。
+- **像素格式 + alpha**：C 核心 `raster_rgb()` 只写 RGB、`QImage` 用
+  `Format_RGB32`（小端内存序 B,G,R,A）。★ 上传前必须把每个像素 OR 上
+  `0xFF000000`——Wayland 按 ARGB8888 上传时 alpha=0 会整屏「一片花」；Android JNI
+  每帧同理。用 `Format_RGBA8888` 整帧全透黑屏、`Format_RGBX8888` 红蓝互换。
+- **无边框窗口**：`FramelessWindowHint` 必须在 `show()` 之前设（`SKEDADDLE_FRAMELESS=0`
+  可回退）；`showMaximized()` 在 UOS/Deepin 上对无边框窗口会得到 HIDDEN，改为自记
+  `geometry()` → `setGeometry(可用区)` 的还原状态机。checkable 按钮同步勾选态用
+  `QSignalBlocker`，否则 `setChecked()` 触发 `toggled` 递归 SIGSEGV。
 - **平移不用 `mv_pan_pixels`**（它不知道旋转）：改用两次 `mv_unproject` 取地理差加到
   视口中心，旋转由投影自动处理。
 - Qt 5.11 的 `QMenu::addAction(text, functor)` 模板重载匹配不上，统一显式 `QAction`。
@@ -116,14 +148,19 @@ QT_QPA_PLATFORM=offscreen ./build/skedaddle --shot=x.png # 无人值守出图
 ## 验收
 
 ```bash
-./scripts/regress.sh            # 用现有 build/
-./scripts/regress.sh --build    # 重新构建 + 47 项回归
+# ★ 缺省用 build/；本机正式构建在 build_rel/，必须显式指过去，否则跑的是旧二进制
+SKEDADDLE_BUILD_DIR="$PWD/build_rel" ./scripts/regress.sh
+SKEDADDLE_BUILD_DIR="$PWD/build_rel" ./scripts/regress.sh --build   # 重编 + 零警告门禁
+python3 scripts/regen_tutorial_blocks.py --check   # 改过 regress.sh 后必须重生成讲义逐字块
+bash scripts/check_layers.sh --self-test           # 分层门禁的负向对照
 ```
 
-**47 项回归全绿、编译零警告**是硬门禁（`--build` 把任何新警告当失败）。回归覆盖：
-逐省 + 跨省渲染、跨省算路、导航模拟、转向限制正/负对照、反向索引校验、四叉堆自检、
-瓦片索引全图对拍、覆盖度、搜索、POI 分类自检、ALT 地标表（生效性 / 地标数 / 下界不越界）、
-平台抽象层正/负向契约。
+**109 项回归全绿（2026-11-12 实跑 109/0）、编译零警告**是硬门禁
+（`--build` 把任何新警告当失败）。回归覆盖：逐省 + 跨省渲染、跨省算路、导航模拟、
+转向限制正/负对照、反向索引校验、四叉堆自检、瓦片索引全图对拍、覆盖度、搜索、
+POI 分类自检、ALT 地标表、平台抽象层正/负向契约；11-12 新增的 L2 能力各自带
+**可失败的负向对照注入**（单位制 / 出行方式 profile / 地址层 / 最近地点 / 等高线全链 /
+扩省不变量）。完整回归会把 `view_*` 写成默认值 ⇒ 跑前备份真实 `settings.ini`、跑完恢复。
 
 ## 显示层按需解码（PBF 模式）
 

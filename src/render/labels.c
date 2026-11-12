@@ -34,24 +34,6 @@ void label_admin_font_free(void)
     g_admin_pt = 0;
 }
 
-/* 白描边：先 8 邻域铺白、再叠主色，保证大字压在路网/色块上仍可读。 */
-static void font_draw_halo(Font *f, Raster *rs, int x, int y,
-                           const char *s, uint8_t r, uint8_t g, uint8_t b)
-{
-    static const int dx[8] = { -1, 0, 1, -1, 1, -1, 0, 1 };
-    static const int dy[8] = { -1,-1,-1,  0, 0,  1, 1, 1 };
-    for (int i = 0; i < 8; i++)
-        font_draw(f, rs, x + dx[i], y + dy[i], s, 255, 255, 255, 0);
-    /* ★ 白描边是拿同一个字形偏移 8 次叠出来的：14px CJK 笔画本身只有 1~2px
-     * 宽，邻近偏移的白会先铺到笔画核心上，主色再以覆盖率 alpha 混合就被
-     * 「洗淡」成灰字（z12 密集底图上尤其明显，观感就是模糊）。同色再绘一次
-     * 把有效覆盖率压回实心：1-(1-a)^2，例如 a=0.6 -> 0.84。描边隔离作用不变。 */
-    font_draw(f, rs, x, y, s, r, g, b, 0);
-    /* 与描边共用一个总开关：SKEDADDLE_LABEL_HALO=0 时连字形压实一起关掉，
-     * 保证「双关 + SKEDADDLE_POI_R=6」能逐字节复现改动前的出图。 */
-    if (halo_enabled())
-        font_draw(f, rs, x, y, s, r, g, b, 0);
-}
 
 /* 白描边总开关：默认对所有比例尺生效。SKEDADDLE_LABEL_HALO=0 恢复旧的
  * 1px 黑影 + 不钳制路径，配合 SKEDADDLE_FONT_SHARP=1.0 可逐字节复现
@@ -642,8 +624,8 @@ static void label_task(void *arg, int tid)
             for (int k = 0; k < 8; k++)
                 font_draw_a_pre(c->font, rs, c->x + dx8[k], c->y + dy8[k],
                                 c->text, 255, 255, 255, 0, 255);
-            /* 同色再绘两次把覆盖率压回实心（1-(1-a)^2），与串行 font_draw_halo
-               的 2 次主色完全一致 —— 顺序与次数都不能变。 */
+            /* 同色再绘两次把覆盖率压回实心（1-(1-a)^2），串行时代的 2 次主色
+               口径不变 —— 顺序与次数都不能变。 */
             font_draw_a_pre(c->font, rs, c->x, c->y, c->text, c->r, c->g, c->b, 0, 255);
             font_draw_a_pre(c->font, rs, c->x, c->y, c->text, c->r, c->g, c->b, 0, 255);
             break;

@@ -19,6 +19,7 @@
 #include "route/route_priv.h"
 #include "route/restr.h"
 #include "route/cost.h"
+#include "route/profile.h"
 #include "route/sew.h"
 #include "map/gpx.h"          /* GpxTrack：GPX 贴合道路用 */
 
@@ -135,6 +136,12 @@ void router_set_prefs(Router *r, int pref_toll, int pref_ferry, int pref_unpaved
     r->opt.pref_toll     = pref_toll;
     r->opt.pref_ferry    = pref_ferry;
     r->opt.pref_unpaved  = pref_unpaved;
+}
+
+void router_set_profile(Router *r, int profile)
+{
+    if (!r) return;
+    r->opt.profile = route_profile_clamp(profile);
 }
 
 void router_destroy(Router *r)
@@ -630,6 +637,9 @@ static void expand_dir(Router *r, int dir, uint64_t ck, StEnt *e0,
                 const uint8_t *er = s->edges.data + ei * SK_EDGE_BYTES;
                 uint16_t fl = sk_get_u16(er + EF_FLAGS);
                 if (fl & EF_NO_ACCESS) continue;
+                /* 出行方式硬排除（正向）：与旧 avoid_* / pref_*=2 并列。
+                   ★ 只对边展开生效，lmdist 建表与 rev.bin 一律不碰。 */
+                if (!route_profile_allowed(r->opt.profile, er[EF_CLASS], fl)) continue;
                 if ((r->opt.avoid_toll || r->opt.pref_toll == 2) && (fl & EF_TOLL)) continue;
                 if ((r->opt.avoid_unpaved || r->opt.pref_unpaved == 2) && (fl & EF_UNPAVED)) continue;
                 if (r->opt.pref_ferry == 2 && (fl & EF_FERRY)) continue;
@@ -705,6 +715,9 @@ static void expand_dir(Router *r, int dir, uint64_t ck, StEnt *e0,
                     if (sk_get_u32(er + EF_TO) != nd) continue;
                     uint16_t fl = sk_get_u16(er + EF_FLAGS);
                     if (fl & EF_NO_ACCESS) continue;
+                    /* 出行方式硬排除（反向）：两侧必须用同一判据，否则双向
+                       会合时会出现「正向能走、反向走不了」的候选不对称。 */
+                    if (!route_profile_allowed(r->opt.profile, er[EF_CLASS], fl)) continue;
                     if ((r->opt.avoid_toll || r->opt.pref_toll == 2) && (fl & EF_TOLL)) continue;
                     if ((r->opt.avoid_unpaved || r->opt.pref_unpaved == 2) && (fl & EF_UNPAVED)) continue;
                     if (r->opt.pref_ferry == 2 && (fl & EF_FERRY)) continue;
@@ -1080,9 +1093,10 @@ static int plan_search(Router *r, RNode from, RNode to, RouteResult *out,
                已走+剩余==全程 会凭空差出 Σ(舍入误差)（实测 152 段差 1.07 m，
                长路线恰好小于阈值才没暴露）。自洽比绝对精度重要。 */
             tm += out->seg_m[i];
-            uint8_t sp = er[EF_SPEED];
-            if (sp == 0) sp = fallback_speed(er[EF_CLASS]);
-            double sec = meters * 3.6 / (double)sp;      /* km/h → m/s */
+            /* ★ 2026-11-12：与搜索代价、route_check 共用 edge_speed_kmh。
+               步行/骑行 profile 下 total_s / seg_ds 必须跟着变，否则 ETA 会
+               显示驾车时间（route_check 的 Σseg_ds==total_s 也会直接炸）。 */
+            double sec = meters * 3.6 / edge_speed_kmh(r, er);   /* km/h → m/s */
             out->seg_ds[i] = (uint32_t)(sec * 10.0 + 0.5);
             /* ★ total_s 用**舍入后**的段耗时累计：seg_ds 和 total_s 必须严格
                相等（route_check 会查，导航剩余 ETA 也按 seg_ds 累计）。

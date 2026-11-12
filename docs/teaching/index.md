@@ -2,7 +2,9 @@
 
 > 本目录是 [`../teaching-plan.md`](../teaching-plan.md) 的**逐课展开版**：每一课单独成文件，统一按
 > **① 教学目的 → ② 功能构成 → ③ 怎么实现 → ④ 与其他功能的联系** 四段式详述，并附课堂演示 / 练习 / 验收。
-> 所有代码事实均来自当前 `src/` 真实源码。
+> 所有代码事实均来自 `src/` 真实源码：**第 7 课已于 2026-11-12 按当前源码重贴**；
+> 其余各课的「完整体逐字」代码块是 2026-11-07 的教学基线快照，之后新增/改动的模块
+> 见文末「源码演进索引」，遇到行号对不上时一律以 `src/` 为准。
 >
 > **两段式实现顺序（2026-11-06 起）**：**先核心代码（第 0–14 课），最后跨平台代码（第 15–17 课）**。
 > 核心段是平台无关的 C 核心与其工程化配套，段内按程序运行流程排；跨平台段是平台抽象层
@@ -62,8 +64,36 @@
 - 每课都可在 `tutorial/NN_xxx/` 找到同号、可独立编译运行的小程序（第 17 课除外），建议"先读源码讲义、再跑小程序"。
 - 第 17 课是「第二个前端」：与 `16_qt` 并列，C 核心一行未改；动手环节就是 `android/` 工程的编译与部署，命令见 [`../android.md`](../android.md)。
 - 环境搭建与构建命令见 [`../teaching-plan.md`](../teaching-plan.md) 的「一、环境搭建」。
-- **讲义里的「完整体，逐字」代码块由 [`scripts/regen_tutorial_blocks.py`](../../scripts/regen_tutorial_blocks.py) 从当前源码生成**（第 16 课 `main_window.*`、第 11 课内嵌 `regress.sh`）：改完源码跑一次生成脚本，用 `--check` 确认没有过期副本。最近增补内容：第 7 课 §3.6 标注层（新增 §6.5 POI 总开关、§6.6 路名等级 LOD）、第 16 课 §3.10 无边框窗口与 Qt6 可用区兼容、第 11 课 §3.7 新增判据。
+- **讲义里的「完整体，逐字」代码块**：第 16 课 `main_window.*` 与第 11 课内嵌 `regress.sh` 由
+  [`scripts/regen_tutorial_blocks.py`](../../scripts/regen_tutorial_blocks.py) 从当前源码生成（改完源码跑一次，
+  用 `--check` 确认没有过期副本）；**其余各课是手工维护**，第 7 课已于 2026-11-12 回源重贴
+  （`paint_frame` / 白描边两个逐字块 + 全篇行号 + 新增「源码演进补记」），其他课改动源码后须回源核对。
 - 改完讲义编号 / 分类，跑 `python3 scripts/check_tutorial_tracks.py` 确认两段式分类与编号一致；跑 `bash scripts/check_doc_numbers.sh` 确认 H1 编号与文件名一致。
+- **源码改了要回源同步手工讲义**：`python3 scripts/check_teaching_sync.py` 守第 7 课两个「完整体逐字」块、功能构成表的行号区间与「源码演进补记」；`--self-test` 用 3 类注入破坏证明它能失败。与演化链门禁一样未接 `regress.sh`。
 - **要看代码怎么一课课长大**：`tutorial/mini/` 是第 3 份资料（18 个连续快照，每步都能编译跑出 BMP）；
   改完 `_parts/` 跑 `python3 scripts/regen_mini_chain.py` 重新生成，再用 `python3 scripts/check_mini_chain.py`
   验收累加不变量（含 `--self-test` 的 5 类负向对照）。该门禁与 `check_tutorial_tracks.py` 一样未接进 `regress.sh`。
+
+## 源码演进索引（2026-11-10 / 11-11）
+
+> 讲义主线定稿于 2026-11-07。以下两批提交给 `src/` 带来的新模块，按
+> 「功能 → 真实源码 → 相关课次」列出；这些课次正文仍以 11-07 基线讲原理，
+> 想看当前实现请直接跳到对应文件。第 7 课 §六 有展开说明。
+
+- **渲染分带并行（11-10）**：`src/render/band.{c,h}`、`paint.c` 的
+  `paint_areas_banded` / `paint_lines_banded` / `paint_roads_banded`、环境变量
+  `SKEDADDLE_BANDS` → 第 6 课、第 7 课 §六.1。
+- **标注命令列表并行（11-10）**：`labels.c` 的 `LabelCmd` / `lcmd_push` / `label_task` /
+  `label_flush`，`font.c` 的 `font_warm_text` / `font_vbox` → 第 7 课 §6.4、§六.2。
+- **面要素 LOD 设置项（11-10）**：`paint_set_area_dot_px()`、settings 的 `lod_area` → 第 6 课、第 7 课 §六.1。
+- **POI 四件套（11-10）**：`poi_source` / `sub` 列 / `poi_radius_for_zoom()` /
+  `products/poi_ext.csv` → 第 7 课 §6.5、§六.3，第 8 课。
+- **路线偏好与 ETA 接口（11-11）**：`src/route/cost.c` 的 `edge_cost_pref()`、
+  `navsim_set_eta_calibrator()` → 第 9 课。
+- **门牌级搜索（11-11）**：`tools/places_build.c` 的 `kind 14`、`search_normalize_addr()` → 第 8 课。
+- **测速告警（11-11）**：独立 `alarm` 表、`label_cache_query_alarms()`、`voice_*_ex()` → 第 10 课、第 7 课 §六.4。
+- **车头朝上（11-11）**：`map_view.c` 四个投影接口 + `paint_nav_car()`、
+  `tools/mapview_selftest.c`、`--rot=<度>` → 第 5 课、第 7 课 §六.4。
+- **外部 POI / 新地图可检索（11-11）**：`search_add_external()`、`tests/xintu.osm.pbf` → 第 8 课。
+- **验收口径（11-11/12）**：`scripts/regress.sh` 新增 5 条用例并支持 `SKEDADDLE_BUILD_DIR`
+  → 第 11 课（内嵌全文已由生成器同步；旧的「87/0」不再代表当前用例集）。

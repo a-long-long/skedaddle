@@ -785,31 +785,48 @@ static void draw_ovl_panel(Raster *rs, App *a);
 static int  ovl_hit(App *a, int x, int y);
 static void chrome_act_ovl(App *a);
 
+/* 行高（2026-11-12）：设置项从 19 增到 21 条后，固定 34px 会把面板撑到
+ * 840px > 800px 窗口 ⇒ 顶部标题与底部按钮出屏。这里按可用高度自适应压缩，
+ * ★ 绘制与命中测试**共用这一个函数**，改高度只改这里，绝不分叉。 */
+static int settings_row_h(const App *a)
+{
+    int n = SETTINGS_SCHEMA_N + 1;              /* +1：浮层透明度入口 */
+    int h = 34;
+    int avail = a->view.h - 16;                  /* 上下各留 8px */
+    if (40 + n * h + 52 > avail) {
+        h = (avail - 92) / n;
+        if (h < 22) h = 22;
+        if (h > 34) h = 34;
+    }
+    return h;
+}
+
 /* 面板整体矩形 */
 static void settings_panel_rect(const App *a, RectI *panel)
 {
     int W = 380;
     /* +1 行：末尾那行「浮层透明度…」是打开子面板的入口，不在 schema 里 */
-    int H = 40 + (SETTINGS_SCHEMA_N + 1) * 34 + 52;
+    int H = 40 + (SETTINGS_SCHEMA_N + 1) * settings_row_h(a) + 52;
     panel->x = (a->view.w - W) / 2;
     panel->y = (a->view.h - H) / 2;
     panel->w = W; panel->h = H;
 }
 
-/* 第 i 行矩形（0..N-1） */
-static void settings_row_rect(const RectI *panel, int i, RectI *row)
+/* 第 i 行矩形（0..N-1）。a 只用来取行高，保证与 panel_rect 同源。 */
+static void settings_row_rect(const App *a, const RectI *panel, int i, RectI *row)
 {
+    int h = settings_row_h(a);
     row->x = panel->x + 12;
-    row->y = panel->y + 40 + i * 34;
+    row->y = panel->y + 40 + i * h;
     row->w = panel->w - 24;
-    row->h = 28;
+    row->h = h - 6;
 }
 
 /* 行内控件矩形：bool 返回两等宽格（左=关/右=开）；int 返回 减/加 两格。
  * 绘制与命中测试共用，保证一致。第三个返回值含义：l=左(0)/减，r=右(1)/加。 */
 static void settings_control_rects(const RectI *row, int is_bool, RectI *l, RectI *r)
 {
-    int vx = row->x + row->w - 120, vy = row->y + 2, vw = 108, vh = 24;
+    int vx = row->x + row->w - 120, vy = row->y + 2, vw = 108, vh = row->h - 4;
     if (is_bool) {
         l->x = vx;         l->y = vy; l->w = vw / 2; l->h = vh;
         r->x = vx + vw/2;  r->y = vy; r->w = vw / 2; r->h = vh;
@@ -842,7 +859,7 @@ static void draw_settings_panel(Raster *rs, App *a)
 
     for (int i = 0; i < SETTINGS_SCHEMA_N; i++) {
         const SettingMeta *m = &SETTINGS_SCHEMA[i];
-        RectI row; settings_row_rect(&panel, i, &row);
+        RectI row; settings_row_rect(a, &panel, i, &row);
         int ry = row.y + 6;
         rtext(a->font, rs, row.x + 4, ry, i18n_tr(m->label), 40, 46, 60, 0);
 
@@ -869,7 +886,7 @@ static void draw_settings_panel(Raster *rs, App *a)
     /* 末行：浮层透明度（逐浮层设置，进子面板）。
      * 16 个浮层塞进主面板会把面板撑到 800+ px（小窗口直接出屏）⇒ 单独开一页。 */
     {
-        RectI row; settings_row_rect(&panel, SETTINGS_SCHEMA_N, &row);
+        RectI row; settings_row_rect(a, &panel, SETTINGS_SCHEMA_N, &row);
         rtext(a->font, rs, row.x + 4, row.y + 6, i18n_tr("浮层透明度…"), 40, 46, 60, 0);
         RectI l, r; settings_control_rects(&row, 0, &l, &r);
         rfill(rs, l.x - 44, l.y, 108, l.h, 90, 130, 210, 255);
@@ -898,7 +915,7 @@ static int settings_hit(App *a, int x, int y)
     if (IN(reset, x, y)) { a->settings_row = -2; a->settings_btn = 0; return CH_SETTINGS; }
     if (IN(close, x, y)) { a->settings_row = -1; a->settings_btn = 0; return CH_SETTINGS; }
     for (int i = 0; i < SETTINGS_SCHEMA_N + 1; i++) {
-        RectI row; settings_row_rect(&panel, i, &row);
+        RectI row; settings_row_rect(a, &panel, i, &row);
         if (IN(row, x, y)) {
             a->settings_row = i;
             if (i == SETTINGS_SCHEMA_N) { a->settings_btn = 2; return CH_SETTINGS; }

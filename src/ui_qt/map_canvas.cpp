@@ -12,6 +12,7 @@
 #include "main_window.h"
 #include "skyplot_draw.h"  /* sk_draw_skyplot：天顶图纯绘制（不依赖 widget） */
 #include "utils/datum.h"   /* 坐标系（大地基准）：经纬网/读数按所选基准呈现 */
+#include "utils/units.h"   /* 单位制：比例尺/路线读数的距离文本（公制逐字节不变） */
 
 /* Qt 前端的地图画布实现。设计要点见 map_canvas.h 顶部注释。
  *
@@ -111,15 +112,19 @@ QString MapCanvas::statusText() const
 QString MapCanvas::summaryText() const
 {
     if (m_a->sim_on) {
-        return QString::asprintf("模拟 %.0fx  剩 %.1f km / %.0f 分",
-                                 m_a->sim.speed_mul,
-                                 navsim_remaining_m(&m_a->sim) / 1000.0,
+        const char *u = "km";
+        double v = units_big_parts(navsim_remaining_m(&m_a->sim),
+                                   units_get_system(), &u);
+        /* ★ 公制时 units_big_parts 返回 km 值且 u="km" ⇒ 与改动前逐字节一致。 */
+        return QString::asprintf("模拟 %.0fx  剩 %.1f %s / %.0f 分",
+                                 m_a->sim.speed_mul, v, u,
                                  navsim_remaining_s(&m_a->sim) / 60.0);
     }
     if (m_a->have_rr) {
-        return QString::asprintf("路线 %.1f km / %.0f 分",
-                                 m_a->rr.total_m / 1000.0,
-                                 m_a->rr.total_s / 60.0);
+        const char *u = "km";
+        double v = units_big_parts(m_a->rr.total_m, units_get_system(), &u);
+        return QString::asprintf("路线 %.1f %s / %.0f 分",
+                                 v, u, m_a->rr.total_s / 60.0);
     }
     return QString();
 }
@@ -396,8 +401,7 @@ void MapCanvas::drawScaleBar(QPainter &p)
     f.setPointSize(9);
     p.setFont(f);
     char buf[32];
-    if (dist >= 1000.0) snprintf(buf, sizeof(buf), "%.1f 公里", dist / 1000.0);
-    else                snprintf(buf, sizeof(buf), "%.0f 米", dist);
+    units_fmt_short(dist, units_get_system(), 1, buf, sizeof(buf));
 
     p.setPen(QColor(30, 36, 48));
     p.drawLine(x, y, x + px, y);

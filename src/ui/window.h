@@ -16,6 +16,7 @@
 #include "route/navsim.h"
 #include "route/voice.h"
 #include "search/search.h"
+#include "search/history.h"
 #include "map/gpx.h"
 #include "ui/overlay.h"
 
@@ -72,6 +73,7 @@ typedef struct {
     int            font_missing;          /* 字体加载彻底失败（!=0）：地图不画任何文字 */
     LabelCache    places;                 /* 地名库（可选，全局一份，跨省通用） */
     int           has_places;
+    History       history;                /* 最近选中的地点（MRU，history.txt） */
     DedupSet      dd;                     /* 跨省去重（多个省同时盖住视口才启用） */
     int           quit;
     int           need_redraw;
@@ -79,6 +81,10 @@ typedef struct {
     int           lod_area;      /* LOD：小面画点阈值（设置 lod_area，2~12） */
     /* 路线偏好：0 不限 / 1 尽量避免 / 2 完全避开（三值语义见 SETTINGS_SCHEMA）。 */
     int           pref_toll, pref_ferry, pref_unpaved;
+    /* 2026-11-12 L2：出行方式（route/profile.h）与单位制（utils/units.h）。
+     * 两者缺省 0 = 驾车 / 公制 = 改动前行为，见 SETTINGS_SCHEMA。 */
+    int           route_profile;
+    int           unit_system;
     int           dragging;
     int           last_x, last_y;
     int           down_x, down_y;
@@ -277,6 +283,12 @@ void app_apply_settings(App *a);
 void app_ovl_alpha_set(App *a, SkOverlay id, int pct);
 void app_ovl_alpha_reset(App *a);
 void app_persist_settings(App *a);
+
+/* 出行方式档位（2026-11-12）：Qt 前端通过这两个门面拿档位数与钳制，
+ * 不必直接 include route/profile.h —— check_layers.sh 明确禁止 ui_qt → route。
+ * profile 的枚举、速度策略等实现细节仍只属于 route 层。 */
+int  app_route_profile_count(void);
+int  app_route_profile_clamp(int v);
 
 /* 状态栏文本（窗口标题栏用）。实现留在 window.c（Qt 前端也可用）。 */
 void update_status(App *a, double frame_ms);

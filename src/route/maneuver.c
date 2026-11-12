@@ -7,6 +7,7 @@
 
 #include "map/binfmt.h"
 #include "map/road_tags.h"
+#include "utils/units.h"
 
 /* 转角阈值（度）。前后各看 LOOK_M 米再算方位，避免把弯路的中间节点
    当成路口（OSM 一条 way 会被路口切成十几段，逐段算会每十米报一次转向）。 */
@@ -150,9 +151,10 @@ static int roundabout_exit_no(const RouteResult *rr, const MapSet *ms,
 
 void fmt_distance(double meters, char *buf, size_t n)
 {
-    if (meters < 1000.0) snprintf(buf, n, "%.0f 米", meters);
-    else if (meters < 10000.0) snprintf(buf, n, "%.2f 公里", meters / 1000.0);
-    else snprintf(buf, n, "%.0f 公里", meters / 1000.0);
+    /* 2026-11-12：格式化集中到 utils/units.c，让「单位制」设置项真正生效。
+       ★ 全局缺省是公制，units_fmt_distance 的公制分支就是上面那三行原封不动
+       搬过去的 ⇒ 未设置单位制时逐字节一致（负向对照锚点）。 */
+    units_fmt_distance(meters, units_get_system(), 0, buf, n);
 }
 
 const char *maneuver_kind_text(const Maneuver *m)

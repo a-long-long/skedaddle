@@ -12,6 +12,8 @@
 
 #include <math.h>
 #include <stdio.h>
+
+#include "utils/units.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -194,19 +196,9 @@ const char *voice_action_text(int man_type, int exit_no)
 void voice_spoken_distance(double meters, char *buf, size_t n)
 {
     if (!buf || n == 0) return;
-    double a = meters < 0.0 ? -meters : meters;
-    if (a < 1e-6) {
-        snprintf(buf, n, "0 公里");        /* 官方 dist() 的零值分支 */
-    } else if (a < 10.0) {
-        snprintf(buf, n, "%.1f 米", meters);
-    } else if (a < 1000.0) {
-        /* 官方：((int)(Math.round(signed / 10.0) * 10)) + " 米" */
-        snprintf(buf, n, "%.0f 米", (double)((long)((meters / 10.0) + 0.5) * 10));
-    } else if (a < 100000.0) {
-        snprintf(buf, n, "%.1f 公里", meters / 1000.0);
-    } else {
-        snprintf(buf, n, "%.0f 公里", meters / 1000.0);
-    }
+    /* 2026-11-12：口径与全套分段规则原封不动搬进 utils/units.c，
+       让「单位制」设置项也能作用于语音。公制缺省 ⇒ 逐字节不变。 */
+    units_fmt_distance(meters, units_get_system(), 1, buf, n);
 }
 
 int voice_turn_phrase(const Maneuver *m, double to_go_m, int now,

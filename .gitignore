@@ -50,3 +50,5 @@ docs/shots/
 *.orig
 *.rej
 *.log
+# 11-03 Wayland alpha=0 花屏的诊断截图（2.6 MB，未在任何文档里引用）
+/wayland_*.jpg

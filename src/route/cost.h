@@ -9,6 +9,12 @@
 /* 道路等级 → 兜底车速（km/h），edge_cost 在缺 speed 字段时用。 */
 uint8_t fallback_speed(uint8_t cls);
 
+/* ★★ 该边在**当前 profile** 下的有效速度（km/h）。
+ * 搜索代价 g、结果回填 seg_ds/total_s、route_check 三处必须共用这一个入口：
+ * 只改 g 不改 ETA 会让步行显示驾车时间；只改 ETA 不改自检会直接 ASSERT-FAIL。
+ * RP_CAR 时逐字节等价于改动前的 `EF_SPEED ?: fallback_speed(EF_CLASS)`。 */
+double edge_speed_kmh(const Router *r, const uint8_t *er);
+
 /* 单边代价：mode_time=1 返回秒，否则返回米；meters 回传米（用于 navsim 自检）。 */
 double edge_cost(const Router *r, const uint8_t *er, double *meters);
 

@@ -18,6 +18,8 @@
 #include "utils/plat.h"
 #include "settings/settings.h"
 #include "i18n/i18n.h"
+#include "route/profile.h"
+#include "utils/units.h"
 
 /* ---- 模拟导航 ----
  * 倍速档：为什么要分档而不是随便填——软件渲染一帧几百毫秒，倍速太大时
@@ -59,6 +61,9 @@ int app_init(App *a, const char *graph_dir, int w, int h,
        从而满足"命令行与环境变量优先级高于配置文件"。 */
     a->cfg = settings_create();
     if (a->cfg) settings_load(a->cfg, NULL);
+    /* 最近地点：与 places_auto.db 完全分开的用户数据，首次启动没有文件是正常路径。 */
+    history_init(&a->history, NULL);
+    (void)history_load(&a->history);
     i18n_set_lang((I18nLang)settings_get_int(a->cfg, "lang", 0));
     a->max_class = settings_get_int(a->cfg, "max_class", 4);
     a->lod_area  = settings_get_int(a->cfg, "lod_area", 4);
@@ -67,6 +72,10 @@ int app_init(App *a, const char *graph_dir, int w, int h,
     a->pref_ferry    = settings_get_int(a->cfg, "pref_ferry", 0);
     a->pref_unpaved  = settings_get_int(a->cfg, "pref_unpaved", 0);
     a->heading_up    = settings_get_bool(a->cfg, "heading_up", 0);
+    a->route_profile = route_profile_clamp(settings_get_int(a->cfg, "route_profile", 0));
+    a->unit_system   = (settings_get_int(a->cfg, "unit_system", 0) == UNITS_IMPERIAL)
+                       ? UNITS_IMPERIAL : UNITS_METRIC;
+    units_set_system(a->unit_system);   /* 格式化函数读全局；启动只设一次 */
     a->need_redraw = 1;
     a->show_panel = settings_get_bool(a->cfg, "show_panel", 1);
     {
@@ -375,6 +384,10 @@ void app_apply_settings(App *a)
     a->pref_ferry   = settings_get_int(a->cfg, "pref_ferry", 0);
     a->pref_unpaved = settings_get_int(a->cfg, "pref_unpaved", 0);
     a->heading_up   = settings_get_bool(a->cfg, "heading_up", 0);
+    a->route_profile = route_profile_clamp(settings_get_int(a->cfg, "route_profile", 0));
+    a->unit_system   = (settings_get_int(a->cfg, "unit_system", 0) == UNITS_IMPERIAL)
+                       ? UNITS_IMPERIAL : UNITS_METRIC;
+    units_set_system(a->unit_system);
     int dv = settings_get_int(a->cfg, "datum", 0);
     a->datum = (dv >= 0 && dv < DATUM_COUNT) ? dv : DATUM_WGS84;
     int gt = settings_get_int(a->cfg, "grid_type", 1);
@@ -418,9 +431,12 @@ void app_persist_settings(App *a)
     settings_set_int(a->cfg,  "pref_ferry",   a->pref_ferry);
     settings_set_int(a->cfg,  "pref_unpaved", a->pref_unpaved);
     settings_set_bool(a->cfg, "heading_up",  a->heading_up);
+    settings_set_int(a->cfg,  "route_profile", a->route_profile);
+    settings_set_int(a->cfg,  "unit_system",   a->unit_system);
     settings_set_int(a->cfg,  "datum",       a->datum);
     settings_set_int(a->cfg,  "grid_type",   a->grid_type);
     ovl_store_all(a->cfg, a->ovl_alpha);
+    history_save(&a->history);   /* 历史与 settings.ini 同一个落盘点 */
     /* 视图位置：记住上次退出时所在（下次启动直接回到这里） */
     settings_set_dbl(a->cfg, "view_lat",  a->view.lat);
     settings_set_dbl(a->cfg, "view_lon",  a->view.lon);
@@ -484,7 +500,8 @@ static int nav_ensure_router(App *a)
     if (!a->router) {
         RouteOpts opt = { .mode_time = 1, .bidir = 1,
                           .pref_toll = a->pref_toll, .pref_ferry = a->pref_ferry,
-                          .pref_unpaved = a->pref_unpaved };
+                          .pref_unpaved = a->pref_unpaved,
+                          .profile = a->route_profile };
         a->router = router_create(&a->ms, &opt);
         if (!a->router) {
             fprintf(stderr, "路由初始化失败\n");
@@ -492,8 +509,9 @@ static int nav_ensure_router(App *a)
         }
     } else {
         /* 设置项在面板里改完不必重建 Router（状态表 30MB）：每次算路前
-           把三个偏好同步过去即可。Qt 前端直接写 App 字段也走这条。 */
+           把三个偏好 + 出行方式同步过去即可。Qt 前端直接写 App 字段也走这条。 */
         router_set_prefs(a->router, a->pref_toll, a->pref_ferry, a->pref_unpaved);
+        router_set_profile(a->router, a->route_profile);
     }
     return 0;
 }
@@ -1770,3 +1788,10 @@ int app_gpx_export_default(App *a)
     else         fprintf(stderr, "[gpx] 导出失败\n");
     return rc;
 }
+
+/* ---------------------------------------------------------------------------
+ * 出行方式门面（放在文件末尾，避免插在 paint_frame 之前让第 7 课讲义的
+ * 「完整体逐字块」区间每次都平移）。只转发，不复制枚举语义。
+ * ------------------------------------------------------------------------- */
+int app_route_profile_count(void)  { return (int)RP_COUNT; }
+int app_route_profile_clamp(int v) { return route_profile_clamp(v); }

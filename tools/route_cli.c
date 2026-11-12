@@ -8,7 +8,11 @@
  *               [--mode=time|dist] [--avoid-toll] [--avoid-unpaved]
  *               [--geojson=out.json] [--max-expand=N] [--bidir=0|1]
  *               [--no-restr2] [--exact] [--maneuvers] [--avoid-toll] [--avoid-unpaved]
- *               [--maneuvers]
+ *               [--maneuvers] [--profile=car|bike|foot|0|1|2]
+ *
+ * --profile 同时改搜索代价、边可达性与 ETA 回填（三者共用 edge_speed_kmh）。
+ *   缺省 car = 与改动前逐字节一致；验收用同一对起终点跑 car/bike/foot，
+ *   「预计 X 分」必须可区分，且每条都要 ROUTE-OK（route_check 会查 Σseg_ds）。
  *
  * --bidir=0 退化成单向 A*，用于和双向结果做 A/B 对照（两条路线的最优代价
  * 必须一致，否则说明终止条件或启发式有问题）。
@@ -24,11 +28,22 @@
 #include "map/autobuild.h"
 #include "map/gpx.h"
 #include "route/route.h"
+#include "route/profile.h"
 #include "route/maneuver.h"
 #include "utils/geo.h"
 #include "utils/plat.h"
 #include "tool_common.h"
 
+
+/* 出行方式 CLI：名字与数字都收，越界一律钳成 RP_CAR（脏参数不许静默走错档）。 */
+static int parse_profile(const char *s)
+{
+    if (!s) return RP_CAR;
+    if (strcmp(s, "bike") == 0) return RP_BIKE;
+    if (strcmp(s, "foot") == 0) return RP_FOOT;
+    if (strcmp(s, "car") == 0)  return RP_CAR;
+    return route_profile_clamp(atoi(s));
+}
 
 static int parse_ll(const char *s, double *lat, double *lon)
 {
@@ -88,6 +103,8 @@ int main(int argc, char **argv)
         else if ((v = tc_arg_val(a, "--pref-ferry=")))    opt.pref_ferry = atoi(v);
         else if ((v = tc_arg_val(a, "--pref-unpaved=")))  opt.pref_unpaved = atoi(v);
         else if ((v = tc_arg_val(a, "--pref-add=")))      opt.pref_add = atof(v);
+        /* 出行方式：与三个偏好正交，缺省 0（驾车）= 全部既有判据的负向对照锚点。 */
+        else if ((v = tc_arg_val(a, "--profile=")))       opt.profile = parse_profile(v);
         /* 关掉 via=way 两段限制（单点限制仍生效）。只用于 A/B 对照：
            同一对起终点跑两遍，里程变长说明两段限制真的拦住了东西。 */
         else if (strcmp(a, "--no-restr2") == 0)     opt.no_restr2 = 1;
@@ -141,6 +158,11 @@ int main(int argc, char **argv)
                router_lm_nlm(r), router_heur_w(r));
     else
         printf("地标表       未加载，退回纯直线启发式（生效 w=%.2f）\n", router_heur_w(r));
+    /* ★ 判据要能读出「到底用的哪个 profile」：只判 ROUTE-OK 看不出
+       参数被静默钳成 car。regress 用这行 + 预计分钟做双向对照。 */
+    printf("出行方式     %s（%d，巡航 %.0f km/h）\n",
+           route_profile_name(opt.profile), route_profile_clamp(opt.profile),
+           route_profile_cruise_kmh(opt.profile));
 
     /* ---- GPX 贴合道路：--gpx-snap=<文件> ----
      * 把 GPX 里的第一条轨迹均匀抽稀成途经点，吸附到路网并沿道路串联，

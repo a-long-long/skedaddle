@@ -4,6 +4,7 @@
 #
 #   用法: ./scripts/check_layers.sh              检查 src/ 全量（打印依赖图）
 #         ./scripts/check_layers.sh --quiet      只在失败时输出
+#         ./scripts/check_layers.sh --self-test  负向对照（临时夹具，不碰仓库 src/）
 #
 # 为什么要有它：
 #   PLAN.md §53 的 R1/R2 把两处模块级倒置（map→render、render→ui）消掉了，
@@ -25,17 +26,56 @@
 
 set -u
 cd "$(dirname "$0")/.."
-ROOT=$PWD
+# ★ --self-test 用临时夹具当 ROOT，正常验收仍用仓库根。
+ROOT=${SK_LAYERS_ROOT:-$PWD}
 
 QUIET=0
+SELFTEST=0
 for a in "$@"; do
     case "$a" in
         --quiet) QUIET=1 ;;
+        --self-test) SELFTEST=1 ;;
         *) echo "未知参数: $a" >&2; exit 2 ;;
     esac
 done
 
 say() { [ "$QUIET" = 1 ] || printf '%s\n' "$*"; }
+
+# ---------------------------------------------------------------------------
+# --self-test：可复现的负向对照（不是「当年手工插过一次」的口头记录）。
+#   在临时夹具里造两个模块：正常夹具 0 违规；插一条 map → render 的 include
+#   后必须 FAIL 且点名这条边。两边任一不符都判自检失败。
+#   ★ 改的是被检查的数据（夹具源码），不是判据条件本身。
+# ---------------------------------------------------------------------------
+if [ "$SELFTEST" = 1 ]; then
+    FIX=$(mktemp -d -t sk_layers_XXXXXX)
+    trap '/bin/rm -rf "$FIX"' EXIT
+    mkdir -p "$FIX/src/map" "$FIX/src/render"
+    printf '/* 夹具：map 模块 */\n#include "utils/plat.h"\n' > "$FIX/src/map/probe.c"
+    printf '/* 夹具：render 模块 */\n#include "utils/plat.h"\n' > "$FIX/src/render/probe.c"
+
+    SK_LAYERS_ROOT="$FIX" bash "$0" --quiet > "$FIX/clean.log" 2>&1
+    rc_clean=$?
+    printf '/* 夹具：map 模块 */\n#include "render/paint.h"\n' > "$FIX/src/map/probe.c"
+    SK_LAYERS_ROOT="$FIX" bash "$0" --quiet > "$FIX/bad.log" 2>&1
+    rc_bad=$?
+    fails=0
+    if [ "$rc_clean" != 0 ] || ! grep -q "分层方向门禁 PASS" "$FIX/clean.log"; then
+        echo "  FAIL 干净夹具应当 PASS（rc=$rc_clean）"; fails=$((fails+1))
+    else
+        echo "  OK   干净夹具 0 违规"
+    fi
+    if [ "$rc_bad" = 0 ] || ! grep -q "map → render" "$FIX/bad.log"; then
+        echo "  FAIL 注入 map → render 后应当 FAIL 并点名该边（rc=$rc_bad）"; fails=$((fails+1))
+    else
+        echo "  OK   注入 map → render 被抓到"
+    fi
+    if [ "$fails" != 0 ]; then
+        echo "LAYERS-SELFTEST-FAIL ($fails 项未达预期)"; exit 1
+    fi
+    echo "LAYERS-SELFTEST-OK 正常夹具通过 / map → render 逆向依赖被抓到"
+    exit 0
+fi
 
 # ★ 结论行**始终**打印（不受 --quiet 影响）：回归门禁的 run() 靠
 #   "必须出现的标记 + 退出码"双判据判定，标记缺失会被判成假 FAIL。

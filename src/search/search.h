@@ -111,4 +111,17 @@ int search_bigrams(const char *q, char grams[][16], int max_grams, int *chars);
  * ★ 普通地名不带空格/号尾缀 ⇒ 规范化是恒等变换，旧查询结果逐条不变。 */
 int search_normalize_addr(const char *in, char *out, size_t cap);
 
+/* 逆地理编码（2026-11-12，L2）：在半径 radius_m 内按距离取
+ *   「市/省会」→「区县/片区」→「街道名」→「门牌」四级，
+ *   用 addr_join 合成「A · B · C · D」写入 out。
+ * ★ 只用现成的 place 表（kind 1..4 / 13 / 14），不建新表、不联网、
+ *   不改产物 ⇒ 存量 places_auto.db 直接可用。
+ * ★ place 表没有经纬度索引，这里先按粗 bbox 过滤再逐条算大圆距离；
+ *   一次点击才触发，226k 行全表扫也在几十毫秒级。
+ * 返回：0 = 合成成功；1 = 半径内没有任何地址要素（out 为空，不是错误）；
+ *       -1 = 参数 / 数据库错误。radius_m<=0 时取默认 3000 m。
+ * 四级全缺时返回 1；只缺某几级时照常合成（addr_join 跳过空字段）。 */
+int search_reverse(SearchDb *d, double lat, double lon, double radius_m,
+                   char *out, size_t cap);
+
 #endif

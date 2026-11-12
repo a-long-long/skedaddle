@@ -975,7 +975,7 @@ fi
 > 完整源码 · `scripts/regress.sh` (全文 863 行)
 
 ```bash
-> 完整源码 · `scripts/regress.sh`（逐字内嵌，全文 863 行）
+> 完整源码 · `scripts/regress.sh`（逐字内嵌，全文 926 行）
 #!/usr/bin/env bash
 #
 # 一键回归：改完渲染 / 路网 / 图集相关代码后跑一遍，确认没有悄悄退化。
@@ -998,6 +998,9 @@ ROOT=$PWD
 #     SKEDADDLE_BUILD_DIR=$PWD/build_rel ./scripts/regress.sh
 #   ★ 只改「到哪儿找可执行文件」，不改用例本身 ⇒ 跨机跑的是同一套门禁。
 BUILD=${SKEDADDLE_BUILD_DIR:-$ROOT/build}
+# Python 判据脚本（等高线全链）也按同一份 BUILD 找可执行文件，
+# 避免它们去翻缺省的 build_rel/ 而拿到与 C 用例不同的二进制。
+export SKEDADDLE_BUILD_DIR="$BUILD"
 GRAPH=$ROOT/products/graph
 
 DO_BUILD=0
@@ -1835,6 +1838,66 @@ if [ -f "$SHOTS/lmdist.log" ]; then
         fail=$((fail + 1)); printf '%-28s FAIL %s 秒 不在 22500~23800 内（正常 23136.8）\n' "lmdist_km" "$v"
     fi
 fi
+
+# ---------------------------------------------------------------------------
+# 2026-11-12 L2 本地能力：单位制 / 出行方式 profile / 地址层 / 最近地点
+#
+# 判据纪律：每条正向判据都配一条**能失败的负向对照注入**（各自测程序的
+# --inject 模式故意弄坏"被检查的数据"，判据抓到才打印 *-INJECT-CAUGHT）。
+# 只跑正向、不证明判据有分辨力 ⇒ 接线坏了也会假绿。
+# ---------------------------------------------------------------------------
+run units_selftest       "UNITS-OK"             "$BUILD/skedaddle_units_selftest"
+run units_negative       "UNITS-INJECT-CAUGHT"  "$BUILD/skedaddle_units_selftest" --inject=imperial
+run profile_selftest     "PROFILE-OK"           "$BUILD/skedaddle_profile_selftest"
+run profile_negative     "PROFILE-INJECT-CAUGHT" "$BUILD/skedaddle_profile_selftest" --inject=nowiring
+run addr_selftest        "ADDR-OK"              "$BUILD/skedaddle_addr_selftest"
+run addr_negative        "ADDR-INJECT-CAUGHT"   "$BUILD/skedaddle_addr_selftest" --inject=no-house
+run history_selftest     "HISTORY-OK"           "$BUILD/skedaddle_history_selftest"
+run history_negative     "HISTORY-INJECT-CAUGHT" "$BUILD/skedaddle_history_selftest" --inject=stale
+
+# 真实路网：三档 profile 都必须 ROUTE-OK（route_check 会查 Σseg_ds==total_s，
+# 只改 g 不改 ETA 回填会在这里直接炸）。
+run route_profile_car    "ROUTE-OK" "$BUILD/skedaddle_route_cli" --graph="$GRAPH" \
+    --from=39.90,116.40 --to=39.95,116.45 --profile=car
+run route_profile_bike   "ROUTE-OK" "$BUILD/skedaddle_route_cli" --graph="$GRAPH" \
+    --from=39.90,116.40 --to=39.95,116.45 --profile=bike
+run route_profile_foot   "ROUTE-OK" "$BUILD/skedaddle_route_cli" --graph="$GRAPH" \
+    --from=39.90,116.40 --to=39.95,116.45 --profile=foot
+# ETA 必须随 profile 严格递增。★ 判据用「预计分钟」这个确定性量，不用耗时
+#   （步行展开数更大但单条更快，时间口径会给出相反的假结论）。
+_pmin() {
+    "$BUILD/skedaddle_route_cli" --graph="$GRAPH" \
+        --from=39.90,116.40 --to=39.95,116.45 --profile="$1" 2>/dev/null |
+    sed -n 's/^预计 *\([0-9]*\) 分.*/\1/p' | head -1
+}
+pm_car=$(_pmin car); pm_bike=$(_pmin bike); pm_foot=$(_pmin foot)
+if [ -n "$pm_car" ] && [ -n "$pm_bike" ] && [ -n "$pm_foot" ] &&
+   [ "$pm_car" -lt "$pm_bike" ] && [ "$pm_bike" -lt "$pm_foot" ]; then
+    pass=$((pass + 1))
+    printf '%-28s OK   (%s < %s < %s 分，驾车/骑行/步行)\n' \
+        "profile_eta_order" "$pm_car" "$pm_bike" "$pm_foot"
+else
+    fail=$((fail + 1))
+    printf '%-28s FAIL ETA 非严格递增：car=%s bike=%s foot=%s\n' \
+        "profile_eta_order" "${pm_car:-<失败>}" "${pm_bike:-<失败>}" "${pm_foot:-<失败>}"
+fi
+
+# 逆地理编码：真实 places_auto.db 上必须合成层级地址；无数据区的小半径必须
+# 返回「空」而不是随便编一个（--expect-empty 就是这条负向对照）。
+run addr_reverse         "逆地理编码" "$BUILD/skedaddle_search_cli" \
+    --db="$ROOT/products/places_auto.db" --reverse=39.90,116.40 --radius=3000
+run addr_reverse_empty   "负向对照" "$BUILD/skedaddle_search_cli" \
+    --db="$ROOT/products/places_auto.db" --reverse=0,0 --radius=1 --expect-empty
+
+# ---------------------------------------------------------------------------
+# 数据链路：等高线全链 + 扩省覆盖不变量。
+# 两条都是「合成夹具」型判据（不依赖真实 DEM / 新省 PBF），副机缺数据也能跑。
+#   ★ 正常模式的 check_province_coverage.py 由 add_province.sh 在真实扩省后调用，
+#     不进 regress —— 副机只有 beijing，放进来会多一条「缺 7 省」的非回归 FAIL。
+# ---------------------------------------------------------------------------
+run coverage_selftest   "COVERAGE-SELFTEST-OK"  python3 "$ROOT/scripts/check_province_coverage.py" --self-test
+run contour_chain       "CONTOUR-OK"            python3 "$ROOT/scripts/contour_chain_check.py"
+run contour_chain_neg   "CONTOUR-INJECT-CAUGHT" python3 "$ROOT/scripts/contour_chain_check.py" --inject
 
 echo
 echo "=== 结果: $pass 通过 / $fail 失败   日志与截图: $SHOTS"

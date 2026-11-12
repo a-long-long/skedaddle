@@ -101,12 +101,13 @@ int route_check(Router *r, const RouteResult *rr)
                    i, rr->seg_m[i], dcm);
             fail = 1;
         }
-        /* 每段耗时要与该段限速自洽：否则导航的剩余 ETA 会凭空多出/少掉时间 */
-        uint8_t sp = er[EF_SPEED];
-        if (sp == 0) sp = fallback_speed(er[EF_CLASS]);
-        double want = (dcm / 100.0) * 3.6 / (double)sp * 10.0;
+        /* 每段耗时要与该段**在 profile 下的有效速度**自洽：否则导航的剩余 ETA
+           会凭空多出/少掉时间。★ 与 cost.c / route.c 共用 edge_speed_kmh，
+           RP_CAR 时 (double)sp 与旧值逐位相同。 */
+        double sp = edge_speed_kmh(r, er);
+        double want = (dcm / 100.0) * 3.6 / sp * 10.0;
         if (fabs((double)rr->seg_ds[i] - want) > 1.5) {
-            printf("ASSERT-FAIL 段 %u 耗时 %.1f s != 限速 %u 推算 %.1f s\n",
+            printf("ASSERT-FAIL 段 %u 耗时 %.1f s != 速度 %.1f km/h 推算 %.1f s\n",
                    i, rr->seg_ds[i] / 10.0, sp, want / 10.0);
             fail = 1;
         }

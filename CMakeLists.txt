@@ -169,6 +169,7 @@ set(ROUTE_SRCS
     src/route/sew.c
     src/route/restr.c
     src/route/cost.c
+    src/route/profile.c
     src/route/lmdist.c
     src/route/result.c
     src/route/route.c
@@ -178,7 +179,9 @@ set(ROUTE_SRCS
     src/route/navsim.c
     src/route/voice.c)
 set(SEARCH_SRCS
-    src/search/search.c)
+    src/search/search.c
+    src/search/addr.c
+    src/search/history.c)
 set(RENDER_SRCS
     src/render/paint.c
     src/render/raster.c
@@ -242,6 +245,16 @@ if(WIN32)
     target_compile_options(skedaddle_strpool PUBLIC -Wno-format)
 endif()
 
+# 叶子库 4b：skedaddle_units（src/utils/units.c，纯叶子，零内部依赖）
+#   2026-11-12 单位制：距离/速度格式化的唯一实现。放在 utils 叶子层，
+#   route / ui / ui_qt 都能 include 而不形成反向依赖（check_layers.sh 会守）。
+add_library(skedaddle_units STATIC src/utils/units.c)
+target_include_directories(skedaddle_units PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(skedaddle_units PUBLIC ${SK_LEAF_SYS_LIBS})
+if(WIN32)
+    target_compile_options(skedaddle_units PUBLIC -Wno-format)
+endif()
+
 # 叶子库 4：skedaddle_mem（src/utils/mem.c，依赖 plat）
 add_library(skedaddle_mem STATIC src/utils/mem.c)
 target_include_directories(skedaddle_mem PUBLIC ${CMAKE_SOURCE_DIR}/src)
@@ -300,7 +313,8 @@ target_include_directories(skedaddle_route PUBLIC
     ${ZLIB_INCLUDE_DIRS} ${SQLITE3_INCLUDE_DIRS}
     ${PROTOC_INCLUDE_DIRS} ${PROTOC_REAL_INCLUDE_DIR})
 target_link_libraries(skedaddle_route PUBLIC
-    skedaddle_map skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem)
+    skedaddle_map skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem
+    skedaddle_units)
 
 # skedaddle_render：map + route + search + settings + 叶子库
 #   ★ 2026-10-28 R2 起 render 零 ui 依赖（chrome/audit 已移到 ui），
@@ -365,7 +379,7 @@ endif()
 #     新引入的符号级环**悄悄补上** ⇒ 边界形同虚设。R3 的分层门禁负责防回流。
 target_link_libraries(skedaddle_core PUBLIC
     skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui skedaddle_settings
-    skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem
+    skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem skedaddle_units
     ${ZLIB_LIBRARIES} ${SQLITE3_LIBRARIES} ${PROTOC_LIB} ${SKEDADDLE_CORE_SYS_LIBS})
 
 
@@ -442,7 +456,7 @@ endif()
 function(sk_link_tool tgt)
     target_link_libraries(${tgt} PRIVATE
         ${ARGN}
-        skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem
+        skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem skedaddle_units
         ${ZLIB_LIBRARIES} ${SQLITE3_LIBRARIES} ${PROTOC_LIB} ${SK_LEAF_SYS_LIBS})
 endfunction()
 
@@ -456,6 +470,10 @@ sk_link_tool(skedaddle_pbf_info)
 # 零外部依赖（无 GDAL），直接读原始大端 int16 .hgt。
 add_executable(skedaddle_gen_contours tools/gen_contours.c)
 sk_link_tool(skedaddle_gen_contours skedaddle_map)
+# 等高线「加载 + 绘制」判据：用生产 nmbin_open / paint_contours 数非背景像素。
+# 与 scripts/contour_chain_check.py 配合，合成 DEM 即可验完整链路，无需真实 SRTM。
+add_executable(skedaddle_contour_render_check tools/contour_render_check.c)
+sk_link_tool(skedaddle_contour_render_check skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
 
 
 # PBF 按需解码显示层的等价性校验（"只留 PBF"方案的门禁）
@@ -559,7 +577,7 @@ if(QT)
     # （skedaddle_core 仅含 core_anchor.c，未聚合子模块，且 CMake 会把它
     #  展开成 -lskedaddle_core 而缺 -L build，导致链接失败）。
     target_link_libraries(skedaddle PRIVATE
-        skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem
+        skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem skedaddle_units
         skedaddle_map skedaddle_search skedaddle_route skedaddle_render skedaddle_ui skedaddle_settings skedaddle_i18n
         ${ZLIB_LIBRARIES} ${SQLITE3_LIBRARIES} ${PROTOC_LIB} ${SK_LEAF_SYS_LIBS}
         ${QT}::Widgets ${QT}::Network Threads::Threads)
@@ -702,6 +720,19 @@ sk_link_tool(skedaddle_voice_selftest skedaddle_route skedaddle_map skedaddle_ge
 #   ⇒ 接线坏掉时判据假绿，负向对照第 8 项就是这么被抓住的）。
 add_executable(skedaddle_voice_e2e tools/voice_e2e.c)
 sk_link_tool(skedaddle_voice_e2e skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
+
+# 2026-11-12 L2：单位制 / 出行方式 profile 的确定性自测（各带负向对照注入模式）。
+# ★ 链 skedaddle_route 是为了跑**生产包装** fmt_distance / voice_spoken_distance
+#   与 cost.c:edge_cost，而不是在自测里复刻一份实现（复刻会让接线坏掉时判据假绿）。
+add_executable(skedaddle_units_selftest tools/units_selftest.c)
+sk_link_tool(skedaddle_units_selftest skedaddle_route skedaddle_map skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem)
+add_executable(skedaddle_profile_selftest tools/profile_selftest.c)
+sk_link_tool(skedaddle_profile_selftest skedaddle_route skedaddle_map skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem)
+# 地址层（结构化拆分 + 逆地理编码）与最近地点历史：同样各带负向注入模式。
+add_executable(skedaddle_addr_selftest tools/addr_selftest.c)
+sk_link_tool(skedaddle_addr_selftest skedaddle_search)
+add_executable(skedaddle_history_selftest tools/history_selftest.c)
+sk_link_tool(skedaddle_history_selftest skedaddle_search)
 # 旋转视图（车头朝上）坐标链：投影/反投影互逆、四角 bbox、缩放锚点、拖动、
 # fit_bbox、车标像素。★ 必须链 render（paint_nav_car 在 navdraw.c）。
 add_executable(skedaddle_mapview_selftest tools/mapview_selftest.c)

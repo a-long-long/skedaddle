@@ -1,4 +1,5 @@
 #include "route/cost.h"
+#include "route/profile.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,14 +24,25 @@ uint8_t fallback_speed(uint8_t cls)
     }
 }
 
+double edge_speed_kmh(const Router *r, const uint8_t *er)
+{
+    double stored = (double)er[EF_SPEED];
+    if (stored <= 0.0) stored = (double)fallback_speed(er[EF_CLASS]);
+    double eff = route_profile_speed_kmh(r->opt.profile, er[EF_CLASS], stored);
+    /* 不可通行的边本应在边展开处被硬排除；真漏到这里也绝不返回 0（除零）。
+       给 1 km/h 让它的代价大到不可能被选中，同时保持搜索不会静默算错。 */
+    return eff > 0.0 ? eff : 1.0;
+}
+
 double edge_cost(const Router *r, const uint8_t *er, double *meters)
 {
     double m = (double)sk_get_u32(er + EF_DIST_CM) / 100.0;
     if (meters) *meters = m;
     if (!r->opt.mode_time) return m;
-    uint8_t sp = er[EF_SPEED];
-    if (sp == 0) sp = fallback_speed(er[EF_CLASS]);
-    return m * 3.6 / (double)sp;
+    /* ★ 2026-11-12：口径从「uint8_t sp」换成 profile 的有效速度。
+       RP_CAR 时 route_profile_speed_kmh 原样返回 stored ⇒ (double)sp 完全相同，
+       这条除法与改动前逐字节一致（regress 的全部算路判据都是负向对照锚点）。 */
+    return m * 3.6 / edge_speed_kmh(r, er);
 }
 
 /* 搜索专用代价：在物理代价上叠加"路线偏好"软惩罚。

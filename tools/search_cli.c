@@ -58,6 +58,9 @@ int main(int argc, char **argv)
                                     命令行传中文会被 MSYS2 转码，验收会假红） */
     const char *ext_path = NULL; /* --ext: 外部 POI CSV，验证新加数据可被检索 */
     const char *miss_file = NULL;/* --miss-file: 负向对照词（必须搜不到） */
+    const char *reverse_s = NULL;/* --reverse=lat,lon: 逆地理编码（地址层 L2） */
+    double radius_m = 3000.0;
+    int expect_empty = 0;       /* --expect-empty: 负向对照（半径内必须无地址） */
     int limit = 20, repeat = 20, recall_check = 0;
     int fails = 0;
 
@@ -70,6 +73,9 @@ int main(int argc, char **argv)
         else if ((v = tc_arg_val(a, "--q-file="))) q_file = v;
         else if ((v = tc_arg_val(a, "--ext=")))    ext_path = v;
         else if ((v = tc_arg_val(a, "--miss-file="))) miss_file = v;
+        else if ((v = tc_arg_val(a, "--reverse="))) reverse_s = v;
+        else if ((v = tc_arg_val(a, "--radius=")))  radius_m = atof(v);
+        else if (strcmp(a, "--expect-empty") == 0) expect_empty = 1;
         else if ((v = tc_arg_val(a, "--near=")))   near_s = v;
         else if ((v = tc_arg_val(a, "--limit=")))  limit = atoi(v);
         else if ((v = tc_arg_val(a, "--repeat="))) repeat = atoi(v);
@@ -87,6 +93,31 @@ int main(int argc, char **argv)
 
     SearchDb *d = search_open(db);
     if (!d) { printf("ASSERT-FAIL    打不开搜索库 %s\n", db); return 1; }
+
+    /* 逆地理编码：独立的一条判据，跑完直接收尾（不与关键词断言混在一起）。
+       --expect-empty 是负向对照：把半径缩到极小 / 点在无数据区时必须返回 1，
+       否则说明"什么都没找到也被当成成功"（判据没有分辨力）。 */
+    if (reverse_s) {
+        double la = 0, lo = 0;
+        if (parse_ll(reverse_s, &la, &lo) != 0) {
+            printf("ASSERT-FAIL    --reverse 应为 lat,lon\n");
+            search_close(d); return 1;
+        }
+        char addr[512];
+        int rc = search_reverse(d, la, lo, radius_m, addr, sizeof(addr));
+        printf("逆地理编码    (%.5f,%.5f) 半径 %.1f m rc=%d → %s\n",
+               la, lo, radius_m, rc, addr[0] ? addr : "<空>");
+        if (expect_empty) {
+            if (rc != 1 || addr[0]) FAIL("负向对照：半径内本应无地址，却得到「%s」\n", addr);
+            else printf("负向对照    半径 %.1f m 内无地址（符合预期，判据有分辨力）\n", radius_m);
+        } else {
+            if (rc != 0 || !addr[0]) FAIL("逆地理编码没合成地址\n");
+        }
+        search_close(d);
+        if (fails) { printf("SEARCH-FAIL  %d 条断言失败\n", fails); return 1; }
+        printf("SEARCH-OK\n");
+        return 0;
+    }
 
     double clat = 39.9, clon = 116.4;
     int have_center = 0;

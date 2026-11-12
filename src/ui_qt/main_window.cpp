@@ -4,6 +4,10 @@
 #include "qt_icon_button.hpp"
 #include "utils/geo.h"    /* sk_sun_is_night：自动昼夜推算 */
 #include "utils/datum.h"   /* 坐标系（大地基准）：枚举与标签 */
+#include "utils/units.h"   /* 单位制：搜索结果/全程里程/覆盖提示的距离文本 */
+/* ★ 分层门禁禁止 ui_qt → route / search：出行方式走 ui/window.h 的
+   app_route_profile_* 门面；History / history_* 由 ui/window.h 转出。 */
+#include <QActionGroup>    /* 单选菜单组：不靠 setChecked 递归同步勾选态 */
 #include "settings/settings.h"  /* settings_set_int：切基准后落盘 */
 #include "download_dialog.h"     /* 下载地图对话框（全球 Geofabrik 列表） */
 #include "i18n/i18n.h"            /* 多语言：i18n_tr / i18n_set_lang / I18nLang */
@@ -1262,6 +1266,84 @@ void MainWindow::buildMenus()
         });
         m_voiceAct = act;
     }
+    /* 出行方式（2026-11-12）：驾车 / 骑行 / 步行。
+     * ★ 用 QActionGroup 管互斥，不要 setChecked 手同步 —— 那会触发 toggled
+     *   递归（本项目踩过 SIGSEGV）。切换只改 App 字段 + 同步已建的 Router，
+     *   不重建 30MB 状态表；下一次算路由 nav_ensure_router 再兜底一次。 */
+    {
+        QMenu *mp = mset->addMenu(trc("出行方式"));
+        QActionGroup *grp = new QActionGroup(this);
+        grp->setExclusive(true);
+        const char *names[3] = { "驾车", "骑行", "步行" };
+        for (int i = 0; i < app_route_profile_count() && i < 3; i++) {
+            QAction *act = mp->addAction(trc(names[i]));
+            act->setCheckable(true);
+            act->setData(i);
+            act->setChecked(app_route_profile_clamp(m_a->route_profile) == i);
+            grp->addAction(act);
+        }
+        connect(grp, &QActionGroup::triggered, this, [this](QAction *act) {
+            int v = app_route_profile_clamp(act->data().toInt());
+            m_a->route_profile = v;
+            router_set_profile(m_a->router, v);   /* router 可为 NULL，内部判空 */
+            settings_set_int(m_a->cfg, "route_profile", v);
+            app_persist_settings(m_a);
+            m_a->need_redraw = 1;
+            /* 已经选好起终点就按新方式重算一条（与途经点面板同一个入口）；
+               没选则只改设置，下一次算路自动生效。 */
+            if (m_a->pick_a.have && m_a->pick_b.have) nav_request(m_a);
+        });
+    }
+    /* 单位制（2026-11-12）：公制 / 英制。所有距离出口读 utils/units 的全局值。 */
+    {
+        QMenu *mu = mset->addMenu(trc("单位制"));
+        QActionGroup *grp = new QActionGroup(this);
+        grp->setExclusive(true);
+        const char *names[2] = { "公制（米 / 公里）", "英制（英尺 / 英里）" };
+        for (int i = 0; i < 2; i++) {
+            QAction *act = mu->addAction(trc(names[i]));
+            act->setCheckable(true);
+            act->setData(i);
+            act->setChecked(m_a->unit_system == i);
+            grp->addAction(act);
+        }
+        connect(grp, &QActionGroup::triggered, this, [this](QAction *act) {
+            int v = act->data().toInt() == UNITS_IMPERIAL ? UNITS_IMPERIAL : UNITS_METRIC;
+            m_a->unit_system = v;
+            units_set_system(v);
+            settings_set_int(m_a->cfg, "unit_system", v);
+            app_persist_settings(m_a);
+            m_a->need_redraw = 1;
+        });
+    }
+    /* 最近地点（2026-11-12）：只列最近 8 条，点一条把视口移过去。
+     * ★ 菜单在构造时按已载入的 history 建好；新点选的地点下次启动可见
+     *   （与语言/坐标系等设置项一致，不做动态重建，避免弹菜单时删自己）。 */
+    {
+        QMenu *mh = mset->addMenu(trc("最近地点"));
+        int n = m_a->history.n < 8 ? m_a->history.n : 8;
+        if (n == 0) {
+            QAction *none = mh->addAction(trc("（暂无）"));
+            none->setEnabled(false);
+        }
+        for (int i = 0; i < n; i++) {
+            char b[256];
+            history_format(&m_a->history, i, b, sizeof(b));
+            QAction *act = mh->addAction(QString::fromUtf8(b));
+            connect(act, &QAction::triggered, this, [this, i]() {
+                if (i >= m_a->history.n) return;
+                m_a->view.lat = m_a->history.v[i].lat;
+                m_a->view.lon = m_a->history.v[i].lon;
+                m_a->need_redraw = 1;
+            });
+        }
+        QAction *clr = mh->addAction(trc("清空历史"));
+        connect(clr, &QAction::triggered, this, [this]() {
+            history_clear(&m_a->history);
+            history_save(&m_a->history);
+            m_a->need_redraw = 1;
+        });
+    }
     /* 语言：在「设置」菜单里选（持久化到 settings.ini 的 lang 键）。
      * 菜单项显示各语言自称（endonym，恒定不变），勾选当前项；新增语言只改
      * i18n.c 的 g_langs 表 + lang/<code>.xml，这里自动列出，无需改 UI。 */
@@ -1428,8 +1510,10 @@ void MainWindow::doSearch(const QString &text)
     for (int i = 0; i < n && i < 8; i++) {
         const SearchHit *h = &m_a->su.hits[i];
         QListWidgetItem *it = new QListWidgetItem(m_hits);
+        const char *u = "km";
+        double v = units_big_parts(h->dist_m, units_get_system(), &u);
         it->setText(QString::fromUtf8(h->name) +
-                    QString::asprintf("   %.1f km", h->dist_m / 1000.0));
+                    QString::asprintf("   %.1f %s", v, u));
         it->setData(Qt::UserRole, i);
         m_hits->addItem(it);
     }
@@ -1455,6 +1539,12 @@ void MainWindow::commitHit(int idx)
      *   一次 doSearch（白查一遍，还会让结果浮层重新弹出）；而且输入框本来就要
      *   收起，文字留在里面没意义。 */
     m_lastPick = QString::fromUtf8(m_a->su.hits[idx].name);
+    /* 最近地点：只记录用户**明确点选**的结果（不是每敲一个字就记一条）。
+       落盘统一在 app_persist_settings，避免每次点击都写文件。 */
+    history_add(&m_a->history, m_a->su.hits[idx].name,
+                m_a->su.hits[idx].lat, m_a->su.hits[idx].lon,
+                m_a->su.hits[idx].kind,
+                (uint64_t)QDateTime::currentSecsSinceEpoch());
     hideSearch();
 }
 
@@ -2544,8 +2634,17 @@ void MainWindow::refreshViaPanel()
     }
     /* 末尾若有路线，显示全程里程（途经点模式只给单方案，全程里程即 rr.total_m）。 */
     if (m_a->have_rr && m_a->rr.n > 1) {
-        QLabel *tot = new QLabel(
-            trc("全程约 %1 km").arg(m_a->rr.total_m / 1000.0, 0, 'f', 1), m_viaRows);
+        /* ★ 公制分支保持原来的 trc key「全程约 %1 km」不动：i18n 按中文串查表，
+           换 key 会让英文译文静默失效。英制另给一个 key。 */
+        QString txt;
+        if (units_get_system() == UNITS_IMPERIAL) {
+            const char *u = "mi";
+            txt = trc("全程约 %1 mi")
+                      .arg(units_big_parts(m_a->rr.total_m, UNITS_IMPERIAL, &u), 0, 'f', 1);
+        } else {
+            txt = trc("全程约 %1 km").arg(m_a->rr.total_m / 1000.0, 0, 'f', 1);
+        }
+        QLabel *tot = new QLabel(txt, m_viaRows);
         tot->setObjectName(QStringLiteral("viatotal"));
         rl->addWidget(tot);
     }
@@ -3009,8 +3108,13 @@ QString MainWindow::nomapPromptTextForTest() const
     QString where = parts.isEmpty() ? QString::fromUtf8("未知区域")
                                     : parts.join(QString::fromUtf8(" · "));
     if (pl.nearest_km > 1.0) {
-        where += QString::fromUtf8("（距最近的省份约 %1 km）")
-                     .arg(pl.nearest_km, 0, 'f', 0);
+        /* 公制保持原文；英制把 km 换成 mi（1 mi = 1609.344 m）。 */
+        if (units_get_system() == UNITS_IMPERIAL)
+            where += QString::fromUtf8("（距最近的省份约 %1 mi）")
+                         .arg(pl.nearest_km * 1000.0 / UNITS_M_PER_MI, 0, 'f', 0);
+        else
+            where += QString::fromUtf8("（距最近的省份约 %1 km）")
+                         .arg(pl.nearest_km, 0, 'f', 0);
     }
 
     QString text = QString::fromUtf8("您已浏览到已下载地图之外（%1, %2）。\n"

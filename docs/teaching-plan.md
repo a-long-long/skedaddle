@@ -67,6 +67,21 @@
 | 16 | 跨平台代码 | Qt 前端与边界（含无边框窗口） | `ui_qt/*` | 渐进式 Qt 化 | `docs/teaching/16_qt.md` + `tutorial/16_qt` |
 | 17 | 跨平台代码 | Android 原生 JNI App：把同一个 C 核心搬进手机 | `android/`, `utils/plat` 的 `__ANDROID__` 分支 | JNI 桥 + 30fps 渲染线程 + 增量更新/OTA | `docs/teaching/17_android.md` + `android/` 工程 + `docs/android.md` |
 
+> **同步补记（2026-11-12，对齐 11-10 分带并行与 11-11 导航五项）**：
+> - 第 7 课两个「完整体，逐字」块按当前源码重贴：`paint_frame`（`window.c:1309-1573`）
+>   与标注白描边的并行实现（`labels.c:605-665`，`label_task` / `label_flush`）；全篇函数行号
+>   回源核验 26 处，新增 §六「源码演进补记」讲清历史案例与当前实现的分界。
+> - 串行 helper `font_draw_halo()` 已于 2026-11-12 **删除**（此前是零调用死代码、编译唯一
+>   `-Wunused-function` 警告源），零警告门禁恢复；讲义不再把它当作执行路径，实际绘制走
+>   `LabelCmd` → `label_flush()` → `label_task()`。删函数让 `labels.c` 行号上移 18 行，
+>   两个逐字块与全篇行号已回源重贴。
+> - [`index.md`](teaching/index.md) 新增「源码演进索引」（新功能 → 真实源码 → 课次），
+>   新增 `scripts/check_teaching_sync.py` 守手工讲义的逐字块与表格行号区间
+>   （与演化链门禁同纪律，未接 `regress.sh`；`--self-test` 三类注入破坏均能让它失败）。
+> - 生成式讲义已同步到 `regress.sh` 926 行 / `main_window.h` 268 行；本轮再新增 17 条
+>   L2/数据链用例（8 自测+负向、3 真实路网 profile、ETA 递增、2 逆地理编码、3 数据链），
+>   **2026-11-12 用 `SKEDADDLE_BUILD_DIR=$PWD/build_rel` 实跑 109/0**，旧「87/0」作废。
+>
 > **对账补记（2026-11-06，补齐最近几轮代码改动 + 讲义块改为源码生成）**：
 > - **新增/扩写三节**：第 7 课 §3.6「标注层 `labels.c`」（缓存纯缩放 bug、区域名分级、白描边 / 字形锐化 / POI 与三关负向对照）；第 16 课 §3.10「无边框窗口」（`FramelessWindowHint`、顶部透明拖动带、几何状态机、退出路径、Wayland 限制）；第 11 课 §3.7「新增判据与讲义也要被验收」。
 > - **逐字块不再手工摘抄**：新增 [`scripts/regen_tutorial_blocks.py`](../scripts/regen_tutorial_blocks.py)，按**方法定义边界**从当前源码生成第 16 课 `main_window.h` 全文 + 4 个 cpp 块（合计 68 个方法，不重不漏）、以及第 11 课内嵌的 `regress.sh` 全文（839 行）。`--check` 可当讲义同步门禁，脚本自带幂等自检。
