@@ -12,20 +12,20 @@
 
 | 文件 | 职责 |
 |---|---|
-| `binfmt.c/h` | `NMBinFile` 自描述格式：magic/版本/字段表/小端定长整型；mmap 打开与结构自检 |
+| `binfmt.c/h` | `NMBinFile` 自描述格式：magic/版本/字段表/小端定长整型；mmap 打开、结构自检、期望 schema 比对（O1）与记录区 SHA-256 摘要（O2，边界校验） |
 | `mapset.c/h` | `MapSrc`/`MapSet`：每省一组 NMBinFile，视口驱动加载/卸载，后台解码线程 |
 | `namepool.c/h` | 每省 `names.bin` 解析结果（路名池） |
 | `coverage.c/h` | `mapset_coverage`/`coverage_locate`：有没有图、定位到省 |
 | `autobuild.c/h` | `autobuild_repair`：源 pbf 还在而产物缺失/损坏时当场重建 |
 | `road_tags.c/h` | `RoadTags` 与 `road_tags_parse`：道路分级与通行属性 |
 
-**自描述头**（`binfmt.h:18-68`）：`NMBIN_MAGIC = "NAVMBIN\x01"`、`NMBIN_VERSION = 3u`（注意：旧文档曾误写成 `\x2`/4u，以源码为准）。`NMBinHeader`（128 字节）与 `NMBinField`（24 字节）完整定义见第三节。
+**自描述头**（`binfmt.h:18-81`）：`NMBIN_MAGIC = "NAVMBIN\x01"`、`NMBIN_VERSION = 3u`（注意：旧文档曾误写成 `\x2`/4u，以源码为准）。`NMBinHeader`（128 字节）与 `NMBinField`（24 字节）完整定义见第三节。
 
 **图集句柄**（`mapset.h:22-104`）：`MapSrc` 含 `nodes/edges/restrictions/lines/areas/polyrefs/tiles/edgelist/lanes/contours` 各一份 `NMBinFile`，及 `bbox[4]`、`dup_of`、`NamePool np`、`SkMutex *dmap_mtx / job_prov / job_done`（后台解码线程字段）等，完整定义见第三节。注意：`lines/areas/polyrefs` 为旧版"整省三件套"的缓冲，自 2026-11-03 起构建不再产出、也不再从此 nmbin 打开（整省 nmbin 读取路径已彻底断根，products 可整体重建）；该字段现由 disp tile 拼接或 PBF 解码的手 malloc 缓冲填充，运行时显示改由 disp tile 拼接（`mapset.c` 的 tile 加载路径）。新数据目录里整省三件套文件不存在。
 
 ## 三、完整实现代码
 
-### 1. 自描述二进制 `NMBinHeader` / `NMBinField`（`binfmt.h:18-98`）
+### 1. 自描述二进制 `NMBinHeader` / `NMBinField`（`binfmt.h:18-106`）
 
 ```c
 #define NMBIN_MAGIC   "NAVMBIN\x01"
@@ -57,6 +57,32 @@
 #define NMBIN_HDR_BYTES  128
 #define NMBIN_FIELD_BYTES 24
 
+/* ---- 内容摘要（O2，2026-11-12）------------------------------------------
+ *
+ * ★ 头是**手工序列化**的（binfmt.c 的 hdr_to_bytes），不是 C struct 的内存
+ *   布局：magic(8)@0 ver(4)@8 kind(4)@12 rec_size(4)@16 rec_count(8)@20
+ *   n_fields(4)@28 flags(4)@32 payload_bytes(8)@36 source(32)@44，
+ *   之后 @76..127 共 52 字节原本全是 0。摘要区就落在这里，不挪动任何
+ *   既有字段 ⇒ 旧读取端按老代码仍能打开新产物。
+ *
+ * ★★ 摘要只覆盖**记录区**（payload），不含头与字段表：否则摘要会自引用，
+ *   且头部元数据（rec_count / flags）在写入时还没定型。写入端在
+ *   nmbin_write_records() 里流式喂给 SHA-256，零额外 IO。
+ *
+ * ★★★ 兼容策略：flags 的 bit0 表示「本文件含摘要」。旧 8 省产物 bit0=0，
+ *   nmbin_check 完全跳过摘要相关判据 —— 不顶 NMBIN_VERSION、不逼重抽。
+ *   全量哈希只在**边界**（下载完成 / 安装 / nmbin_verify 离线工具）做，
+ *   绝不放进加载期：那会强制 mmap 把数 GiB 全部分页读入，破坏按需加载。
+ * ------------------------------------------------------------------------- */
+#define NMBIN_FLAG_DIGEST     0x00000001u
+#define NMBIN_DIGEST_SHA256   1u
+#define NMBIN_DIGEST_VER      1u
+
+/* 手工字节流里的偏移（不要照 sizeof/struct 对齐推算）。 */
+#define NMBIN_OFF_DIGEST      76    /* 32 字节 sha256(payload) */
+#define NMBIN_OFF_DIG_ALGO   108    /* u32，NMBIN_DIGEST_SHA256 */
+#define NMBIN_OFF_DIG_VER    112    /* u32，NMBIN_DIGEST_VER */
+
 /* 字段类型 */
 #define NMT_I32 1
 #define NMT_U32 2
@@ -77,7 +103,11 @@ typedef struct {
     uint32_t flags;
     uint64_t payload_bytes;
     char     source[32];     /* 源文件名（UTF-8，可能截断） */
-    uint8_t  reserved[44];
+    /* 原 reserved[44] 结构化；手工序列化写到 @76，见上面的偏移说明。 */
+    uint8_t  digest[32];     /* sha256(payload)，仅 flags&DIGEST 时有效 */
+    uint32_t digest_algo;    /* NMBIN_DIGEST_SHA256 */
+    uint32_t digest_ver;     /* NMBIN_DIGEST_VER */
+    uint8_t  reserved[4];
 } NMBinHeader;               /* 128 字节 */
 
 typedef struct {
@@ -89,9 +119,10 @@ typedef struct {
 } NMBinField;                /* 24 字节 */
 ```
 
-读端结构（`binfmt.h:90-102`）：
+读端结构（`binfmt.h:145-163`）：
 
 ```c
+/* 读 */
 typedef struct {
     NMBinHeader hdr;
     NMBinField  fields[NMBIN_MAX_FIELDS];
@@ -104,9 +135,15 @@ typedef struct {
 int  nmbin_open(const char *path, NMBinFile *out);   /* 0 成功 */
 void nmbin_close(NMBinFile *f);
 int  nmbin_check(const NMBinFile *f, char *err, size_t err_cap);  /* 结构自检 */
+/* 只跑期望 schema 比对（graph_check 打印、selftest 单项验真用）。
+ * 未登记的 (kind, rec_size) 返回 0 且 err 置空。 */
+int  nmbin_check_schema(const NMBinFile *f, char *err, size_t err_cap);
+/* 边界离线校验：重算 sha256(payload) 与头部摘要比对，见 nmbin_verify 工具。
+ * 返回 0=一致，1=不一致，-1=无摘要/打开失败；不算进加载期热路径。 */
+int  nmbin_verify_digest(const char *path, char *err, size_t err_cap);
 ```
 
-### 2. 小端读写助手与 `bytes_to_hdr`（`binfmt.c:17-97`）
+### 2. 小端读写助手与 `bytes_to_hdr`（`binfmt.c:19-106`）
 
 ```c
 void sk_put_u16(uint8_t *p, uint16_t v)
@@ -142,6 +179,8 @@ uint64_t sk_get_u64(const uint8_t *p)
     return v;
 }
 
+/* ★ 手工序列化：不要改成 memcpy(&hdr)，见 binfmt.h 顶部关于 @20 与
+ * struct 对齐 @24 差异的说明。摘要区落在 @76，既有字段一个都没挪。 */
 static void hdr_to_bytes(const NMBinHeader *h, uint8_t *b)
 {
     memset(b, 0, NMBIN_HDR_BYTES);
@@ -154,6 +193,9 @@ static void hdr_to_bytes(const NMBinHeader *h, uint8_t *b)
     sk_put_u32(b + 32, h->flags);
     sk_put_u64(b + 36, h->payload_bytes);
     memcpy(b + 44, h->source, 32);
+    memcpy(b + NMBIN_OFF_DIGEST, h->digest, 32);
+    sk_put_u32(b + NMBIN_OFF_DIG_ALGO, h->digest_algo);
+    sk_put_u32(b + NMBIN_OFF_DIG_VER,  h->digest_ver);
 }
 
 static void bytes_to_hdr(const uint8_t *b, NMBinHeader *h)
@@ -169,6 +211,9 @@ static void bytes_to_hdr(const uint8_t *b, NMBinHeader *h)
     h->payload_bytes = sk_get_u64(b + 36);
     memcpy(h->source, b + 44, 32);
     h->source[31] = '\0';
+    memcpy(h->digest, b + NMBIN_OFF_DIGEST, 32);
+    h->digest_algo   = sk_get_u32(b + NMBIN_OFF_DIG_ALGO);
+    h->digest_ver    = sk_get_u32(b + NMBIN_OFF_DIG_VER);
 }
 
 static void field_to_bytes(const NMBinField *f, uint8_t *b)
@@ -191,7 +236,7 @@ static void bytes_to_field(const uint8_t *b, NMBinField *f)
 }
 ```
 
-### 3. `nmbin_open` 与 `nmbin_check`（`binfmt.c:177-226`）
+### 3. `nmbin_open` 与 `nmbin_check`（`binfmt.c:361-431`）
 
 `nmbin_open` 用 `sk_mmap_file` 直接映射整个文件，头部校验在 `nmbin_check`：
 
@@ -236,11 +281,32 @@ int nmbin_check(const NMBinFile *f, char *err, size_t err_cap)
     if (f->data_len != f->hdr.payload_bytes)
         ERR("文件实际记录区 %zu 字节，头部声明 %llu 字节",
             f->data_len, (unsigned long long)f->hdr.payload_bytes);
+    if (f->hdr.n_fields > NMBIN_MAX_FIELDS)
+        ERR("n_fields %u 超过上限 %u", f->hdr.n_fields, (uint32_t)NMBIN_MAX_FIELDS);
     for (uint32_t i = 0; i < f->hdr.n_fields; i++) {
         const NMBinField *fd = &f->fields[i];
         if ((uint32_t)fd->offset + fd->width > f->hdr.rec_size)
             ERR("字段 %s 越界（offset %u + width %u > rec_size %u）",
                 fd->name, fd->offset, fd->width, f->hdr.rec_size);
+    }
+
+    /* O1：文件自称的字段表必须与源码编译进去的硬编码 schema 逐项一致。
+     * 只在加载期做一次，不进任何每记录循环。 */
+    {
+        char serr[256];
+        if (nmbin_check_schema(f, serr, sizeof(serr)) != 0) ERR("%s", serr);
+    }
+
+    /* O2：只验摘要区**自洽**，不算哈希。全量哈希属边界动作，
+     * 放在这里会强制 mmap 读满整个文件，破坏按需加载。 */
+    if (f->hdr.flags & NMBIN_FLAG_DIGEST) {
+        if (f->hdr.digest_algo != NMBIN_DIGEST_SHA256)
+            ERR("内容摘要算法 %u 不支持", f->hdr.digest_algo);
+        if (f->hdr.digest_ver != NMBIN_DIGEST_VER)
+            ERR("内容摘要方案版本 %u 不支持", f->hdr.digest_ver);
+        int allzero = 1;
+        for (int i = 0; i < 32; i++) if (f->hdr.digest[i]) { allzero = 0; break; }
+        if (allzero) ERR("声明含内容摘要，但摘要区全 0");
     }
     err[0] = '\0';
     return 0;
@@ -248,7 +314,7 @@ int nmbin_check(const NMBinFile *f, char *err, size_t err_cap)
 }
 ```
 
-写入侧的 `nmbin_create`/`nmbin_add_field`/`nmbin_write_records`/`nmbin_finalize` 实现（含"先写 0 记录数、写完回填"的小技巧）完整如下（`src/map/binfmt.c:98-175`）：
+写入侧的 `nmbin_create`/`nmbin_add_field`/`nmbin_write_records`/`nmbin_finalize` 实现（含"先写 0 记录数、写完回填"的小技巧）完整如下（`src/map/binfmt.c:272-356`）：
 
 ```c
 NMBinWriter *nmbin_create(const char *path, uint32_t kind, uint32_t rec_size,
@@ -266,6 +332,7 @@ NMBinWriter *nmbin_create(const char *path, uint32_t kind, uint32_t rec_size,
     w->hdr.rec_size = rec_size;
     w->hdr.n_fields = 0;
     w->hdr.rec_count = 0;
+    sha256_init(&w->sha);
     if (source_hint) snprintf(w->hdr.source, sizeof(w->hdr.source), "%s", source_hint);
 
     uint8_t hdrb[NMBIN_HDR_BYTES];
@@ -294,6 +361,7 @@ int nmbin_write_records(NMBinWriter *w, const void *recs, uint64_t n)
     if (n == 0) return 0;
     size_t bytes = (size_t)n * w->hdr.rec_size;
     if (fwrite(recs, 1, bytes, w->fp) != bytes) { w->failed = 1; return -1; }
+    sha256_update(&w->sha, recs, bytes);  /* 摘要只覆盖记录区 */
     w->recs_written += n;
     return 0;
 }
@@ -305,6 +373,11 @@ int nmbin_finalize(NMBinWriter *w)
 
     w->hdr.rec_count = w->recs_written;
     w->hdr.payload_bytes = w->recs_written * (uint64_t)w->hdr.rec_size;
+    /* O2：写入完成后定稿摘要。finalize 之后不再允许 write_records。 */
+    sha256_final(&w->sha, w->hdr.digest);
+    w->hdr.flags        |= NMBIN_FLAG_DIGEST;
+    w->hdr.digest_algo   = NMBIN_DIGEST_SHA256;
+    w->hdr.digest_ver    = NMBIN_DIGEST_VER;
 
     if (fseek(w->fp, 0, SEEK_SET) != 0) { fclose(w->fp); free(w); return -1; }
     uint8_t hdrb[NMBIN_HDR_BYTES];
@@ -1631,6 +1704,39 @@ void road_tags_parse(const uint32_t *keys, size_t n_keys,
         out->no_access = 1;
 }
 ```
+
+---
+
+### 附：M1 演进补记（2026-11-12，字段表生效 + 内容摘要）
+
+> 配套 `NMBIN-OPTIMIZATION-PLAN-2026-11-12.md` 的 O1/O2。上面五个逐字块已按
+> 当前源码回源重贴；这里只讲**为什么**多了这些东西，不重复贴代码。
+
+**O1 · 期望 schema（`nmbin_check_schema`）**：`binfmt.h` 开头写的设计动机是
+「丢掉源码也能读」，但实现里 `nmbin_open()` 只把字段表读进 `fields[]`，生产路径
+101 处仍是硬编码 `NF_*`/`EF_*`/`XL2_*` 偏移。于是「把 `edges.bin` 字段表 `class`
+的 offset 从 14 改成 15」仍在 `rec_size=18` 界内、旧 `nmbin_check` 照样 PASS，
+语义却已经错了。现在按 `(kind, rec_size)` 登记写入器实际写入的字段序列（14 种组合），
+加载期逐项比对 name/offset/type/width。★ 未登记组合返回 `NULL` 直接跳过，
+保证历史 v1 布局与未来新 kind 不误伤；★ 只在加载期比一次，**绝不**把按名查找
+放进每条记录的循环——那会撞上「贵的是间接寻址」的实测结论。
+
+**O2 · 内容摘要（`NMBIN_FLAG_DIGEST`）**：头部是手工序列化的，`@76..127` 共
+52 字节原本全 0，现划出 32 字节放 `sha256(记录区)` + 算法/方案版本。写入端在
+`nmbin_write_records()` 里流式喂给 SHA-256（零额外 IO），`nmbin_finalize()` 定稿。
+★★ **全量哈希绝不能放进 `nmbin_check()` 的加载期**：那会强制 mmap 把数 GiB
+产物全部分页读入，破坏 `mapset_set_view` 的按需加载；加载期只验摘要区**自洽**，
+真正重算放在 `nmbin_verify_digest()` 这个边界工具（下载完成 / 安装 / 离线验收）。
+`flags` bit0=0 的旧 8 省产物按「无摘要」跳过，**不顶 `NMBIN_VERSION`、不逼重抽**。
+
+**判据（regress.sh 6 条）**：`SCHEMA-OK`（14 组合夹具 + 8 省真实产物）、
+`SCHEMA-INJECT-CAUGHT`（offset/name/width/missing 四种界内错误必须被拒）、
+`NMBIN-HASH-OK`（FIPS 三条标准向量 + 写入/校验全链）、
+`NMBIN-HASH-INJECT-CAUGHT`（位翻转/半包补齐/截断/错哈希）、
+`NMBIN-LEGACY-OK`（旧产物兼容）、`graph_check --verify-schema` 打印逐项比对。
+负向注入改的都是**被检查的数据**，不是判据条件本身。零回归证据：M1 前
+（从 `HEAD` 独立导出编译）与 M1 后 exe 在 z12/z14/z17 三档出图
+`bmpdiff` 均 **0 / 1024000 像素**，审计计数逐项相同。
 
 ## 四、与其他功能之间的联系
 

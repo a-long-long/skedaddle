@@ -921,6 +921,20 @@ run coverage_selftest   "COVERAGE-SELFTEST-OK"  python3 "$ROOT/scripts/check_pro
 run contour_chain       "CONTOUR-OK"            python3 "$ROOT/scripts/contour_chain_check.py"
 run contour_chain_neg   "CONTOUR-INJECT-CAUGHT" python3 "$ROOT/scripts/contour_chain_check.py" --inject
 
+# ---------------------------------------------------------------------------
+# M1（NMBIN-OPTIMIZATION-PLAN-2026-11-12.md）：字段表一致性 + 内容摘要。
+#   判据走「合成夹具 + 真实产物扫描」，不依赖重抽 8 省；"$GRAPH"/*/ 只匹配目录，
+#   副机仅 beijing 也不会假红。★ 负向注入改的是被检查的数据（字段表 / 文件字节），
+#   不是判据条件本身；★ 全量哈希只在 nmbin_verify 这个边界工具里做，
+#   加载期 nmbin_check 只验头部自洽（否则会破坏按需 mmap）。
+# ---------------------------------------------------------------------------
+run schema_selftest      "SCHEMA-OK"                "$BUILD/skedaddle_nmbin_schema_selftest" "$GRAPH"/*/
+run schema_selftest_neg  "SCHEMA-INJECT-CAUGHT"     "$BUILD/skedaddle_nmbin_schema_selftest" --inject=all
+run nmbin_hash_selftest  "NMBIN-HASH-OK"            "$BUILD/skedaddle_nmbin_verify" --selftest
+run nmbin_hash_neg       "NMBIN-HASH-INJECT-CAUGHT" "$BUILD/skedaddle_nmbin_verify" --selftest --inject=all
+run nmbin_legacy         "NMBIN-LEGACY-OK"          "$BUILD/skedaddle_nmbin_verify" "$GRAPH"/*/
+run graph_schema_dump    "期望 schema"               "$BUILD/skedaddle_graph_check" --verify-schema "$GRAPH/beijing"
+
 echo
 echo "=== 结果: $pass 通过 / $fail 失败   日志与截图: $SHOTS"
 [ "$fail" = 0 ]

@@ -339,3 +339,9 @@ grep -ril 'QNetworkAccessManager\|getaddrinfo' src/               # 仅 download
 - ETA 动态校准按定位只留 `navsim_set_eta_calibrator()` 接口，缺省 NULL 恒等。
 - `settings.ini` 已恢复为 `40.4677234 / 116.614105 / 10.5`；完整回归的日志与截图在
   `/tmp/skedaddle_regress`。
+
+**后续（同日更晚，M1 已落地）**：按 `NMBIN-OPTIMIZATION-PLAN-2026-11-12.md`
+完成 O1（14 种期望 schema 与硬编码常量加载期逐项比对）与 O2（记录区 SHA-256
+摘要 + 边界离线校验），新增 6 条带负向注入的判据，全量回归 **115/0**、零警告、
+z12/z14/z17 出图 bmpdiff 均 0 像素。上面 §10 表里的「109/0」是 M1 之前那一轮的
+实跑数字，属历史事实，不改写。执行细节见计划文档 §8。

@@ -13,7 +13,7 @@
 - ★ Linux(UOS aarch64/Wayland) Release：`source env.sh && cmake -S . -B build_rel -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/home/along/.local/qt5-dev/usr -DQt5_DIR=/home/along/.local/qt5-dev/usr/lib/aarch64-linux-gnu/cmake/Qt5 && cmake --build build_rel -j$(nproc)`；protoc-c 缺库 `export LD_LIBRARY_PATH=/home/along/.local/usr/lib/aarch64-linux-gnu`。`build_release.sh` 仅 Windows。无头 `QT_QPA_PLATFORM=offscreen`；GUI 视图由 `view_*` 定，交互 GUI 不认 `--lat/--lon`（仅离屏认）。
 - ★★★ Windows/MSYS2 编译期 PATH 绝不能放 Qt bin（cc1plus 加载旧 libstdc++ ⇒ 退出码1、stderr 空）；Qt bin 仅运行期 + offscreen。Qt6 DLL `/d/Qt/6.11.2/mingw_64/bin`，`libprotobuf-c-1.dll` 在 ucrt64/bin。`build_launcher.bat`/`cc_retry.sh` 空 stderr + 重试全败 ≠ Defender：真编译错误被吞 ⇒ 绕包装器 `c++ -fsyntax-only` 看真 stderr；LTO 并行链接偶败 `-j1`。
 - ★★ Windows 发布包：`build_release.sh` 的 `rm -rf` 被 safe-delete 拦 ⇒ `cmake --build build_rel --clean-first` + 旧 dist 改名 + `--no-rebuild`（77 文件/102MB）。平台差异只许在 `src/utils/plat.{h,c}`；Qt5/Qt6 用 `QT_VERSION` 条件编译（`QDesktopWidget` Qt6 移除 ⇒ `QScreen`，`1d99c92`）。
-- `regress.sh`：Linux **87/0 是 11-11 旧口径**；11-12 又新增 17 条 L2/数据链用例，**2026-11-12 实跑 109/0**（87 旧口径作废）。★ `SKEDADDLE_BUILD_DIR=$PWD/build_rel` 指新构建（缺省 `build/` 常陈旧 ⇒ 假绿）。编译零警告；改渲染补 `bmpdiff.py 旧 新`；`--ui-test` 须隔离 ini；跑完 commit+push。
+- `regress.sh`：Linux **87/0 是 11-11、109/0 是 11-12 M1 前**的历史口径；11-12 新增 17 条 L2/数据链 + 6 条 NMBIN M1 判据，**最终实跑 115/0**。★ `SKEDADDLE_BUILD_DIR=$PWD/build_rel` 指新构建（缺省 `build/` 常陈旧 ⇒ 假绿）。编译零警告；改渲染补 `bmpdiff.py 旧 新`；`--ui-test` 须隔离 ini；跑完 commit+push。
 - ★ 副机全量 regress：同上变量；运行期 PATH 须含 `dist/skedaddle-release`（缺 ⇒ disp_runtime rc=127）+ Qt bin + `ucrt64/bin`；11-11 口径 67/24（24 条全因缺 7 省数据）。改 `regress.sh` 后必跑 `regen_tutorial_blocks.py`（无 --check）再 `--check`；★ Edit 改讲义翻 CRLF ⇒ --check 假红，生成器再跑一次归一化。
 - ★★ 删文件/删 include 前 grep 该符号/该头全部引用（`window_sdl.c` ⇒ `app_run` 悬空；只 grep `label_` 漏 `NamePool`）。C 注释别写 `src/x/*.cpp`/`products/*.db`（`/*` ⇒ -Wcomment ⇒ -Werror）；C++ include C 头须 `extern "C"`。
 
@@ -84,3 +84,14 @@
 - 讲义：删 `font_draw_halo` 18 行 ⇒ labels.c 996→978、行号 -18；window.c 因新增设置项
   paint_frame 1291→1309 / app_render_to_buf 1557→1575。两个逐字块与全篇 51 处行号回源重贴，
   `check_teaching_sync.py` 改守「已删除」口径。
+
+## 11-12 NMBIN M1 细则（精要版只留指针，推导与判据在此）
+- 评估报告 `NMBIN-OPTIMIZATION-2026-11-12.md` 的结论：帧时间/算路没有空间；体积有空间但不该改 NMBIN 本体；**格式健壮性与增量更新地基是真缺口且零性能代价**。施工计划与执行记录见 `NMBIN-OPTIMIZATION-PLAN-2026-11-12.md` §8。
+- **O1**：期望 schema 表按 `(kind, rec_size)` 索引共 14 项，逐条复制 `graph_build.c` / `gen_contours.c` / `pbfmap.c` 的 `nmbin_add_field()` 序列（**不是从 `*_BYTES` 推导**）。回源发现两个陷阱：①`NMBIN_KIND_LANES` 同时用于 `lanes.bin`(rs=4, `lane_sid`) 与 `lane_names.bin`(rs=1, `pool`)；②`restrictions.bin` 的 `RF_PREV_EDGE`(@16) 根本没写进字段表。8 省真实产物反推出的 schema 与源码交叉验证完全一致。`nmbin_check_schema()` 只在加载期比一次，未登记组合返回 NULL 跳过（历史 v1 / 未来新 kind 不误伤）；**绝不**把按名查找放进每记录循环。
+- **O2**：`src/utils/sha256.{h,c}` 最小流式 SHA-256（FIPS 180-4，零依赖，`extern "C"`），三条标准向量先与 Python `hashlib` 独立核对再写进判据。`NMBinHeader.reserved[44]` → `digest[32]+digest_algo+digest_ver+reserved[4]`（struct 仍 128 B）；手工字节流 `digest@76 / algo@108 / ver@112`，既有字段一个没挪（`rec_count` 仍在 `@20`）。`NMBinWriter` 带 `Sha256`，`nmbin_write_records()` 流式喂、`nmbin_finalize()` 定稿并置 `flags |= NMBIN_FLAG_DIGEST`。`nmbin_check()` **只验摘要区自洽**（算法/版本/非全 0），不做哈希；`nmbin_verify_digest()` 在边界重算。
+- ★★ 报告 §5.2 原写「加载期多一次全文件哈希，冷启动一次性」，回源后**纠偏**：`mapset_set_view` 是按需 mmap + LRU，加载期算全文件哈希会强制读满 3.89 GiB ⇒ 全量校验只放边界。这是 M1 零帧时间影响的保证，也是计划与实际实现唯一偏离处。
+- **兼容性**：`flags` bit0=0 的旧 8 省产物跳过摘要、如实统计为 legacy（实测 sealed=0 / legacy=64 / mismatch=0）；**不顶 `NMBIN_VERSION`、不逼 8 省重抽**。回源确认 `autobuild.c:prov_check()` 只看源 PBF 指纹 + `binfmt_version`，摘要字节变化不触发重转。
+- **判据 6 条**：`SCHEMA-OK`（14 组合夹具 + 64 个真实文件）、`SCHEMA-INJECT-CAUGHT`（offset/name/width/missing 四种界内错误）、`NMBIN-HASH-OK`（3 条 FIPS 向量含百万字节流式 + 写入/校验全链）、`NMBIN-HASH-INJECT-CAUGHT`（flip/pad/truncate/wronghash）、`NMBIN-LEGACY-OK`、`graph_check --verify-schema`。负向模式先验证干净夹具 PASS 再验证注入 FAIL（双向判据）。
+- **零回归实测**：`git archive HEAD`（M1 前 `b021e9f`）导出到 `/tmp` 独立编译基线 exe，与 M1 后 exe 用同一份隔离 ini（`day_night=0`）与绝对路径 `--graph`，z12/z14/z17 三档 `bmpdiff.py` 均 **0 / 1024000 像素**，审计计数 `diff` 无差异。★ 这比用 `build/skedaddle`（11-03 陈旧二进制）对拍可靠，且两个 exe 的 `../fonts` 都指向各自仓库根的同一份 git 归档字体。
+- **讲义**：`docs/teaching/03_binary.md` 的 5 个 C 逐字块按当前源码区间（`binfmt.h:18-106 / 145-163`、`binfmt.c:19-106 / 361-431 / 272-356`）回源重贴并逐字校验一致，6 处行号引用更新，加 M1 演进补记；`docs/teaching/11_gates.md` 由 `regen_tutorial_blocks.py` 重生成（regress.sh 926→940 行）。
+- ★ 坑：C 注释里 `NF_*/EF_*/XL2_*` 的 `*/` 提前闭合块注释 ⇒ 首轮编译 1641 error。统一改写成「NF、EF、XL2 系列」，并用脚本扫全部改动文件 `*/` 后是否还有残留代码。

@@ -28,10 +28,39 @@ static void dump_fields(const NMBinFile *f)
                f->fields[i].type, f->fields[i].width);
 }
 
+/* O1：把「文件自称的字段表」与「源码编译进去的期望 schema」逐项打印出来，
+ * 便于人工核对；不带的参数时行为与旧版完全一致（sync_maps.sh 依赖这一点）。 */
+static void dump_schema_check(const NMBinFile *f, const char *name)
+{
+    char err[256];
+    const NMBinSchema *s = nmbin_expected_schema(f->hdr.kind, f->hdr.rec_size);
+    printf("== %s 期望 schema ==\n", name);
+    if (!s) { printf("  (kind=%u rec_size=%u 未登记，跳过比对)\n",
+                     f->hdr.kind, f->hdr.rec_size); return; }
+    int rc = nmbin_check_schema(f, err, sizeof(err));
+    printf("  登记 %u 字段，比对 %s%s\n", s->n_fields,
+           rc == 0 ? "一致" : "不一致：", rc == 0 ? "" : err);
+    for (uint32_t i = 0; i < s->n_fields && i < f->hdr.n_fields; i++) {
+        const NMBinField *e = &s->fields[i];
+        const NMBinField *g = &f->fields[i];
+        printf("    %-12s 期望 off=%2u t=%u w=%u | 文件 off=%2u t=%u w=%u  %s\n",
+               e->name, e->offset, e->type, e->width,
+               g->offset, g->type, g->width,
+               (strcmp(g->name, e->name) == 0 && g->offset == e->offset &&
+                g->type == e->type && g->width == e->width) ? "一致" : "不一致");
+    }
+}
+
 int main(int argc, char **argv)
 {
-    if (argc < 2) { fprintf(stderr, "用法: %s <目录>\n", argv[0]); return 2; }
-    const char *dir = argv[1];
+    const char *dir = NULL;
+    int verify_schema = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--verify-schema") == 0) verify_schema = 1;
+        else if (!dir) dir = argv[i];
+        else { fprintf(stderr, "用法: %s [--verify-schema] <目录>\n", argv[0]); return 2; }
+    }
+    if (!dir) { fprintf(stderr, "用法: %s [--verify-schema] <目录>\n", argv[0]); return 2; }
     char p[4096];
     NMBinFile nf, ef, rf;
 
@@ -51,6 +80,12 @@ int main(int argc, char **argv)
             printf("ASSERT-FAIL  %s: %s\n", name, err); fail = 1; } \
     } while (0)
     SELFTEST(nf, "nodes.bin"); SELFTEST(ef, "edges.bin"); SELFTEST(rf, "restrictions.bin");
+
+    if (verify_schema) {
+        dump_schema_check(&nf, "nodes.bin");
+        dump_schema_check(&ef, "edges.bin");
+        dump_schema_check(&rf, "restrictions.bin");
+    }
 
     uint64_t nn = nf.hdr.rec_count, ne = ef.hdr.rec_count;
     CHECK(nf.hdr.rec_size == SK_NODE_BYTES, "nodes rec_size=%u 应为 %d",

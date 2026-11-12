@@ -255,6 +255,16 @@ if(WIN32)
     target_compile_options(skedaddle_units PUBLIC -Wno-format)
 endif()
 
+# 叶子库 4c：skedaddle_sha256（src/utils/sha256.c，纯叶子，零内部依赖）
+#   2026-11-12 O2：NMBIN 内容摘要。放 utils 叶子层，map/binfmt.c 可 include
+#   而不形成反向依赖；Android JNI 也能直接用，不引入 OpenSSL 运行时。
+add_library(skedaddle_sha256 STATIC src/utils/sha256.c)
+target_include_directories(skedaddle_sha256 PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(skedaddle_sha256 PUBLIC ${SK_LEAF_SYS_LIBS})
+if(WIN32)
+    target_compile_options(skedaddle_sha256 PUBLIC -Wno-format)
+endif()
+
 # 叶子库 4：skedaddle_mem（src/utils/mem.c，依赖 plat）
 add_library(skedaddle_mem STATIC src/utils/mem.c)
 target_include_directories(skedaddle_mem PUBLIC ${CMAKE_SOURCE_DIR}/src)
@@ -292,6 +302,7 @@ target_include_directories(skedaddle_map PUBLIC
     ${PROTOC_INCLUDE_DIRS} ${PROTOC_REAL_INCLUDE_DIR})
 target_link_libraries(skedaddle_map PUBLIC
     skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem
+    skedaddle_sha256
     ${SQLITE3_LIBRARIES})
 
 # skedaddle_search：仅叶子库（search→utils）。search.c 真正调用 sqlite3_*，
@@ -314,7 +325,7 @@ target_include_directories(skedaddle_route PUBLIC
     ${PROTOC_INCLUDE_DIRS} ${PROTOC_REAL_INCLUDE_DIR})
 target_link_libraries(skedaddle_route PUBLIC
     skedaddle_map skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem
-    skedaddle_units)
+    skedaddle_units skedaddle_sha256)
 
 # skedaddle_render：map + route + search + settings + 叶子库
 #   ★ 2026-10-28 R2 起 render 零 ui 依赖（chrome/audit 已移到 ui），
@@ -379,7 +390,7 @@ endif()
 #     新引入的符号级环**悄悄补上** ⇒ 边界形同虚设。R3 的分层门禁负责防回流。
 target_link_libraries(skedaddle_core PUBLIC
     skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui skedaddle_settings
-    skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem skedaddle_units
+    skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem skedaddle_units skedaddle_sha256
     ${ZLIB_LIBRARIES} ${SQLITE3_LIBRARIES} ${PROTOC_LIB} ${SKEDADDLE_CORE_SYS_LIBS})
 
 
@@ -456,7 +467,7 @@ endif()
 function(sk_link_tool tgt)
     target_link_libraries(${tgt} PRIVATE
         ${ARGN}
-        skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem skedaddle_units
+        skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem skedaddle_units skedaddle_sha256
         ${ZLIB_LIBRARIES} ${SQLITE3_LIBRARIES} ${PROTOC_LIB} ${SK_LEAF_SYS_LIBS})
 endfunction()
 
@@ -577,7 +588,7 @@ if(QT)
     # （skedaddle_core 仅含 core_anchor.c，未聚合子模块，且 CMake 会把它
     #  展开成 -lskedaddle_core 而缺 -L build，导致链接失败）。
     target_link_libraries(skedaddle PRIVATE
-        skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem skedaddle_units
+        skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem skedaddle_units skedaddle_sha256
         skedaddle_map skedaddle_search skedaddle_route skedaddle_render skedaddle_ui skedaddle_settings skedaddle_i18n
         ${ZLIB_LIBRARIES} ${SQLITE3_LIBRARIES} ${PROTOC_LIB} ${SK_LEAF_SYS_LIBS}
         ${QT}::Widgets ${QT}::Network Threads::Threads)
@@ -726,6 +737,14 @@ sk_link_tool(skedaddle_voice_e2e skedaddle_map skedaddle_route skedaddle_search 
 #   与 cost.c:edge_cost，而不是在自测里复刻一份实现（复刻会让接线坏掉时判据假绿）。
 add_executable(skedaddle_units_selftest tools/units_selftest.c)
 sk_link_tool(skedaddle_units_selftest skedaddle_route skedaddle_map skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem)
+
+# O1：期望 schema 一致性判据（含界内 offset 错位的负向注入）
+add_executable(skedaddle_nmbin_schema_selftest tools/nmbin_schema_selftest.c)
+sk_link_tool(skedaddle_nmbin_schema_selftest skedaddle_map)
+
+# O2：内容摘要全链判据（标准向量 + 翻字节/截断/换哈希负向注入）
+add_executable(skedaddle_nmbin_verify tools/nmbin_verify.c)
+sk_link_tool(skedaddle_nmbin_verify skedaddle_map)
 add_executable(skedaddle_profile_selftest tools/profile_selftest.c)
 sk_link_tool(skedaddle_profile_selftest skedaddle_route skedaddle_map skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem)
 # 地址层（结构化拆分 + 逆地理编码）与最近地点历史：同样各带负向注入模式。

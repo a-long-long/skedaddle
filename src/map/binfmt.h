@@ -44,6 +44,32 @@
 #define NMBIN_HDR_BYTES  128
 #define NMBIN_FIELD_BYTES 24
 
+/* ---- 内容摘要（O2，2026-11-12）------------------------------------------
+ *
+ * ★ 头是**手工序列化**的（binfmt.c 的 hdr_to_bytes），不是 C struct 的内存
+ *   布局：magic(8)@0 ver(4)@8 kind(4)@12 rec_size(4)@16 rec_count(8)@20
+ *   n_fields(4)@28 flags(4)@32 payload_bytes(8)@36 source(32)@44，
+ *   之后 @76..127 共 52 字节原本全是 0。摘要区就落在这里，不挪动任何
+ *   既有字段 ⇒ 旧读取端按老代码仍能打开新产物。
+ *
+ * ★★ 摘要只覆盖**记录区**（payload），不含头与字段表：否则摘要会自引用，
+ *   且头部元数据（rec_count / flags）在写入时还没定型。写入端在
+ *   nmbin_write_records() 里流式喂给 SHA-256，零额外 IO。
+ *
+ * ★★★ 兼容策略：flags 的 bit0 表示「本文件含摘要」。旧 8 省产物 bit0=0，
+ *   nmbin_check 完全跳过摘要相关判据 —— 不顶 NMBIN_VERSION、不逼重抽。
+ *   全量哈希只在**边界**（下载完成 / 安装 / nmbin_verify 离线工具）做，
+ *   绝不放进加载期：那会强制 mmap 把数 GiB 全部分页读入，破坏按需加载。
+ * ------------------------------------------------------------------------- */
+#define NMBIN_FLAG_DIGEST     0x00000001u
+#define NMBIN_DIGEST_SHA256   1u
+#define NMBIN_DIGEST_VER      1u
+
+/* 手工字节流里的偏移（不要照 sizeof/struct 对齐推算）。 */
+#define NMBIN_OFF_DIGEST      76    /* 32 字节 sha256(payload) */
+#define NMBIN_OFF_DIG_ALGO   108    /* u32，NMBIN_DIGEST_SHA256 */
+#define NMBIN_OFF_DIG_VER    112    /* u32，NMBIN_DIGEST_VER */
+
 /* 字段类型 */
 #define NMT_I32 1
 #define NMT_U32 2
@@ -64,7 +90,11 @@ typedef struct {
     uint32_t flags;
     uint64_t payload_bytes;
     char     source[32];     /* 源文件名（UTF-8，可能截断） */
-    uint8_t  reserved[44];
+    /* 原 reserved[44] 结构化；手工序列化写到 @76，见上面的偏移说明。 */
+    uint8_t  digest[32];     /* sha256(payload)，仅 flags&DIGEST 时有效 */
+    uint32_t digest_algo;    /* NMBIN_DIGEST_SHA256 */
+    uint32_t digest_ver;     /* NMBIN_DIGEST_VER */
+    uint8_t  reserved[4];
 } NMBinHeader;               /* 128 字节 */
 
 typedef struct {
@@ -74,6 +104,31 @@ typedef struct {
     uint8_t  width;
     uint8_t  reserved[4];
 } NMBinField;                /* 24 字节 */
+
+/* ---- 期望 schema（O1，2026-11-12）---------------------------------------
+ *
+ * 字段表原先只写不读：生产路径 101 处全是硬编码 NF、EF、XL2 系列偏移，
+ * 于是「把 class 的 offset 从 14 改成 15」这种界内语义错误能静默通过
+ * nmbin_check。这里按 (kind, rec_size) 登记**写入器实际写入的字段序列**，
+ * 让加载期就能发现「文件自称的布局」与「源码编译进去的常量」不一致。
+ *
+ * ★ 精确复制各写入器 nmbin_add_field() 的调用序列，不是从 *_BYTES 常量
+ *   推导 —— 例如 restrictions.bin 的 prev_edge 槽（@16）就没有登记字段。
+ * ★ 未登记的 (kind, rec_size) 组合返回 NULL ⇒ 跳过比对，保证新增 kind
+ *   或历史 v1 布局不会被误判为损坏。
+ * ★ 只在加载期做一次逐字段比对；**绝不**把按名查找放进每条记录的循环。
+ * ------------------------------------------------------------------------- */
+typedef struct {
+    uint32_t kind;
+    uint32_t rec_size;
+    uint32_t n_fields;
+    const NMBinField *fields;   /* 只比 name/offset/type/width 四项 */
+} NMBinSchema;
+
+const NMBinSchema *nmbin_expected_schema(uint32_t kind, uint32_t rec_size);
+/* 遍历全部登记项（判据工具用，避免手抄一份容易漂移的列表）。 */
+uint32_t nmbin_schema_count(void);
+const NMBinSchema *nmbin_schema_at(uint32_t i);   /* 越界返回 NULL */
 
 /* 写：先 nmbin_begin() 写头（记录数先写 0），写完记录后 nmbin_finalize()
  * 回填记录数与 payload 长度。这样不需要事先知道条数。 */
@@ -100,6 +155,12 @@ typedef struct {
 int  nmbin_open(const char *path, NMBinFile *out);   /* 0 成功 */
 void nmbin_close(NMBinFile *f);
 int  nmbin_check(const NMBinFile *f, char *err, size_t err_cap);  /* 结构自检 */
+/* 只跑期望 schema 比对（graph_check 打印、selftest 单项验真用）。
+ * 未登记的 (kind, rec_size) 返回 0 且 err 置空。 */
+int  nmbin_check_schema(const NMBinFile *f, char *err, size_t err_cap);
+/* 边界离线校验：重算 sha256(payload) 与头部摘要比对，见 nmbin_verify 工具。
+ * 返回 0=一致，1=不一致，-1=无摘要/打开失败；不算进加载期热路径。 */
+int  nmbin_verify_digest(const char *path, char *err, size_t err_cap);
 
 /* 小端读写助手 */
 void     sk_put_u16(uint8_t *p, uint16_t v);
