@@ -198,6 +198,20 @@ while IFS= read -r f; do
     rm -f "$tmp.check.log" || printf '        注意：%s 删不掉，请手工清理\n' "$tmp.check.log"
     fi
 
+    # ---- M2 / O3：4 KiB 块哈希 sidecar -----------------------------------
+    # 位置很关键：必须在 skedaddle_graph_check 通过**之后**（失败产物不生成块表），
+    # 且在 mv 就位**之前**（块表要和新产物一起原子切换）。
+    # 块表只是校验清单 / 差分索引，运行时加载路径一个字节都不读它。
+    if ! python3 "$ROOT/scripts/gen_chunks.py" "$tmp" > "$tmp.chunks.log" 2>&1; then
+        printf '[FAIL ] %-12s chunks.json 生成失败，已丢弃本次产物\n' "$name"
+        tail -3 "$tmp.chunks.log" | sed 's/^/        /'
+        rm -f "$tmp.chunks.log"
+        drop_tmp "$tmp"
+        n_fail=$((n_fail+1))
+        continue
+    fi
+    rm -f "$tmp.chunks.log" || printf '        注意：%s 删不掉，请手工清理\n' "$tmp.chunks.log"
+
     # ---- 切换：先给旧产物让位，再把新产物搬到正式位置 ----
     # 顺序很关键，绝不能写成 `rm -rf "$dir"; mv "$tmp" "$dir"`：
     # 一旦删除被外部安全策略拦下（目录还在），mv 会把新产物塞进旧目录里，

@@ -34,9 +34,11 @@
 | `cpp/CMakeLists.txt` | 复用仓库 `src/` 全部核心源码：`skedaddle_core STATIC` → `skedaddle SHARED` | `CMakeLists.txt:114-127` |
 | `src/utils/plat.c` | Android 目录注入 + TTS/exe/temp/config/font 平台分支 | `plat.c:1205-1244`（详见第 15 课 3.5） |
 | `java/.../Prefs.java` | `SharedPreferences` 配置中枢：服务器地址 / 自动更新开关 / 每日检查时间戳 / 三个显示开关统一存取 | `Prefs.java:13-75`（键名 16-21） |
-| `java/.../Downloader.java` | HTTP 下载 + zip 解包（地图包与 APK 共用） | `Downloader.java:20,34,80` |
-| `java/.../Manifests.java` | 解析 `map/manifest.json` 与 `app/update.json` | `Manifests.java:18,34,63` |
-| `java/.../DownloadActivity.java` | 地图增量更新：`.skversion` 比对、下载/更新/本地 zip 安装 | `DownloadActivity.java:41,48,267` |
+| `java/.../Downloader.java` | HTTP 下载（M2 起带整包 sha256 校验）+ zip 解包（地图包与 APK 共用） | `Downloader.java:22,36,45,100` |
+| `java/.../Manifests.java` | 解析省图 / App 清单（M2 起含 `sha256`、`chunksUrl`、`chunks.json`） | `Manifests.java:21,24,45,89,126` |
+| `java/.../ChunkDelta.java` + `ChunkUpdater.java` | 4 KiB 块差分：plan / HTTP Range / 按偏移重组 / 整包哈希提交 | `ChunkDelta.java:25,91,107,168`；`ChunkUpdater.java:24,48` |
+| `java/.../DownloadActivity.java` | 地图增量更新：`.skversion` 比对、哈希校验、差分优先回落整包、本地 zip 安装 | `DownloadActivity.java:42,49,181,197,299` |
+| `scripts/gen_chunks.py` + `scripts/java_gate.sh` | 块表生成/离线校验 + 主机 Java 编译与夹具门禁 | 见 `docs/android.md` §11.1.1–11.1.2 |
 | `java/.../UpdateChecker.java` + `SettingsActivity.java` | App OTA：比 `versionCode` → 下 APK → `FileProvider` 调系统安装器 | `UpdateChecker.java:33,43,52`；`SettingsActivity.java:25,76` |
 | `AndroidManifest.xml` | `INTERNET`、`REQUEST_INSTALL_PACKAGES`、`FileProvider` | `AndroidManifest.xml:5,8,44-52` |
 
@@ -198,13 +200,22 @@ Android 工程里没有任何 `src/` 的拷贝。编成单个 STATIC 再链进 S
 
 | | 地图数据 | App 自身 |
 |---|---|---|
-| 入口 | `DownloadActivity.java:41` | `SettingsActivity.java:76` → `UpdateChecker.java:33` |
-| 清单 | `<serverBase>/map/manifest.json`（`Manifests.java:34`） | `<serverBase>/app/update.json`（`Manifests.java:63`） |
-| 版本判据 | 省目录里的 `.skversion` 文件（`DownloadActivity.java:48`） | `versionCode`（当前 `build.gradle:28` = 1） |
-| 落盘 | 解包到 `graph/<id>/` 并写 `.skversion`（`:267`） | 下 APK 到 `updates/`，经 `FileProvider` 调系统安装器（`UpdateChecker.java:52`） |
+| 入口 | `DownloadActivity.java:42` | `SettingsActivity.java:76` → `UpdateChecker.java:33` |
+| 清单 | `<serverBase>/map/manifest.json`（`Manifests.java:45`） | `<serverBase>/app/update.json`（`Manifests.java:126`） |
+| 版本判据 | 省目录里的 `.skversion` 文件（`DownloadActivity.java:49`） | `versionCode`（当前 `build.gradle:28` = 1） |
+| 落盘 | 解包到 `graph/<id>/` 并写 `.skversion`（`DownloadActivity.java:299`） | 下 APK 到 `updates/`，经 `FileProvider` 调系统安装器（`UpdateChecker.java:52`） |
 | 权限 | `INTERNET` | `REQUEST_INSTALL_PACKAGES`（`AndroidManifest.xml:8`） |
 
-两者共用 `Downloader.download` + `Downloader.extractZip`（`Downloader.java:34,80`）。
+两者共用 `Downloader.download` / `downloadVerified` + `Downloader.extractZip`
+（`Downloader.java:36,45,100`）。
+
+**M2 补记（2026-11-12）**：省图清单多了 `sha256`（zip 整包哈希）、`chunksUrl`、
+`chunkSize` 三个可选字段 —— 缺了照样能解析，只是「未校验 / 走整包」，这是老服务端的
+兼容路径，不能用「能解析」当「校验生效」的证据。有 `chunksUrl` 时走
+`ChunkUpdater.update()`：拉远端 `chunks.json` → 与本地块表逐块比对 → 只对变化块发
+`Range` → 重组后整包 sha256 通过才提交，失败保留旧图并回落整包。判据由
+`scripts/java_gate.sh` 在主机用 JDK 17 实跑（改 1 块只传 4096 B、全等传 0 B、
+写错一块被拒）；★ 真机下载链路仍未验证，格式细节见 `docs/android.md` §11.1。
 两者还共用 `Prefs`（`server_base` / `auto_update` / `last_update_check` 等键，见 `Prefs.java:16-21`）：服务器地址留空就不发网络请求，勾选自动更新才每日最多查一次——配置集中在一处，新增开关不必散落到各 `Activity`。
 判据用的是**纯十进制整数版本号**，不是时间戳也不是文件大小——与第 11 课「布尔判据用
 展开数/里程/像素，时间只兜底」同一条纪律。发新版必须递增 `versionCode`，否则设备永远

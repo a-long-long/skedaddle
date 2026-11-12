@@ -935,6 +935,39 @@ run nmbin_hash_neg       "NMBIN-HASH-INJECT-CAUGHT" "$BUILD/skedaddle_nmbin_veri
 run nmbin_legacy         "NMBIN-LEGACY-OK"          "$BUILD/skedaddle_nmbin_verify" "$GRAPH"/*/
 run graph_schema_dump    "期望 schema"               "$BUILD/skedaddle_graph_check" --verify-schema "$GRAPH/beijing"
 
+# ---------------------------------------------------------------------------
+# M2（NMBIN-OPTIMIZATION-PLAN-2026-11-12.md §2 O3/O4/O5）：块表 + 整包哈希 + 按块差分。
+#   ★ 全部走**合成夹具**，不依赖 8 省真实产物 / 新省 PBF / Android SDK（副机也能跑）。
+#   ★ 上方的 coverage_selftest 已被 M2 扩成三条负向：缺 disp.idx、缺块表、删块条目。
+#   ★ 负向注入改的是「被检查的数据」（块表条目 / 文件字节 / 清单哈希 / HTTP 块内容），
+#     不是把判据条件改成常量。java_gate.sh 一次编译运行，下面按标记逐条记账。
+# ---------------------------------------------------------------------------
+run chunks_selftest      "CHUNKS-OK"                 python3 "$ROOT/scripts/gen_chunks.py" --self-test
+run chunks_negative      "CHUNKS-INJECT-CAUGHT"      python3 "$ROOT/scripts/gen_chunks.py" --inject=all
+
+m2_java_log="$SHOTS/m2_java.log"
+bash "$ROOT/scripts/java_gate.sh" > "$m2_java_log" 2>&1
+m2_java_rc=$?
+m2_bad=$(grep -cE "ASSERT-FAIL" "$m2_java_log")
+for spec in "java_compile:JAVA-COMPILE-OK" \
+            "java_wire:ACTIVITY-WIRE-OK" \
+            "java_manifest:MANIFEST-OK" \
+            "java_manifest_neg:MANIFEST-INJECT-CAUGHT" \
+            "java_delta:DELTA-OK" \
+            "java_delta_zero:DELTA-ZERO-OK" \
+            "java_delta_neg:DELTA-INJECT-CAUGHT" \
+            "java_m2_all:M2-JAVA-OK"; do
+    m2_name=${spec%%:*}; m2_want=${spec#*:}
+    if [ "$m2_java_rc" = 0 ] && [ "$m2_bad" = 0 ] && grep -q -- "$m2_want" "$m2_java_log"; then
+        pass=$((pass + 1)); printf '%-28s OK   (%s)\n' "$m2_name" "$m2_want"
+    else
+        fail=$((fail + 1))
+        printf '%-28s FAIL rc=%s 期望[%s] FAIL行数=%s\n' \
+            "$m2_name" "$m2_java_rc" "$m2_want" "$m2_bad"
+        tail -n 6 "$m2_java_log" | sed 's/^/      | /'
+    fi
+done
+
 echo
 echo "=== 结果: $pass 通过 / $fail 失败   日志与截图: $SHOTS"
 [ "$fail" = 0 ]

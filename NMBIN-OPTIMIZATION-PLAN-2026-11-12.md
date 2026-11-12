@@ -198,3 +198,86 @@ M1 可单独交付，不必等后面阶段。
 - 现有 8 省产物**仍是旧格式**（无摘要）；摘要只在新写入/`sync_maps.sh` 下次重建时自然带上。
 - O1 走的是「轻量路线」：只校验字段表与硬编码 schema 一致，**没有**做 O7 的按名解析与 per-kind 版本；`nmbin_check` 的新比对只在加载期做一次，没有进每记录循环。
 - O3 的 4 KiB 块哈希、O4 的 Android manifest 哈希、O5 的差分下载**尚未开始**；`nmbin_verify_digest()` 已为它们准备好整包摘要地基。
+  → 2026-11-12 同日已由 M2 完成，见 §9。
+
+---
+
+## 9. M2 执行记录（2026-11-12，O3 + O4 + O5 已落地）
+
+> 本节是**施工结果**，不改写 §2 的原始任务卡片。所有数字为本机 UOS aarch64
+> / `build_rel` Release / JDK 17 实跑，不是估算。
+
+### 9.1 改动清单
+
+| 文件 | 内容 |
+|---|---|
+| `scripts/gen_chunks.py`（新） | O3 生成端 + 离线全量校验端：`chunks.json` 记每文件全哈希 / 逐 4 KiB 块哈希 / 记录区哈希 / 头内 O2 摘要；`--self-test` 与 `--inject=all` 合成夹具跑 5 类负向注入；`--verify <dir>` 逐块重算 |
+| `scripts/sync_maps.sh` | 在 `skedaddle_graph_check` 通过**之后**、`mv` 就位**之前**生成块表；生成失败即丢弃本次产物（`n_fail++`） |
+| `scripts/check_province_coverage.py` | 第 5 条不变量「块表齐全」；`--self-test` 从 1 类扩到 3 类负向（缺 `disp.idx` / 缺块表 / 删块条目）；与生成端共用 `data_files()` / `expected_chunk_count()` |
+| `android/.../ChunkDelta.java`（新） | 纯 JDK 内核：`plan()` / `apply()` / `verifyAndCommit()` / `HttpRangeSource` / `sha256Hex()` |
+| `android/.../ChunkUpdater.java`（新） | 纯 JDK 编排：远端表 vs 本地表 → 变化块发 Range → 重组到 `.new` → 全部整包哈希通过才提交 |
+| `android/.../Manifests.java` | `ProvinceEntry` 增 `sha256` / `chunksUrl` / `chunkSize` + `hasDigest()/hasChunks()`；新增 `ChunkTable`/`ChunkFile` 与 `parseChunks()` |
+| `android/.../Downloader.java` | `downloadVerified()` 边下边算 SHA-256，错哈希删 `.part` 半包并拒绝落盘；旧 `download()` 委托它（`expected=null` ⇒ 未校验但行为不变） |
+| `android/.../DownloadActivity.java` | `Row` 三字段；`absoluteUrl()` 统一拼接；差分优先、失败回落整包；整包走哈希校验 |
+| `android/tests/`（新） | `org.json` / `android.util.Log` 测试替身 + `M2JavaTest`（本地 `HttpServer` 记录 Range 头与传输字节） |
+| `scripts/java_gate.sh`（新） | javac 编译 8 个源文件 + `DownloadActivity` 接线静态检查 + 运行夹具 |
+| `scripts/regress.sh` | 940 → 973 行，新增 10 条 M2 判据（2 条 Python + 8 个 Java 标记逐条记账，一次编译运行） |
+| `docs/android.md` / `docs/teaching/17_android.md` / `11_gates.md` | §11 清单格式、块表格式、差分流程与边界；Java 行号回源重贴；逐字块由生成器重生成 |
+| `README.md` / 本文件 §9 / 日志 / MEMORY | 口径统一到 125/0 与 M2 边界 |
+
+### 9.2 关键实现决策（都是回源后才定的）
+
+- ★★ **口径纠偏（计划原文有误）**：§2 O3 写「整包哈希与 O2 摘要一致」，回源 M1 实现
+  发现 O2 是 `sha256(记录区 @512, payload_bytes)`，**不是全文件哈希**。M2 把三个
+  口径分开记：清单 `sha256`（省 zip 包）、块表 `sha256`（单个数据文件全文件）、
+  `record_sha256` / `nmbin_digest`（O2 记录区）。生成端对 sealed 产物强制
+  `nmbin_digest == record_sha256`，否则拒绝生成块表；`--verify` 再交叉核对一次。
+- ★ **判据测真实实现**：O5 核心放进纯 JDK 类，主机用 `javac` + 临时 `HttpServer`
+  端到端实测。**Range 请求数与传输字节由服务端侧记录**，不是客户端自报数；
+  `DownloadActivity` 依赖 androidx 不在主机编译范围，只做 4 个接线串的静态检查，
+  并如实标注（不宣称真机通过）。
+- ★ **回落优先**：本地无块表 / 服务端不返回 206 / 远端新增文件 / 重组整包哈希不符
+  ⇒ 删 `.new` 半包、保留旧图、回落整包 zip。老服务端缺 `sha256`/`chunksUrl`
+  仍可解析，只是「未校验 / 整包」。
+- ★ **三个不同的「整包」**：清单哈希对 zip、差分重组对每个数据文件、O2 对 NMBIN
+  记录区；任何一处拿错口径都会假绿，故文档与夹具都逐项点名。
+- ★ **块表体积实测**：8 省 22673 文件 / 1030293 块，`chunks.json` 合计 **71 MB**
+  （北京 5.2 MB）。「改 1 块只传 4 KiB」说的是数据块，首次拉清单仍要几 MB
+  ⇒ 服务端必须开 gzip + HTTP 缓存（ETag/304），否则清单开销抵消差分收益。
+  **M2 只交付机制闭环与可测判据，不宣称净流量收益**；M3 可评估二进制/分片块表。
+- ★ 提交阶段是逐文件 `rename`、非目录级原子：中途 IO 失败时本地块表仍是旧的，
+  下次差分会因整包 sha256 不符抛错并回落整包，**不会静默加载混合版本**。
+
+### 9.3 验收（全部实跑）
+
+- `cmake --build build_rel --clean-first -j$(nproc)` → **rc=0 / warning 0 / error 0**。
+- `SKEDADDLE_BUILD_DIR=$PWD/build_rel ./scripts/regress.sh` → **125 通过 / 0 失败**
+  （115 + 10）；10 条新判据全绿：`CHUNKS-OK`、`CHUNKS-INJECT-CAUGHT`、
+  `JAVA-COMPILE-OK`、`ACTIVITY-WIRE-OK`、`MANIFEST-OK`、`MANIFEST-INJECT-CAUGHT`、
+  `DELTA-OK`、`DELTA-ZERO-OK`、`DELTA-INJECT-CAUGHT`、`M2-JAVA-OK`。
+- **真实产物**：`gen_chunks.py --all` 生成 8 省块表（22673 文件 / 1030293 块 / 71 MB）；
+  `--verify products/graph/*/` → `CHUNKS-VERIFY-OK` 8 省逐块重算一致；
+  `check_province_coverage.py` 正常模式 → `COVERAGE-OK`（place 463319 行）。
+- **Java 夹具**：8 个源文件零错误编译；改 1 块只发 1 个 `Range: bytes=4096-8191`
+  且传 4096 B；全等 0 块 / 0 B / 0 请求；服务端返回脏块时整包 sha256 拒绝提交、
+  旧文件与旧块表原样保留；错清单哈希拒绝安装并删 `.part` 半包；缺哈希老条目仍可安装。
+- **全套门禁绿**：`regen_tutorial_blocks.py` 重生成 + `--check` 幂等、
+  `check_teaching_sync.py`、`check_tutorial_tracks.py`、`regen_mini_chain.py --check`、
+  `check_mini_chain.py`、`check_doc_numbers.sh`、`check_layers.sh --self-test`、
+  `check_province_coverage.py --self-test`、`contour_chain_check.py ±`、`git diff --check`。
+- 完整回归写脏 `settings.ini` 后已恢复 `40.4677234 / 116.614105 / 10.5`。
+- ★ **零回归口径**：M2 **未改** `src/`、`CMakeLists.txt` 与任何 C 渲染/算路路径，
+  像素与展开数类判据在 125/0 中全绿；因此没有另做 M1 式的 A/B 出图对拍
+  （C 二进制无变更，做了也只是重复 M1 的结论）。
+
+### 9.4 边界 / 留给 M3
+
+- 现有 8 省仍是 M1 之前的旧格式（`flags=0` 无 O2 摘要）：块表已补生成，但
+  `nmbin_digest` 为空；下次 `sync_maps.sh` 重抽才带摘要（M1 边界延续）。
+- **Android 真机未验证**：主机只有 JDK 17 + 测试替身；`DownloadActivity` 不在
+  javac 门禁内；服务端需支持 `206 Partial Content`。GPS / 离线 TTS 仍未闭环。
+- O6（压缩容器）与 O7（按名解析 / per-kind 版本）未开始；M3 应先量清单传输成本
+  与用户态解压冷启动耗时，再决定要不要做。
+- 块表是 JSON 文本且按省整表发布；若将来按文件分片或改二进制，需同步
+  `gen_chunks.py` / `check_province_coverage.py` / `Manifests.parseChunks` /
+  `ChunkUpdater` 四处，并给旧格式留 `version` 兼容位。

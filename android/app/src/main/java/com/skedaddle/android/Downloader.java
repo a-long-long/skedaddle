@@ -10,6 +10,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -32,6 +34,16 @@ public final class Downloader {
 
     /** 下载 url 到 dest（先写 .part，成功才改名）。total 未知时回调 -1。 */
     public void download(String url, File dest, Progress p) throws IOException {
+        downloadVerified(url, dest, null, p);   // 老路径：无清单哈希 ⇒ 未校验但行为不变
+    }
+
+    /**
+     * M2 / O4：下载完先算整包 sha256，与清单 expectedSha256 一致才落盘。
+     * expectedSha256 为空 = 老服务端（允许安装，返回 false 标记「未校验」）。
+     * ★ 错哈希必须删掉 .part 半包并抛异常，绝不 rename 到 dest。
+     */
+    public boolean downloadVerified(String url, File dest, String expectedSha256, Progress p)
+            throws IOException {
         mCancelled = false;
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setRequestMethod("GET");
@@ -47,6 +59,13 @@ public final class Downloader {
         File parent = dest.getParentFile();
         if (parent != null) parent.mkdirs();
         File part = new File(dest.getParentFile(), dest.getName() + ".part");
+        MessageDigest md;
+        try {
+            md = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            c.disconnect();
+            throw new IOException(e);
+        }
         try (InputStream in = c.getInputStream();
              OutputStream os = new FileOutputStream(part)) {
             byte[] b = new byte[BUF];
@@ -59,18 +78,19 @@ public final class Downloader {
                     throw new IOException("cancelled");
                 }
                 os.write(b, 0, n);
+                md.update(b, 0, n);          // 边下边算，零额外 IO
                 read += n;
                 if (p != null) p.on(read, total, false);
             }
         } finally {
             c.disconnect();
         }
-        if (!part.renameTo(dest)) {
-            part.delete();
-            throw new IOException("rename failed: " + dest);
-        }
+        boolean verified = ChunkDelta.verifyAndCommit(
+                part, dest, expectedSha256, ChunkDelta.hex(md.digest()));
         if (p != null) p.on(dest.length(), total, true);
-        Log.i(TAG, "downloaded " + dest.getAbsolutePath() + " (" + dest.length() + "B)");
+        Log.i(TAG, "downloaded " + dest.getAbsolutePath() + " (" + dest.length()
+                + "B, " + (verified ? "sha256 verified" : "unverified/legacy") + ")");
+        return verified;
     }
 
     /**

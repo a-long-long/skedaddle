@@ -287,6 +287,11 @@ shaanxi(陕西), shandong, henan, liaoning。
 - **视觉/样式**：顶底栏是简易浮层，未做 Material 精细布局；浮层透明度等桌面端特性未接。
 - **真机验证待做**：ARM64 Linux（§5.1）与 x86_64 Windows（§5.2）都已编出 so + APK，
   Java/JNI 语法、符号链接与签名全通过，但**两者都没有在真机上跑过** init/渲染/算路。
+- **M2 增量更新同样只在主机夹具验证**：`ChunkDelta` / `ChunkUpdater` /
+  `Downloader.downloadVerified` 由 `scripts/java_gate.sh`（JDK 17 + `org.json` 测试替身）
+  编译并跑通拉取 / 校验 / 差分 / 负向注入；`DownloadActivity` 依赖 androidx 不在主机
+  编译范围（只做接线静态检查）。**真机上的下载 → 校验 → 解包/重组链路未验证**，
+  且按块差分要求服务端返回 `206 Partial Content`。
 - **minSdk 26**：仅 Android 8.0+，故图标用 XML 自适应（无需打包 PNG）。
 - **无地图只引导、不自动下载**：`server_base` 默认为空，没有配置服务器就无从下载；
   未配置时只能「从本地文件安装」选 zip 或 `adb push` 推入图集（见 §6.1）。
@@ -353,25 +358,71 @@ setShowFlags / shutdown`。对照 `src/ui_qt/main_window.cpp:996-1200` 的菜单
   否则列出内置省、仅支持“从本地文件安装”。
 - 扫描本地 `graph/` 子目录，读取 `<省>/.skversion` 得到已装版本（无文件=未知版本）。
 - 每行显示状态：未安装 / 已装 vX / 可更新 → vY，并提供 下载 / 更新 / 重新下载 按钮。
-- 远程下载：`<serverBase>` + 清单 `url` → 解包到 `graph/<id>/` 并写 `.skversion`。
+- 远程下载：`<serverBase>` + 清单 `url` → **先验整包 sha256 再解包**到 `graph/<id>/` 并写 `.skversion`。
+- 有 `chunksUrl` 时先试**按块差分**（见 11.1.2），失败一律回落整包，旧图不动。
 - 本地安装：`ACTION_OPEN_DOCUMENT` 选 zip（顶层即 `<id>/…`）→ 解包到 `graph/` 并对新目录写 `.skversion`。
 
-**省图清单格式**（`map/manifest.json`）：
+**省图清单格式**（`map/manifest.json`，2026-11-12 M2 扩展）：
 
 ```json
 {
-  "updated": "2026-11-04",
+  "updated": "2026-11-12",
   "provinces": [
-    {"id": "beijing", "name": "北京", "version": 3, "size": 12345678,
-     "url": "/map/beijing.zip"},
+    {"id": "beijing", "name": "北京", "version": 4, "size": 12345678,
+     "url": "/map/beijing.zip",
+     "sha256": "<64 位 hex：beijing.zip 全文件 SHA-256>",
+     "chunksUrl": "/map/beijing/chunks.json", "chunkSize": 4096},
     {"id": "shaanxi", "name": "陕西", "version": 1, "size": 9876543,
      "url": "https://cdn.example.com/map/shaanxi.zip"}
   ]
 }
 ```
 
-- `url` 可为相对（`serverBase` 拼接）或完整 http(s)。
-- `version` 仅用于判断“可更新”（> 已装版本）；`size` 仅展示。
+- `url` 可为相对（`serverBase` 拼接）或完整 http(s)；`version` 仅判断“可更新”；`size` 仅展示。
+- `sha256`：**zip 整包**的全文件 SHA-256（不是某个 `.bin`、也不是 O2 记录区摘要）。
+  下载完由 `Downloader.downloadVerified()` 边下边算，不符即抛异常、**删掉 `.part` 半包并拒绝安装**。
+- 三个哈希口径不要串台：`sha256`（清单，zip 包）、`chunks.json` 里的 `sha256`（单个数据文件全文件）、
+  `nmbin_digest` / `record_sha256`（NMBIN 头里的 O2 记录区摘要）。
+- `chunksUrl` 指向该省的 `chunks.json`；`chunkSize` 缺省 4096。
+- **向后兼容**：缺 `sha256` / `chunksUrl` 的老服务端仍可解析，前者标记“未校验”、后者走整包下载。
+
+### 11.1.1 块表 `chunks.json`（构建端生成）
+
+`scripts/sync_maps.sh` 在 `skedaddle_graph_check` 通过之后，对省目录里每个数据文件
+（`.bin` / `disp.idx` / `t_*` 瓦片）按 4 KiB 切块，生成 `products/graph/<省>/chunks.json`：
+
+```json
+{"version":1,"chunk_size":4096,"algo":"sha256","files":{
+  "nodes.bin":{"size":123456,"sha256":"<全文件>","chunks":["<第0块>","<第1块>"],
+               "record_sha256":"<记录区>","nmbin_digest":"<头 @76 的 O2 摘要或空>"}
+}}
+```
+
+- 校验：`python3 scripts/gen_chunks.py --verify products/graph/beijing`（逐块重算 +
+  全文件哈希 + O2 头内摘要交叉核对）；`--self-test` 用合成夹具跑 5 类负向注入。
+- 块表是**清单**，不是新格式：运行时加载路径一个字节都不读它。
+- 旧 8 省是 M1 之前的产物（`flags=0` 无 O2 摘要），`nmbin_digest` 为空字符串；
+  表里的 `record_sha256` 仍会重算，但不会去比头内摘要。
+
+### 11.1.2 按块差分（O5）
+
+`ChunkUpdater` 拉远端 `chunks.json` → 读本地 `chunks.json` → `ChunkDelta.plan()` 逐块比对 →
+只对哈希变化的块发 HTTP `Range` → 按偏移重组到 `.new` → **整包 sha256 通过后才提交**。
+服务端必须支持 `206 Partial Content`（nginx / 对象存储默认支持）；不支持、本地没块表、
+或远端新增了文件，都会回落整包下载。
+
+- 判据（主机 `scripts/java_gate.sh` 实测）：改 1 块只发 1 个 `Range: bytes=4096-8191`、
+  传 4096 B；全等传 0 块 / 0 B；重组时写错一块被整包 sha256 抓到，旧图与旧块表原样保留。
+- ★ 块表体积不是零：8 省合计约 **71 MB**（北京 5.2 MB；103 万块 × 64 位 hex）。
+  「改 1 块只传 4 KiB」说的是**数据块**，首次拉清单仍要几 MB ⇒ 服务端务必开
+  gzip + HTTP 缓存（ETag / 304），否则清单开销会抵消差分收益；M3 可评估二进制或
+  按文件分片的块表。计划阶段不宣称净流量收益，只交付机制闭环与可测判据。
+- ★ 提交阶段是**逐文件 rename**、不是目录级原子切换：万一提交中途 IO 失败，
+  本地块表仍是旧的，下次差分会因整包 sha256 不符而抛错并回落整包，
+  **不会静默加载混合版本**；远端删掉的文件不在本地清理（只留残余，不影响加载）。
+- ★ 边界：主机夹具用 JDK 17 + `org.json` / `android.util.Log` 测试替身编译，
+  `DownloadActivity` 依赖 androidx 不在主机编译范围（只做接线静态检查）；
+  **Android 真机下载 / 安装 / 差分链路未验证**。
 
 ### 11.2 App 自更新（OTA）
 
@@ -402,9 +453,15 @@ setShowFlags / shutdown`。对照 `src/ui_qt/main_window.cpp:996-1200` 的菜单
 ```
 <serverBase>/
   map/manifest.json
-  map/<省>.zip          # 顶层为 <省>/…（与 products/graph/<省> 一致）
+  map/<省>.zip                 # 顶层为 <省>/…（与 products/graph/<省> 一致）
+  map/<省>/chunks.json         # 可选：有它才走按块差分（从产物目录原样发布）
+  map/<省>/<数据文件>           # 可选：与 chunks.json 同目录，供 HTTP Range 取块
   app/update.json
   app/skedaddle-<ver>.apk
 ```
 
-`serverBase` 在 App 内“设置”填写（持久化到 `Prefs`）；留空则只用本地安装、无 OTA。
+- 整包模式的 `sha256` 用 `sha256sum map/<省>.zip` 填进清单；差分模式的 `chunks.json`
+  由 `./scripts/sync_maps.sh` 生成（或 `python3 scripts/gen_chunks.py <省目录>` 补生成），
+  发布前先跑 `--verify`。
+- 静态服务需允许 `Range` 请求并返回 206；否则客户端自动回落整包，功能不受影响。
+- `serverBase` 在 App 内“设置”填写（持久化到 `Prefs`）；留空则只用本地安装、无 OTA。

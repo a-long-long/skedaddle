@@ -6,6 +6,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.ListView;
@@ -143,6 +144,7 @@ public class DownloadActivity extends AppCompatActivity {
                 Row r = new Row();
                 r.id = e.id; r.name = e.name; r.remoteVersion = e.version;
                 r.url = e.url; r.localVersion = localV;
+                r.sha256 = e.sha256; r.chunksUrl = e.chunksUrl; r.chunkSize = e.chunkSize;
                 mRows.add(r);
             }
             // 内置省里没有出现在远程的（服务器没配或拉失败）
@@ -175,11 +177,16 @@ public class DownloadActivity extends AppCompatActivity {
     // ------------------------------------------------------------------
     // 行操作：下载 / 更新 / 重下
     // ------------------------------------------------------------------
+    /** 清单里的相对路径按 serverBase 补全；完整 http(s) 原样返回。 */
+    private String absoluteUrl(String u) {
+        if (u == null || u.isEmpty()) return "";
+        if (u.startsWith("http")) return u;
+        return mPrefs.getServerBase() + (u.startsWith("/") ? "" : "/") + u;
+    }
+
     private void onRowAction(Row r) {
         if (r.url != null && !r.url.isEmpty()) {
-            String full = r.url.startsWith("http") ? r.url
-                    : (mPrefs.getServerBase() + (r.url.startsWith("/") ? "" : "/") + r.url);
-            downloadProvince(r, full);
+            downloadProvince(r, absoluteUrl(r.url));
         } else {
             // 无服务器/无 url：引导本地安装
             Toast.makeText(this, R.string.download_from_server_first, Toast.LENGTH_LONG).show();
@@ -197,21 +204,46 @@ public class DownloadActivity extends AppCompatActivity {
 
         new Thread(() -> {
             try {
-                new Downloader().download(url, zip, (read, total, done) -> mUi.post(() -> {
-                    if (total > 0) {
-                        int pct = (int) (read * 100 / total);
-                        dlg.setProgress(pct);
-                        mProgressText.setText(getString(R.string.download_progress,
-                                read / 1024, total / 1024));
-                    } else {
-                        mProgressText.setText(getString(R.string.download_progress, read / 1024, 0));
+                // M2 / O5：清单给了 chunksUrl 就先试按块差分；失败一律回落整包，
+                // 保留旧图不动（本地无块表 / 服务端不支持 206 / 新增文件）。
+                String chunks = absoluteUrl(r.chunksUrl);
+                if (!chunks.isEmpty()) {
+                    try {
+                        File dir = new File(mGraphDir, r.id);
+                        ChunkUpdater upd = new ChunkUpdater(dir, chunks, u -> httpGet(u));
+                        ChunkUpdater.Result res = upd.update();
+                        writeVersion(dir, r.remoteVersion);
+                        final String note = getString(R.string.download_done, r.name)
+                                + "（差分 " + res.changedBlocks + " 块 / " + res.bytes + " B）";
+                        mUi.post(() -> {
+                            dlg.dismiss();
+                            Toast.makeText(this, note, Toast.LENGTH_LONG).show();
+                            refresh();
+                        });
+                        return;
+                    } catch (Exception de) {
+                        Log.w("skedaddle.Download", "差分失败，回落整包: " + de.getMessage());
                     }
-                }));
+                }
+                // M2 / O4：整包下载后先验 sha256 再解包；清单没哈希时与老服务端行为一致。
+                boolean verified = new Downloader().downloadVerified(url, zip, r.sha256,
+                        (read, total, done) -> mUi.post(() -> {
+                            if (total > 0) {
+                                int pct = (int) (read * 100 / total);
+                                dlg.setProgress(pct);
+                                mProgressText.setText(getString(R.string.download_progress,
+                                        read / 1024, total / 1024));
+                            } else {
+                                mProgressText.setText(getString(R.string.download_progress,
+                                        read / 1024, 0));
+                            }
+                        }));
                 applyZip(r.id, zip, r.remoteVersion);
+                final String note = getString(R.string.download_done, r.name)
+                        + (verified ? "（sha256 已校验）" : "（清单无哈希，未校验）");
                 mUi.post(() -> {
                     dlg.dismiss();
-                    Toast.makeText(this, getString(R.string.download_done, r.name),
-                            Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, note, Toast.LENGTH_LONG).show();
                     refresh();
                 });
             } catch (Exception e) {
@@ -307,7 +339,7 @@ public class DownloadActivity extends AppCompatActivity {
         return getString(R.string.map_action_install);
     }
 
-    private String httpGet(String url) throws Exception {
+    private String httpGet(String url) throws java.io.IOException {
         java.net.HttpURLConnection c =
                 (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
         c.setRequestMethod("GET");
@@ -328,6 +360,9 @@ public class DownloadActivity extends AppCompatActivity {
         String id, name, url;
         long remoteVersion; // 0=无远程
         long localVersion;  // 0=未装, -1=已装未知
+        String sha256 = "";      // M2 / O4 整包哈希
+        String chunksUrl = "";   // M2 / O5 块表 URL
+        long chunkSize = 4096;
     }
 
     private class RowAdapter extends ArrayAdapter<Row> {
