@@ -16,7 +16,7 @@
     python3 scripts/check_teaching_sync.py --self-test   # 3 类注入破坏，证明门禁能失败
 
 ★ 与 check_tutorial_tracks.py / check_mini_chain.py 同纪律：**不接 regress.sh**，
-  保当前 115/0 口径与副机行为。源码一改导致区间平移时本脚本会红，
+  保当前 125/0 口径与副机行为。源码一改导致区间平移时本脚本会红，
   这正是提醒「回源重贴讲义」的信号，不要直接改数字了事。
 """
 from __future__ import annotations

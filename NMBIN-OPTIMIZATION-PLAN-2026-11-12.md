@@ -137,7 +137,7 @@ M1 可单独交付，不必等后面阶段。
 ## 5. 全局验收与固定动作（每个阶段都要过）
 
 1. `cmake --build build_rel --clean-first -j$(nproc)` → **rc=0 / warning 0 / error 0**；新增工具走 `sk_link_tool()`，不越 `check_layers.sh` 分层。
-2. `SKEDADDLE_BUILD_DIR="$PWD/build_rel" ./scripts/regress.sh` → 当前基线 **115/0**（M1 后）；每加一条判据记新总数，旧数字作废。
+2. `SKEDADDLE_BUILD_DIR="$PWD/build_rel" ./scripts/regress.sh` → 当前基线 **125/0**（M2 后；115/0 是 M1 后的历史口径）；每加一条判据记新总数，旧数字作废。
 3. 改过 `scripts/regress.sh` ⇒ 跑 `python3 scripts/regen_tutorial_blocks.py`（无 `--check`）再 `--check`；动 `binfmt.h` ⇒ 回源同步 `docs/teaching/03_binary.md`（讲二进制格式那一课）。
 4. `bash scripts/check_layers.sh --self-test`、`check_teaching_sync.py`、`regen_mini_chain.py --check`、`check_doc_numbers.sh` 全绿。
 5. 完整 regress 会写脏 `view_*` ⇒ 跑前备份 `~/.config/skedaddle/settings.ini`、跑完恢复（`40.4677234 / 116.614105 / 10.5`）。
@@ -187,7 +187,7 @@ M1 可单独交付，不必等后面阶段。
 ### 8.3 验收（全部实跑）
 
 - `cmake --build build_rel --clean-first -j$(nproc)` → **rc=0 / warning 0 / error 0**。
-- `SKEDADDLE_BUILD_DIR=$PWD/build_rel ./scripts/regress.sh` → **115 通过 / 0 失败**（109 + 6）；6 条新判据全绿。
+- `SKEDADDLE_BUILD_DIR=$PWD/build_rel ./scripts/regress.sh` → **115 通过 / 0 失败**（109 + 6；M1 当时口径，M2 后为 125/0）；6 条新判据全绿。
 - 8 省真实产物：`SCHEMA-OK` 扫 64 个 NMBIN 文件全 PASS；`NMBIN-LEGACY-OK` 统计 sealed=0 / legacy=64 / mismatch=0。
 - **零回归对拍**：从 `HEAD`（M1 前的 `b021e9f`）`git archive` 导出到临时目录独立编译基线 exe，与 M1 后 exe 用同一份隔离 ini（`day_night=0`）、同一份 `--graph` 在 z12/z14/z17 三档出图，`bmpdiff.py` 均 **0 / 1024000 像素**，审计计数逐项 `diff` 无差异。
 - 全套门禁绿：`regen_tutorial_blocks.py --check`、`check_teaching_sync.py ±`、`check_tutorial_tracks.py`、`regen_mini_chain.py --check`、`check_mini_chain.py`、`check_doc_numbers.sh`、`check_layers.sh --self-test`、`check_province_coverage.py ±`、`contour_chain_check.py ±`、`git diff --check`。
