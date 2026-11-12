@@ -127,11 +127,12 @@ endif()
 # ---------------------------------------------------------------------------
 # 核心库 + 阶段 1 叶子库（ARCH_ASSESSMENT.md §4，字面补全拆分）
 #   src/utils 内的 4 个模块拆成独立 STATIC 库：
-#     skedaddle_plat / skedaddle_geo / skedaddle_strpool（纯叶子，零内部依赖）
-#     skedaddle_mem（仅依赖 skedaddle_plat：mem → plat）
-#   加 skedaddle_pbf（src/pbf/*）共 5 个叶子库，全部链进 skedaddle_core 的 PUBLIC
-#   接口；24 个 exe 继续只链 skedaddle_core（本阶段不改它们的
-#   target_link_libraries）。依赖：mem → plat；其余零内部依赖，拆库零破环风险。
+#     skedaddle_plat / skedaddle_strpool（纯叶子，零内部依赖）
+#     skedaddle_geo（唯一下探：datum → i18n，见下） skedaddle_mem（仅依赖 skedaddle_plat：mem → plat）
+#   加 skedaddle_pbf（src/pbf/*）与 skedaddle_i18n（src/i18n/*，纯叶子）共 6 个叶子库，
+#   全部链进 skedaddle_core 的 PUBLIC 接口；24 个 exe 继续只链 skedaddle_core
+#   （本阶段不改它们的 target_link_libraries）。
+#   依赖：i18n 纯叶子；mem → plat；geo → i18n；其余零内部依赖，拆库零破环风险。
 # ---------------------------------------------------------------------------
 set(PBF_SRCS
     src/pbf/pbf_stream.c
@@ -225,7 +226,9 @@ if(WIN32)
     target_compile_options(skedaddle_plat PUBLIC -Wno-format)
 endif()
 
-# 叶子库 2：skedaddle_geo（src/utils/geo.c + datum.c，纯叶子）
+# 叶子库 2：skedaddle_geo（src/utils/geo.c + datum.c）
+#   ★ 唯一下探：datum.c 用 i18n_tr 本地化基准名 ⇒ 依赖 skedaddle_i18n（纯叶子），
+#     不构成环；分层门禁 scripts/check_layers.sh 已按真实方向钉住 utils → i18n。
 add_library(skedaddle_geo STATIC src/utils/geo.c src/utils/datum.c)
 target_include_directories(skedaddle_geo PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(skedaddle_geo PUBLIC ${SK_LEAF_SYS_LIBS} skedaddle_i18n)
@@ -561,6 +564,9 @@ if(QT)
         src/ui_qt/qt_main.cpp
         src/ui_qt/map_canvas.cpp
         src/ui_qt/qt_font.cpp
+# 无头 UI 自检（--ui-test）：runUiSelfTest 从 main_window.cpp 拆出（2026-11-12），
+# 只被 --ui-test 路径调用；共享 trc() 收进 qt_trc.h。
+        src/ui_qt/main_window_uitest.cpp
 # 离屏渲染：src/ui/offscreen_shot.c（offscreen_shot_main，零 SDL，纯内存缓冲 +
 # 内建 24 位 BMP 写出）。该通道作为 skedaddle --shot-offscreen 的单一可信源。
 # #88 后 map_shot 壳已删除，regress 直接吃 skedaddle --shot-offscreen

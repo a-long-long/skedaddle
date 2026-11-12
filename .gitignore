@@ -39,6 +39,12 @@ docs/shots/
 *.a
 *.so
 *.d
+# Android Studio / NDK 构建缓存（gradle 生成，含 CMakeCache/ninja 产物）
+android/.cxx/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
 
 # ===== 编辑器 / 系统 =====
 .vscode/

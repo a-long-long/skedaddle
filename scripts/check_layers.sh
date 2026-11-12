@@ -85,15 +85,17 @@ say_result() { printf '%s\n' "$*"; }
 # 允许的依赖方向（from 模块 → 允许依赖的模块集合，空格分隔）
 #
 # 层级（自下而上）：
-#   utils    叶子（平台抽象 / 几何 / 内存 / 字符串池），零内部依赖
+#   i18n     叶子（多语言查表），零内部依赖
+#   utils    叶子（平台抽象 / 几何 / 内存 / 字符串池），唯一下探：datum → i18n
+#            （大地基准名的本地化文案；geo 库因此 PUBLIC 链 skedaddle_i18n）
 #   pbf      叶子（PBF 解析），零内部依赖
 #   map      → pbf, utils
 #   route    → map, utils
 #   search   → utils
 #   settings → utils
 #   render   → map, route, search, settings, utils   （纯光栅层，零 ui 依赖）
-#   ui       → map, render, route, search, settings, utils
-#   ui_qt    → map, render, settings, ui, utils
+#   ui       → map, render, route, search, settings, utils, i18n
+#   ui_qt    → map, render, settings, ui, utils, i18n
 #
 # ★ 同层依赖允许（render→render、ui→ui）：那是模块内部拆分，不是层级倒置。
 # ★ 刻意**不**允许的（就是本门禁要守的）：
@@ -102,15 +104,16 @@ say_result() { printf '%s\n' "$*"; }
 #     route → render / ui / ui_qt
 #     search→ map / render / route / ui / ui_qt
 # ---------------------------------------------------------------------------
+export SK_ALLOWED_i18n="i18n"
 export SK_ALLOWED_map="map pbf utils"
 export SK_ALLOWED_pbf="pbf"
 export SK_ALLOWED_route="route map utils"
 export SK_ALLOWED_search="search utils"
 export SK_ALLOWED_settings="settings utils"
 export SK_ALLOWED_render="render map route search settings utils"
-export SK_ALLOWED_ui="ui map render route search settings utils"
-export SK_ALLOWED_ui_qt="ui_qt map render settings ui utils"
-export SK_ALLOWED_utils="utils"
+export SK_ALLOWED_ui="ui map render route search settings utils i18n"
+export SK_ALLOWED_ui_qt="ui_qt map render settings ui utils i18n"
+export SK_ALLOWED_utils="utils i18n"
 
 PY=$(command -v python3 || command -v python)
 if [ -z "$PY" ]; then
@@ -127,7 +130,7 @@ if not os.path.isdir(src):
     print("ERR: no src dir", file=sys.stderr)
     sys.exit(2)
 
-MODS = ["utils", "pbf", "map", "route", "search", "settings", "render", "ui", "ui_qt"]
+MODS = ["i18n", "utils", "pbf", "map", "route", "search", "settings", "render", "ui", "ui_qt"]
 
 def strip_comments(s):
     s = re.sub(r'/\*.*?\*/', '', s, flags=re.S)
