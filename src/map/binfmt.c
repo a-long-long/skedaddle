@@ -237,6 +237,13 @@ const NMBinSchema *nmbin_expected_schema(uint32_t kind, uint32_t rec_size)
     return NULL;
 }
 
+/* P3/4.1：期望表是文件字段表的**前缀子集**，尾部允许追加描述性字段。
+ * ★★ 只放宽「同一 version 内追加字段」这一层；nmbin_check() 里
+ *    f->hdr.version != NMBIN_VERSION 的全局硬校验绝不删 —— 它守的是
+ *    「记录布局整体换版必须重抽」，两者粒度不同。
+ * ★★ 原有分辨力一条不能丢：删必需字段 / 改必需字段的 name、offset、
+ *    type、width 仍必须拒；追加字段本身仍受 nmbin_check() 的越界检查。
+ * 错误串点名具体字段与 kind/rec_size，便于定位是哪一份产物不对。 */
 int nmbin_check_schema(const NMBinFile *f, char *err, size_t err_cap)
 {
 #define SERR(...) do { snprintf(err, err_cap, __VA_ARGS__); return -1; } while (0)
@@ -245,25 +252,38 @@ int nmbin_check_schema(const NMBinFile *f, char *err, size_t err_cap)
     if (!s) { err[0] = '\0'; return 0; }        /* 未登记：保持旧行为 */
     if (f->hdr.n_fields > NMBIN_MAX_FIELDS)
         SERR("n_fields %u 超过上限 %u", f->hdr.n_fields, (uint32_t)NMBIN_MAX_FIELDS);
-    if (f->hdr.n_fields != s->n_fields)
-        SERR("字段数不符：文件 %u，期望 %u（kind=%u rec_size=%u）",
-             f->hdr.n_fields, s->n_fields, f->hdr.kind, f->hdr.rec_size);
+    if (f->hdr.n_fields < s->n_fields)
+        SERR("字段数不足：文件 %u，期望至少 %u（kind=%u rec_size=%u，"
+             "缺字段「%s」）",
+             f->hdr.n_fields, s->n_fields, f->hdr.kind, f->hdr.rec_size,
+             s->fields[f->hdr.n_fields].name);
     for (uint32_t i = 0; i < s->n_fields; i++) {
         const NMBinField *got = &f->fields[i];
         const NMBinField *exp = &s->fields[i];
         if (strcmp(got->name, exp->name) != 0)
-            SERR("字段[%u] 名称不符：文件「%s」，期望「%s」",
-                 i, got->name, exp->name);
+            SERR("字段[%u] 名称不符：文件「%s」，期望「%s」（kind=%u rec_size=%u）",
+                 i, got->name, exp->name, f->hdr.kind, f->hdr.rec_size);
         if (got->offset != exp->offset)
-            SERR("字段 %s 偏移不符：文件 %u，期望 %u（源码硬编码常量）",
-                 exp->name, got->offset, exp->offset);
+            SERR("字段 %s 偏移不符：文件 %u，期望 %u（源码硬编码常量，"
+                 "kind=%u rec_size=%u）",
+                 exp->name, got->offset, exp->offset, f->hdr.kind, f->hdr.rec_size);
         if (got->type != exp->type || got->width != exp->width)
-            SERR("字段 %s 类型/宽度不符：文件 %u/%u，期望 %u/%u",
-                 exp->name, got->type, got->width, exp->type, exp->width);
+            SERR("字段 %s 类型/宽度不符：文件 %u/%u，期望 %u/%u（kind=%u rec_size=%u）",
+                 exp->name, got->type, got->width, exp->type, exp->width,
+                 f->hdr.kind, f->hdr.rec_size);
     }
     err[0] = '\0';
     return 0;
 #undef SERR
+}
+
+int nmbin_schema_extra_fields(const NMBinFile *f)
+{
+    if (!f) return -1;
+    const NMBinSchema *s = nmbin_expected_schema(f->hdr.kind, f->hdr.rec_size);
+    if (!s) return -1;                          /* 未登记：没有「追加」语义 */
+    if (f->hdr.n_fields < s->n_fields) return -1;
+    return (int)(f->hdr.n_fields - s->n_fields);
 }
 
 /* ---------------------------------------------------------------------------

@@ -404,6 +404,27 @@ setShowFlags / shutdown`。对照 `src/ui_qt/main_window.cpp:996-1200` 的菜单
 - 旧 8 省是 M1 之前的产物（`flags=0` 无 O2 摘要），`nmbin_digest` 为空字符串；
   表里的 `record_sha256` 仍会重算，但不会去比头内摘要。
 
+#### 11.1.1.1 P2-A：`chunks.json.gz` 伴生（可选加速）
+
+`gen_chunks.py` 写 `chunks.json` 时用**同一份字节串**产出 `chunks.json.gz`：
+gzip level 9、`mtime=0`、不写原文件名 ⇒ 每次生成逐字节相同，`sha256(gz)` 可直接
+当 HTTP ETag（服务端按 `If-None-Match` 返 304）。`sync_maps.sh` 在块表生成之后、
+目录切换之前追加 `--sidecar-check` 只读复核，不同源即丢弃本次产物。
+
+- **契约不变**：`chunks.json` 仍是唯一权威源，格式、键名、`version=1` 一个字节都没改；
+  `Manifests.parseChunks()` 与 `ChunkUpdater` 的 `version != 1` 判定不需要动。
+- **兼容位**：gz 是可选加速，缺失时自动回落 JSON（`sidecar_check(required=False)`）。
+  老服务端、老客户端、只有 v1 JSON 的目录完全不受影响；只有**产物完整性门禁**
+  （`check_province_coverage.py` 第 6 条、`--sidecar-check`）才要求伴生成套。
+- **自指防护**：`gen_chunks.SKIP_NAMES` 同时排除 `chunks.json` 与 `chunks.json.gz`，
+  否则伴生会被 `data_files()` 当成地图数据写进下一版块表，反复生成永远校验不过。
+- 实测（副机北京一省，826 文件 / 86108 块）：JSON **5,949,459 B** → gzip
+  **3,232,954 B**（54.3%，省 2.59 MiB）；`python3 scripts/chunk_table_size.py
+  --report beijing` 可复现。主机 8 省真实体量须在主机复跑，不外推副机样本。
+- 门禁：`gen_chunks.py --self-test` 的 `CHUNKS-SIDECAR-*` 正负向、
+  `check_province_coverage.py --self-test` 的 `COVERAGE-COMPACT-OK`、
+  `chunk_table_size.py --self-test` 的 `TABLE-*` 三类负向。
+
 ### 11.1.2 按块差分（O5）
 
 `ChunkUpdater` 拉远端 `chunks.json` → 读本地 `chunks.json` → `ChunkDelta.plan()` 逐块比对 →
@@ -413,10 +434,18 @@ setShowFlags / shutdown`。对照 `src/ui_qt/main_window.cpp:996-1200` 的菜单
 
 - 判据（主机 `scripts/java_gate.sh` 实测）：改 1 块只发 1 个 `Range: bytes=4096-8191`、
   传 4096 B；全等传 0 块 / 0 B；重组时写错一块被整包 sha256 抓到，旧图与旧块表原样保留。
-- ★ 块表体积不是零：8 省合计约 **71 MB**（北京 5.2 MB；103 万块 × 64 位 hex）。
-  「改 1 块只传 4 KiB」说的是**数据块**，首次拉清单仍要几 MB ⇒ 服务端务必开
-  gzip + HTTP 缓存（ETag / 304），否则清单开销会抵消差分收益；M3 可评估二进制或
-  按文件分片的块表。计划阶段不宣称净流量收益，只交付机制闭环与可测判据。
+- ★ 块表体积不是零：M2 当时估 8 省合计约 **71 MB**；副机北京单省实测
+  **5.95 MB / 86108 块**。「改 1 块只传 4 KiB」说的是**数据块**，首次拉清单仍要
+  几 MB ⇒ 服务端必须开 gzip + HTTP 缓存（ETag / 304）。P2-A 已把伴生
+  `chunks.json.gz` 生成到产物目录并给出可复现 ETag（见 11.1.1.1）：北京
+  5.95 MB → 3.23 MB，未变清单走 304 ⇒ 清单体 0 字节。
+- ★ **第二档二进制表经决策门判定不做**：gzip 后 3.08 MiB 已低于 8 MiB/省阈值，
+  二进制表只再小 11.6%，却要同步 `Manifests` / `ChunkUpdater` / `ChunkDelta`
+  等全部 v1 解析耦合点并留兼容读路。P2-B 的逐块压缩容器同样受
+  「索引全量拉 / 数据块增量省」的不对称约束：按北京 86108 块算，JSON 索引
+  +2.46 MiB 需 **967 个变化块**才回本（二进制索引 387 块），而 M2 典型场景
+  是「改 1 块 / 全等 0 块」⇒ 小更新净亏，暂不实施。数字由
+  `scripts/chunk_table_size.py --report` 与 `scripts/container_probe.py` 复现。
 - ★ 提交阶段是**逐文件 rename**、不是目录级原子切换：万一提交中途 IO 失败，
   本地块表仍是旧的，下次差分会因整包 sha256 不符而抛错并回落整包，
   **不会静默加载混合版本**；远端删掉的文件不在本地清理（只留残余，不影响加载）。

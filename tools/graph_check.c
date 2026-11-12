@@ -38,8 +38,14 @@ static void dump_schema_check(const NMBinFile *f, const char *name)
     if (!s) { printf("  (kind=%u rec_size=%u 未登记，跳过比对)\n",
                      f->hdr.kind, f->hdr.rec_size); return; }
     int rc = nmbin_check_schema(f, err, sizeof(err));
-    printf("  登记 %u 字段，比对 %s%s\n", s->n_fields,
-           rc == 0 ? "一致" : "不一致：", rc == 0 ? "" : err);
+    int extra = nmbin_schema_extra_fields(f);
+    printf("  登记 %u 字段 / 文件 %u 字段，比对 %s%s\n", s->n_fields,
+           f->hdr.n_fields, rc == 0 ? "一致" : "不一致：", rc == 0 ? "" : err);
+    /* P3/4.1：与 nmbin_check_schema / selftest 共用同一份「前缀子集」口径，
+     * 别让 graph_check 在追加字段的产物上给出与加载期不同的结论。 */
+    if (extra > 0)
+        printf("  尾部追加 %d 字段（P3/4.1 前缀子集语义，未参与比对；"
+               "记录布局与 NMBIN_VERSION 均未变）\n", extra);
     for (uint32_t i = 0; i < s->n_fields && i < f->hdr.n_fields; i++) {
         const NMBinField *e = &s->fields[i];
         const NMBinField *g = &f->fields[i];

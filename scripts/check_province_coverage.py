@@ -9,13 +9,17 @@
   5) M2 / O3：每省 chunks.json 齐全且**覆盖所有数据文件**、块数 = ceil(size/4096)。
      ★ 与生成端共用 gen_chunks.data_files() / expected_chunk_count()，避免名单漂移；
        这里只做「齐全」的轻量检查，逐块哈希重算由 gen_chunks.py --verify 承担。
+  6) P2-A：每省 chunks.json.gz 伴生齐全，且解压后与 chunks.json 逐字节同源。
+     ★ 与生成端共用 gen_chunks.sidecar_check(required=True)；伴生是可选加速，
+       老客户端缺它仍回落 JSON，但**发布产物**必须成套。
 
 --self-test：在临时目录造一份**合成夹具**（2 个省 + 假三件套 + 真实生成的块表
-  + 假 SQLite），先证明正常夹具能过，再分别删掉一个 disp.idx、删掉块表、
-  删掉块表里的一个块条目，证明三条判据都会 FAIL。
+  + 伴生 + 假 SQLite），先证明正常夹具能过，再分别删掉一个 disp.idx、删掉块表、
+  删掉块表里的一个块条目、删掉伴生、把伴生换成异源 gzip，证明判据都会 FAIL。
   ★ 不碰仓库里的 products/ —— 负向对照改的是被检查的夹具数据，不是条件。
 
-正常打印 COVERAGE-OK / 自检打印 COVERAGE-SELFTEST-OK；任何不一致 rc=1。
+正常打印 COVERAGE-OK / 自检打印 COVERAGE-SELFTEST-OK 与 COVERAGE-COMPACT-OK；
+任何不一致 rc=1。
 """
 
 import glob
@@ -33,6 +37,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def check(root):
     fails = []
+    sidecar_n = 0
+    sidecar_bytes = 0
     sources = sorted(glob.glob(os.path.join(root, "sources", "*.osm.pbf")))
     names = [os.path.basename(p)[:-len(".osm.pbf")] for p in sources]
     if not names:
@@ -83,6 +89,14 @@ def check(root):
             except Exception as ex:
                 fails.append("%s chunks.json 打不开: %s" % (name, ex))
 
+        # 6) P2-A 伴生齐全且与 JSON 同源（产物完整性门禁，非运行期加载要求）。
+        s_fails, s_n, s_etag = gen_chunks.sidecar_check(d, required=True)
+        for x in s_fails:
+            fails.append("%s %s" % (name, x))
+        if not s_fails:
+            sidecar_n += 1
+            sidecar_bytes += s_n
+
     # 孤产物：目录名不像 PBF 派生的都要报（lm.bin 是文件，不会被当目录）
     gdir = os.path.join(root, "products", "graph")
     if os.path.isdir(gdir):
@@ -106,6 +120,8 @@ def check(root):
             fails.append("搜索库打不开/表不对: %s" % e)
 
     print("省份覆盖      %d 省：%s" % (len(names), ", ".join(names)))
+    print("伴生清单      %d 省 / %d B（chunks.json.gz，与 JSON 逐字节同源）" %
+          (sidecar_n, sidecar_bytes))
     return fails, names
 
 
@@ -143,6 +159,7 @@ def main():
             if good:
                 print("COVERAGE-SELFTEST-FAIL 正常夹具就不该 FAIL: %s" % good)
                 return 1
+            print("COVERAGE-COMPACT-OK 正常夹具每省伴生齐全且与 chunks.json 逐字节同源")
 
             # 负向 1：删掉一个 disp.idx（改被检查的数据，不改判据条件）
             os.remove(os.path.join(tmp, "products", "graph", "beta", "disp.idx"))
@@ -174,7 +191,28 @@ def main():
                 print("COVERAGE-SELFTEST-FAIL 删了块条目判据却没抓到")
                 return 1
 
-            print("COVERAGE-SELFTEST-OK 正常夹具通过 / 缺 disp.idx、缺块表、删块条目均被抓到")
+            # 负向 4：删掉一个省的伴生（P2-A 第 6 条不变量必须能失败）
+            d4 = _fresh(); roots.append(d4)
+            os.remove(os.path.join(d4, "products", "graph", "alpha",
+                                   gen_chunks.CHUNKS_GZ))
+            bad4, _ = check(d4)
+            if not any("chunks.json.gz" in x for x in bad4):
+                print("COVERAGE-SELFTEST-FAIL 删了伴生判据却没抓到")
+                return 1
+
+            # 负向 5：伴生换成合法的异源 gzip（同源不变量必须能失败）
+            d5 = _fresh(); roots.append(d5)
+            pgz = os.path.join(d5, "products", "graph", "beta",
+                               gen_chunks.CHUNKS_GZ)
+            with open(pgz, "wb") as f:
+                f.write(gen_chunks.gzip_bytes(b'{"version":1,"files":{}}'))
+            bad5, _ = check(d5)
+            if not any("不同源" in x for x in bad5):
+                print("COVERAGE-SELFTEST-FAIL 异源伴生判据却没抓到")
+                return 1
+
+            print("COVERAGE-SELFTEST-OK 正常夹具通过 / 缺 disp.idx、缺块表、删块条目、"
+                  "删伴生、异源伴生均被抓到")
             return 0
         finally:
             for d in roots:

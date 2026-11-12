@@ -117,6 +117,12 @@ typedef struct {
  * ★ 未登记的 (kind, rec_size) 组合返回 NULL ⇒ 跳过比对，保证新增 kind
  *   或历史 v1 布局不会被误判为损坏。
  * ★ 只在加载期做一次逐字段比对；**绝不**把按名查找放进每条记录的循环。
+ *
+ * ★★ P3/4.1（2026-11-12）：比对语义由「完全相等」放宽为**前缀子集** ——
+ *   文件字段数 ≥ 期望数、且前 s->n_fields 个逐项相等即可，尾部允许追加。
+ *   这解决的是「同一 NMBIN_VERSION 内追加一个描述性字段就得重抽 8 省」；
+ *   nmbin_check() 的全局 version 硬校验仍然保留（记录布局整体换版必须重抽），
+ *   两者粒度不同，不要混为一谈。追加字段仍受 nmbin_check() 的越界检查约束。
  * ------------------------------------------------------------------------- */
 typedef struct {
     uint32_t kind;
@@ -158,6 +164,10 @@ int  nmbin_check(const NMBinFile *f, char *err, size_t err_cap);  /* 结构自�
 /* 只跑期望 schema 比对（graph_check 打印、selftest 单项验真用）。
  * 未登记的 (kind, rec_size) 返回 0 且 err 置空。 */
 int  nmbin_check_schema(const NMBinFile *f, char *err, size_t err_cap);
+/* P3/4.1：返回尾部追加字段数（0=与期望完全相等）；未登记 schema 返回 -1。
+ * 只给判据 / 诊断工具报「追加」标记用，加载期不依赖它、不算进热路径。
+ * 与 nmbin_check_schema() 共用同一份「前缀子集」口径，避免两个工具各说各话。 */
+int  nmbin_schema_extra_fields(const NMBinFile *f);
 /* 边界离线校验：重算 sha256(payload) 与头部摘要比对，见 nmbin_verify 工具。
  * 返回 0=一致，1=不一致，-1=无摘要/打开失败；不算进加载期热路径。 */
 int  nmbin_verify_digest(const char *path, char *err, size_t err_cap);

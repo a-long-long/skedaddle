@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""NMBIN M2 / O3：4 KiB 块哈希 sidecar（chunks.json）生成与离线校验。
+"""NMBIN M2 / O3 + P2-A：4 KiB 块哈希 sidecar（chunks.json）生成与离线校验。
 
 设计边界（与 NMBIN-OPTIMIZATION-PLAN-2026-11-12.md §2 O3 对齐）：
   · 块表是**校验清单 + 差分索引**，不是把 NMBIN 变成分块格式；运行时读取路径
@@ -10,19 +10,28 @@
     不是全文件 sha256。所以 manifest 的 zip 整包哈希、块表的文件全哈希、
     O2 的记录区摘要是三个不同口径，不能互相代替；这里逐项分开记并在校验时
     交叉核对「头内 digest == 记录区重算值」。
+  · P2-A 第一档：除权威源 chunks.json 外，同源产出 chunks.json.gz（mtime=0、
+    固定 level 9 ⇒ 逐字节可复现），打印 sha256 供服务端作 ETag / 304。
+    ★ gz 只是**可选加速**：chunks.json 格式、老客户端解析、差分数据路径一律不改；
+      缺 gz 时自动回落 JSON（sidecar_check(required=False)）。
 
 用法：
-  python3 scripts/gen_chunks.py <省目录> [<省目录>...]   # 生成/覆盖 chunks.json
+  python3 scripts/gen_chunks.py <省目录> [<省目录>...]   # 生成/覆盖 chunks.json + .gz
   python3 scripts/gen_chunks.py --verify <省目录>...     # 离线全量重算校验
+  python3 scripts/gen_chunks.py --sidecar <省目录>...    # 给已有 JSON 补产/重产 .gz
+  python3 scripts/gen_chunks.py --sidecar-check <省目录>...  # 只读复核伴生同源
   python3 scripts/gen_chunks.py --all                   # products/graph/*/ 全部生成
   python3 scripts/gen_chunks.py --self-test             # 合成夹具（正向 + 负向）
   python3 scripts/gen_chunks.py --inject=all            # 只报负向注入标记（regress 用）
 
 判据标记：CHUNKS-OK / CHUNKS-VERIFY-OK / CHUNKS-INJECT-CAUGHT /
-          CHUNKS-SELFTEST-OK；任何不一致 rc=1（判成功看退出码）。
+          CHUNKS-SELFTEST-OK / CHUNKS-SIDECAR-OK /
+          CHUNKS-SIDECAR-INJECT-CAUGHT；任何不一致 rc=1（判成功看退出码）。
 """
 
+import gzip
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -35,6 +44,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VERSION = 1
 CHUNK_SIZE = 4096
 CHUNKS_NAME = "chunks.json"
+CHUNKS_GZ = "chunks.json.gz"
+GZIP_LEVEL = 9
 ALGO = "sha256"
 
 # NMBIN 头是手工序列化（binfmt.h），这些常量必须与 C 侧逐字一致：
@@ -51,7 +62,9 @@ OFF_PAYLOAD = 36
 OFF_DIGEST = 76
 
 # 元数据 / 日志不属于地图数据，不进块表（生成端与「块表齐全」门禁共用这份名单）。
-SKIP_NAMES = {CHUNKS_NAME, "manifest.txt", "extract.log", ".skversion"}
+# ★ P2-A：gz 是块表自身的伴生，绝不能进 data_files()，否则生成时会把自己算成
+#   数据文件、下一次生成又多一个文件 ⇒ 自指循环 + 块表永远校验不过。
+SKIP_NAMES = {CHUNKS_NAME, CHUNKS_GZ, "manifest.txt", "extract.log", ".skversion"}
 
 
 def data_files(d):
@@ -133,12 +146,65 @@ def build_table(d):
     }
 
 
+def gzip_bytes(raw):
+    """可复现 gzip：mtime=0 / 不带原文件名 / 固定 level ⇒ 每次生成逐字节相同。
+
+    sha256(gz) 可直接当 HTTP ETag；服务端按 If-None-Match 返 304，
+    这样「首次拉清单」也能从几 MB 降到一次 304，而不是每次全量传输。
+    """
+    buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=GZIP_LEVEL, mtime=0) as g:
+        g.write(raw)
+    return buf.getvalue()
+
+
+def write_sidecar(d, raw=None):
+    """由 chunks.json 生成 chunks.json.gz；返回 (gz 字节数, sha256 十六进制)。"""
+    if raw is None:
+        with open(os.path.join(d, CHUNKS_NAME), "rb") as f:
+            raw = f.read()
+    gz = gzip_bytes(raw)
+    with open(os.path.join(d, CHUNKS_GZ), "wb") as f:
+        f.write(gz)
+    return len(gz), hashlib.sha256(gz).hexdigest()
+
+
+def sidecar_check(d, required=False):
+    """校验伴生与权威源逐字节同源；返回 (失败原因列表, gz 字节数, ETag)。
+
+    required=False：伴生缺失视为「可选加速未启用」，静默回落 chunks.json。
+    这是 P2-A 的兼容位 —— 老服务端 / 老客户端 / 只有 v1 JSON 的目录完全不受影响。
+    required=True：产物完整性门禁（coverage / sync_maps.sh）要求伴生必须齐全。
+    """
+    p_json = os.path.join(d, CHUNKS_NAME)
+    p_gz = os.path.join(d, CHUNKS_GZ)
+    if not os.path.isfile(p_gz):
+        return (["缺 %s（P2-A 伴生）" % CHUNKS_GZ] if required else []), 0, ""
+    if not os.path.isfile(p_json):
+        return ["有 %s 却缺 %s" % (CHUNKS_GZ, CHUNKS_NAME)], 0, ""
+    with open(p_json, "rb") as f:
+        raw = f.read()
+    with open(p_gz, "rb") as f:
+        gz = f.read()
+    try:
+        got = gzip.decompress(gz)
+    except Exception as e:
+        return ["%s 解压失败: %s" % (CHUNKS_GZ, e)], len(gz), ""
+    if got != raw:
+        return ["%s 与 %s 不同源（解压后 %d B / JSON %d B）" %
+                (CHUNKS_GZ, CHUNKS_NAME, len(got), len(raw))], len(gz), ""
+    return [], len(gz), hashlib.sha256(gz).hexdigest()
+
+
 def write_chunks(d, table=None):
     t = table if table is not None else build_table(d)
     # core.autocrlf=true：按字节写，避免 Windows 上把 JSON 变成 CRLF。
     raw = json.dumps(t, separators=(",", ":"), sort_keys=True, ensure_ascii=False)
+    raw = raw.encode("utf-8")
     with open(os.path.join(d, CHUNKS_NAME), "wb") as f:
-        f.write(raw.encode("utf-8"))
+        f.write(raw)
+    # P2-A：同一份字节串直接压成伴生，天然同源；不改 chunks.json 一个字节。
+    write_sidecar(d, raw)
     return t
 
 
@@ -294,12 +360,25 @@ def selftest(report_positive=True):
         if verify(tmp):
             print("CHUNKS-SELFTEST-FAIL 写盘后重载校验失败")
             return 1
+        # P2-A 正向：gz 与 JSON 同源、可复现（同一份输入压两次结果必须相同）。
+        s_fails, s_n, s_etag = sidecar_check(tmp, required=True)
+        if s_fails:
+            print("CHUNKS-SELFTEST-FAIL 伴生校验失败: %s" % s_fails)
+            return 1
+        with open(os.path.join(tmp, CHUNKS_NAME), "rb") as f:
+            gz_again = gzip_bytes(f.read())
+        with open(os.path.join(tmp, CHUNKS_GZ), "rb") as f:
+            if gz_again != f.read():
+                print("CHUNKS-SELFTEST-FAIL gzip 不可复现，ETag 会漂移")
+                return 1
         n_files = len(clean["files"])
         n_chunks = sum(len(e["chunks"]) for e in clean["files"].values())
         if report_positive:
             print("CHUNKS-OK 合成夹具 %d 文件 / %d 块（含 sealed NMBIN 的 O2 摘要闭环）" %
                   (n_files, n_chunks))
             print("CHUNKS-SELFTEST-OK 生成 → 写盘 → 全量重算逐项一致")
+            print("CHUNKS-SIDECAR-OK chunks.json.gz %d B / ETag sha256=%s（mtime=0 可复现）" %
+                  (s_n, s_etag))
 
         # 负向注入：每条都必须让 verify() FAIL，且原因对得上
         caught = 0
@@ -333,6 +412,47 @@ def selftest(report_positive=True):
                 shutil.rmtree(work, ignore_errors=True)
         print("CHUNKS-INJECT-CAUGHT %d 种破坏全部被拒（块哈希/块条目/整包哈希/O2 摘要/文件字节）" %
               caught)
+
+        # ---- P2-A 伴生负向：改的是「被检查的数据」，不是判据条件 ----------
+        s_caught = 0
+        for name, how in (("伴生字节被翻转", "flip"),
+                          ("伴生来自另一份 JSON", "other"),
+                          ("伴生文件被删", "gone")):
+            work = tempfile.mkdtemp(prefix="sk_chunks_gz_")
+            try:
+                for n in os.listdir(tmp):
+                    src = os.path.join(tmp, n)
+                    if os.path.isfile(src):
+                        shutil.copyfile(src, os.path.join(work, n))
+                pgz = os.path.join(work, CHUNKS_GZ)
+                if how == "flip":
+                    with open(pgz, "r+b") as f:
+                        n = f.seek(0, os.SEEK_END)
+                        f.seek(n // 2)
+                        b = f.read(1)
+                        f.seek(n // 2)
+                        f.write(bytes([b[0] ^ 0xFF]))
+                elif how == "other":
+                    other = json.loads(json.dumps(clean))
+                    other["files"]["disp.idx"]["size"] = -1
+                    raw_other = json.dumps(other, separators=(",", ":"),
+                                           sort_keys=True, ensure_ascii=False).encode("utf-8")
+                    with open(pgz, "wb") as f:
+                        f.write(gzip_bytes(raw_other))
+                else:
+                    os.remove(pgz)
+                bad = sidecar_check(work, required=True)[0]
+                why = {"flip": ("解压失败", "不同源"),
+                       "other": ("不同源",),
+                       "gone": ("缺",)}[how]
+                if not bad or not any(any(w in x for w in why) for x in bad):
+                    print("CHUNKS-SIDECAR-FAIL 注入「%s」没被抓到: %s" % (name, bad))
+                    return 1
+                s_caught += 1
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+        print("CHUNKS-SIDECAR-INJECT-CAUGHT %d 种伴生破坏全部被拒（字节翻转 / 异源 gzip / 缺伴生）" %
+              s_caught)
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -344,6 +464,31 @@ def main(argv):
         return selftest(report_positive=True)
     if "--inject=all" in args:
         return selftest(report_positive=False)
+    if "--sidecar" in args or "--sidecar-check" in args:
+        do_check = "--sidecar-check" in args
+        dirs = [a for a in args if not a.startswith("--")]
+        if not dirs:
+            print(__doc__)
+            return 2
+        total = 0
+        for d in dirs:
+            if not os.path.isdir(d):
+                print("CHUNKS-SIDECAR-FAIL 不是目录: %s" % d)
+                return 1
+            if not do_check:
+                write_sidecar(d)
+            fails, n, etag = sidecar_check(d, required=True)
+            if fails:
+                for x in fails:
+                    print("MISMATCH %s: %s" % (d, x))
+                print("CHUNKS-SIDECAR-FAIL %s 伴生与权威源不同源" % d)
+                return 1
+            total += n
+            print("%s gz %d B / ETag sha256=%s" %
+                  (os.path.basename(d.rstrip(os.sep)), n, etag))
+        print("CHUNKS-SIDECAR-OK %d 个省目录伴生齐全合计 %d B，与 %s 逐字节同源" %
+              (len(dirs), total, CHUNKS_NAME))
+        return 0
 
     if "--all" in args:
         g = os.path.join(ROOT, "products", "graph")
@@ -370,8 +515,17 @@ def main(argv):
                 else:
                     t = load_table(d)
                     n_chunks = sum(len(e["chunks"]) for e in t["files"].values())
-                    print("%s %d 文件 / %d 块" % (os.path.basename(d),
-                                                 len(t["files"]), n_chunks))
+                    s_fails, s_n, s_etag = sidecar_check(d)
+                    if s_fails:
+                        bad = 1
+                        for x in s_fails:
+                            print("MISMATCH %s: %s" % (d, x))
+                    else:
+                        tag = (" / gz %d B ETag %s" % (s_n, s_etag)) if s_etag \
+                              else " / 无 gz（可选加速未启用，回落 JSON）"
+                        print("%s %d 文件 / %d 块%s" %
+                              (os.path.basename(d.rstrip(os.sep)),
+                               len(t["files"]), n_chunks, tag))
             if bad:
                 print("CHUNKS-FAIL 至少一份块表与产物不一致")
                 return 1

@@ -212,6 +212,20 @@ while IFS= read -r f; do
     fi
     rm -f "$tmp.chunks.log" || printf '        注意：%s 删不掉，请手工清理\n' "$tmp.chunks.log"
 
+    # ---- P2-A：chunks.json.gz 伴生（服务端 gzip 传输 + ETag / 304） ----------
+    # gen_chunks.py 写 JSON 时已用同一份字节串同源产出 .gz；这里**只读复核一次**，
+    # 让「伴生损坏」和「块表损坏」一样丢弃本次产物，绝不发布半套清单。
+    # ★ 仍是零格式变更：chunks.json 原样保留，Android parseChunks() 不用改。
+    if ! python3 "$ROOT/scripts/gen_chunks.py" --sidecar-check "$tmp" > "$tmp.sidecar.log" 2>&1; then
+        printf '[FAIL ] %-12s chunks.json.gz 伴生校验失败，已丢弃本次产物\n' "$name"
+        tail -3 "$tmp.sidecar.log" | sed 's/^/        /'
+        rm -f "$tmp.sidecar.log"
+        drop_tmp "$tmp"
+        n_fail=$((n_fail+1))
+        continue
+    fi
+    rm -f "$tmp.sidecar.log" || printf '        注意：%s 删不掉，请手工清理\n' "$tmp.sidecar.log"
+
     # ---- 切换：先给旧产物让位，再把新产物搬到正式位置 ----
     # 顺序很关键，绝不能写成 `rm -rf "$dir"; mv "$tmp" "$dir"`：
     # 一旦删除被外部安全策略拦下（目录还在），mv 会把新产物塞进旧目录里，
