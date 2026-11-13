@@ -307,10 +307,13 @@ void *sk_map_file(const char *path, size_t *out_len)
     if (!m) return NULL;
     void *p = MapViewOfFile(m, FILE_MAP_READ, 0, 0, 0);
     if (!p) { CloseHandle(m); return NULL; }
-    if (!sk_map_reg_add(p, m)) {        /* 注册表满：视图仍然可用，句柄留在这里 */
-        UnmapViewOfFile(p);
-        CloseHandle(m);
-        return NULL;
+    if (!sk_map_reg_add(p, m)) {
+        /* 注册表满：视图仍可用、映射成功，仅映射句柄无法回收（泄漏到进程退出）。
+         * 与上方注释承诺的"退化为能映射、句柄关不掉、绝不因此让映射失败"一致——
+         * 原实现误在此处 UnmapViewOfFile + CloseHandle + return NULL，等于"注册表
+         * 满就让映射失败"，恰恰与注释相反。sk_unmap_file 找不到条目时直接
+         * UnmapViewOfFile，视图照样释放，行为不丢。 */
+        return p;
     }
     if (out_len) *out_len = (size_t)sz.QuadPart;
     return p;

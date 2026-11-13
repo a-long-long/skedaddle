@@ -385,14 +385,31 @@ int nmbin_open(const char *path, NMBinFile *out)
     void *p = sk_mmap_file(path, &flen);      /* 平台层：mmap / CreateFileMapping */
     if (!p) return -1;
 
+    /* ★ 长度防守（修复点）：头 + 字段表共 512 字节是读头/字段表的硬下界；
+     *   否则 bytes_to_hdr 读越界，且 data_len = flen - 512 会在 flen<512 时
+     *   size_t 下溢成一个天文数字，下游再按 rec_count 索引记录区必越界崩溃。
+     *   声明 rec_count 条记录也必须装得下（rec_count*rec_size 可能溢出 u64，先防）。
+     *   不做"data_len == payload_bytes"那种严格判据——那是 nmbin_check 的职责；
+     *   这里只守"按 rec_count 索引不会逃出映射区"这一条加载期安全底线。 */
+    const size_t min_meta = NMBIN_HDR_BYTES + NMBIN_FIELD_BYTES * NMBIN_MAX_FIELDS;
+    if (flen < min_meta) { sk_munmap(p, flen); return -1; }
     bytes_to_hdr((const uint8_t *)p, &out->hdr);
     if (memcmp(out->hdr.magic, NMBIN_MAGIC, 8) != 0) { sk_munmap(p, flen); return -1; }
+    if (out->hdr.rec_size == 0) { sk_munmap(p, flen); return -1; }
+    if (out->hdr.rec_count != 0) {
+        if (out->hdr.rec_count > (UINT64_MAX - (uint64_t)min_meta) / (uint64_t)out->hdr.rec_size) {
+            sk_munmap(p, flen); return -1;   /* 溢出：恶意/损坏头 */
+        }
+        uint64_t need = (uint64_t)min_meta + out->hdr.rec_count * (uint64_t)out->hdr.rec_size;
+        if (flen < need) { sk_munmap(p, flen); return -1; }   /* 记录区被截断 */
+    }
+
     const uint8_t *fp = (const uint8_t *)p + NMBIN_HDR_BYTES;
     for (uint32_t i = 0; i < out->hdr.n_fields && i < NMBIN_MAX_FIELDS; i++)
         bytes_to_field(fp + i * NMBIN_FIELD_BYTES, &out->fields[i]);
 
-    out->data = (uint8_t *)p + NMBIN_HDR_BYTES + NMBIN_FIELD_BYTES * NMBIN_MAX_FIELDS;
-    out->data_len = flen - (NMBIN_HDR_BYTES + NMBIN_FIELD_BYTES * NMBIN_MAX_FIELDS);
+    out->data = (uint8_t *)p + min_meta;
+    out->data_len = flen - min_meta;
     out->mapped_len = flen;
     out->mapped = 1;
     return 0;

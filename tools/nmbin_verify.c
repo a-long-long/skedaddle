@@ -164,11 +164,14 @@ static int run_inject(const char *mode)
         if (inject_file(modes[i]) != 0) { FAIL("注入 %s 写文件失败", modes[i]); continue; }
         char err[256];
         int rc = nmbin_verify_digest(fixture_path, err, sizeof(err));
-        if (rc != 1) {
+        /* 被拒即可（rc != 0）；rc=-1 通常是 nmbin_open 因"文件短于声明记录
+         * 区"直接拒（截断场景），rc=1 是摘要/长度不一致——两者都算抓到。
+         * 只有 rc==0（文件被接受）才是判据失去分辨力。 */
+        if (rc == 0) {
             FAIL("注入 %-9s 未被抓到 ⇒ 判据无分辨力（rc=%d, %s）", modes[i], rc, err);
         } else {
             caught++;
-            printf("  注入 %-9s 被拒：%s\n", modes[i], err);
+            printf("  注入 %-9s 被拒：rc=%d %s\n", modes[i], rc, err);
         }
     }
     if (tried == 0) { printf("未知注入模式: %s\n", mode); return 2; }

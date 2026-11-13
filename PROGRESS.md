@@ -1021,3 +1021,81 @@ CLI 端到端：`--datum=xa80 --datum-grid=demo.txt`（北 +100 / 东 +200）⇒
   行号 `471-586 → 862-986`、`AutoBuildOpt o` 初始化加 `memset`、省循环后插入
   `repair_sidecars(...)` 调用与旁路产物统计输出。
 - 未做：`autobuild` 触发真实 lm 构建（本机 OOM），真实构建器正确性归 `sync_maps.sh`。
+
+---
+
+## 十五、2026-11-13 修复 4 个潜在健壮性问题
+
+> 源自当日只读代码分析（`.workbuddy/memory/2026-11-13.md` 第 18–28 行点名的 4 处）。
+> 这 4 处都是「编译期全绿、运行期才炸」的潜伏债：要么被反例极少触发（Windows
+> mmap 注册表满）、要么只在损坏/截断数据下暴露（nmbin 长度、只 open 不 check）、
+> 要么只在写盘中途崩溃/写满时暴露（settings 非原子写）。逐一回源、按各自现有范本修。
+
+### 问题 1 — Windows mmap 注册表注释与代码矛盾（`src/utils/plat.c`）
+
+- **根因**：`sk_map_file()` 上方注释承诺「注册表满 ⇒ 退化为能映射、句柄关不掉、
+  绝不因此让映射失败」，但 `:310-313` 在 `sk_map_reg_add` 返回 0 时
+  执行 `UnmapViewOfFile + CloseHandle + return NULL` —— 正好让映射失败，与注释相反。
+  `SK_MAX_MAPS=512`，且 disp tile 限「同时最多 3 个映射」，平时难触发，属潜伏债。
+- **修复**：注册表满时改为 `return p`（视图仍可用、映射成功，仅泄漏句柄到进程退出），
+  严格贴合注释承诺。`sk_unmap_file` 找不到条目时直接 `UnmapViewOfFile`，视图照样释放。
+- **影响**：纯 `_WIN32` 分支，Linux/编译零影响（`sk_map_reg_add` 是 POSIX 空成功）。
+
+### 问题 2 — `nmbin_open()` 未校验文件长度（`src/map/binfmt.c`）
+
+- **根因**：`nmbin_open` 直接 `flen - 512` 取 `data_len`；截断文件 `<512 B`
+  会让 `size_t` 下溢成一个天文数字，下游按 `rec_count` 索引记录区必越界崩溃；
+  magic 检查能挡住大部分，但**保留 magic 的截断文件能过**。这与「加载期只守
+  '按 rec_count 索引不逃出映射区'」的分工职责直接冲突。
+- **修复**：在 `bytes_to_hdr` 前加长度防守 ——
+  `min_meta=512` 硬下界（防下溢）；`rec_count*rec_size` 先做 u64 溢出判据；
+  再校验 `flen >= min_meta + rec_count*rec_size`（截断文件被拒）。
+  不动 `nmbin_check` / `nmbin_verify_digest`（严格的「数据长度 == 声明长度」判据
+  仍在 check 层与边界层；open 只守安全底线）。
+- **连带**：`tools/nmbin_verify.c` 的 `run_inject` 把 `truncate` 用例断言由
+  「rc 必须 == 1」放宽为「被拒即可（rc != 0）；只有 rc==0 才是判据失分辨力」——
+  语义更正确（截断早抓晚抓都是抓，现 truncate 在 open 层 rc=-1 即被拒）。
+
+### 问题 3 — 部分 NMBIN 只 open 不 check（`src/map/mapset.c`）
+
+- **根因**：`src_open_files` 里 contours 三件套（`*_contours.bin` /
+  `*_contour_polyrefs.bin` / `*_contour_pts.bin`）、`tiles.bin`、`edgelist.bin`
+  只 `nmbin_open` 不 `nmbin_check`；而 nodes/edges/lanes/restrictions 是
+  `open+check`、`check` 失败则降级 `has_*=0`。与 `:296-297`「加载即校验」注释
+  口径不一致；叠加问题 2（open 不再纵容截断）风险更大——拿到结构损坏的省级可选
+  文件会静默用坏数据渲染。
+- **修复**：新增 `open_checked()` 辅助（集中「open 成功 + check 失败则关闭降级」），
+  contours 三件套（含 `<name>_` 前缀与裸名回退）、`tiles.bin`、`edgelist.bin`
+  全部改用它；任一结构损坏都按「无等高线 / 无索引」降级（索引降级退化为全量扫描，
+  画面照旧只是慢），绝不拿坏数据渲染。必需文件（nodes/edges）与 lanes/restrictions
+  的现有 `open+check` 范式未动；disp 瓦片热路径由问题 2 长度守卫兜住，不单独加 check。
+
+### 问题 4 — settings 非原子写且忽略写失败（`src/settings/settings.c`）
+
+- **根因**：`settings_save` 直接 `fopen(path,"wb")` 覆盖，且 `fprintf`/`fclose`
+  返回码都不检查、写完无条件 `s->dirty=0`。写盘中途崩溃留下半截 `settings.ini`
+  ⇒ 下次启动解析失败、所有设置被静默清零；写满盘会静默丢配置。平台层已有
+  `sk_rename` 但未用。
+- **修复**：改为「先写 `path.tmp` → `fclose` → `sk_rename(tmp,path)` 原子替换」
+  （POSIX `rename` / Windows `MoveFileEx REPLACE_EXISTING` 均原子；同目录保证同文件系统）。
+  临时文件打不开时退化直接覆盖（放弃原子性，至少还能存）；`fclose` 失败删 `.tmp`
+  返回 -1；`rename` 失败保留 `.tmp`、目标仍完好、返回 -1。`skedaddle_settings`
+  静态库已 `#include "utils/plat.h"`，`sk_rename`/`sk_unlink` 可用。
+
+### 验收（全绿）
+
+- 编译：`build_rel` 全量重编**零警告**（WARN_COUNT=0, BUILD_REAL_RC=0），
+  四个目标 `skedaddle_map` / `skedaddle_plat` / `skedaddle_settings` /
+  `skedaddle_nmbin_verify` 各自零警告通过。
+- 门禁：
+  - `skedaddle_nmbin_verify --selftest` → `NMBIN-HASH-OK`；
+    `--selftest --inject=all` → **4/4 被边界校验拒绝**（flip/pad/truncate/wronghash，
+    truncate 现 rc=-1 由 open 层早拒，断言已放宽）。
+  - `skedaddle_nmbin_schema_selftest` → `SCHEMA-OK`（注入用例内存构造 `NMBinFile`
+    直接喂 `nmbin_check`，不受问题 2 改动影响）。
+  - `skedaddle_graph_check products/graph/beijing` → `ASSERT-OK`（证明问题 2
+    长度守卫对真实产物零影响）。
+  - `skedaddle_disp_runtime_selftest --graph=products/graph/shandong` →
+    `DISP-RUNTIME-OK`（证明问题 3 新 check 对正常装载零影响，42×81 网格零丢失）。
+- 改动文件（5 个，均未提交）：`src/map/binfmt.c`、`src/map/mapset.c`、
+  `src/settings/settings.c`、`src/utils/plat.c`、`tools/nmbin_verify.c`。

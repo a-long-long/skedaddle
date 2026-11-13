@@ -284,6 +284,16 @@ oom:
     return -1;
 }
 
+/* open + 结构自检：成功返回 0；打不开或 nmbin_check 失败则关闭并返回 -1，
+ * 调用方据此降级（与 lanes/restrictions 的现有范本一致）。集中在这里，避免
+ * 每个可选文件都重复"open 成功但没 check、拿坏数据渲染"的旧坑。 */
+static int open_checked(const char *path, NMBinFile *f, char *err, size_t ec)
+{
+    if (nmbin_open(path, f) != 0) return -1;
+    if (nmbin_check(f, err, ec) != 0) { nmbin_close(f); return -1; }
+    return 0;
+}
+
 /* 只打开文件、不碰身份（name/dir/bbox/dup_of/loaded 由调用方保持）。
  * 重载走这个，身份不变；首次打开由 src_open 先置身份再调它。 */
 static int src_open_files(MapSrc *s)
@@ -345,39 +355,37 @@ static int src_open_files(MapSrc *s)
     }
 
     /* 等高线（SRTM 生成）可选：三件套齐备才算有。与 features 平级，不依赖 disp tile。
-       命名按区域：<name>_contours.bin 等；回退无前缀 contours.bin（旧/测试产物）。 */
+       命名按区域：<name>_contours.bin 等；回退无前缀 contours.bin（旧/测试产物）。
+       任一结构损坏（open/check 失败）都按"无等高线"降级，绝不拿坏数据渲染。 */
     s->has_contours = 1;
     char pc[4096], pp[4096], pt[4096];
     snprintf(pc, sizeof(pc), "%s/%s_contours.bin",        s->dir, s->name);
     snprintf(pp, sizeof(pp), "%s/%s_contour_polyrefs.bin", s->dir, s->name);
     snprintf(pt, sizeof(pt), "%s/%s_contour_pts.bin",      s->dir, s->name);
-    if (nmbin_open(pc, &s->contours) != 0) {
+    if (open_checked(pc, &s->contours, err, sizeof(err)) != 0) {
         snprintf(pc, sizeof(pc), "%s/contours.bin", s->dir);
-        if (nmbin_open(pc, &s->contours) != 0) s->has_contours = 0;
+        if (open_checked(pc, &s->contours, err, sizeof(err)) != 0) s->has_contours = 0;
     }
-    if (s->has_contours) {
-        if (nmbin_open(pp, &s->contour_polyrefs) != 0) {
-            snprintf(pp, sizeof(pp), "%s/contour_polyrefs.bin", s->dir);
-            if (nmbin_open(pp, &s->contour_polyrefs) != 0) s->has_contours = 0;
-        }
+    if (s->has_contours && open_checked(pp, &s->contour_polyrefs, err, sizeof(err)) != 0) {
+        snprintf(pp, sizeof(pp), "%s/contour_polyrefs.bin", s->dir);
+        if (open_checked(pp, &s->contour_polyrefs, err, sizeof(err)) != 0) s->has_contours = 0;
     }
-    if (s->has_contours) {
-        if (nmbin_open(pt, &s->contour_pts) != 0) {
-            snprintf(pt, sizeof(pt), "%s/contour_pts.bin", s->dir);
-            if (nmbin_open(pt, &s->contour_pts) != 0) s->has_contours = 0;
-        }
+    if (s->has_contours && open_checked(pt, &s->contour_pts, err, sizeof(err)) != 0) {
+        snprintf(pt, sizeof(pt), "%s/contour_pts.bin", s->dir);
+        if (open_checked(pt, &s->contour_pts, err, sizeof(err)) != 0) s->has_contours = 0;
     }
     if (s->has_contours)
         fprintf(stderr, "图集: %s 有等高线（%llu 条）\n", s->name,
                 (unsigned long long)s->contours.hdr.rec_count);
 
-    /* 空间索引可选：两者齐备才算有 */
+    /* 空间索引可选：两者齐备才算有；任一结构损坏按"无索引"降级
+     * （退化到全量扫描路径，画面照旧、只是慢），不再静默用坏索引。 */
     s->has_tiles = 1;
     snprintf(p, sizeof(p), "%s/tiles.bin", s->dir);
-    if (nmbin_open(p, &s->tiles) != 0) s->has_tiles = 0;
+    if (open_checked(p, &s->tiles, err, sizeof(err)) != 0) s->has_tiles = 0;
     if (s->has_tiles) {
         snprintf(p, sizeof(p), "%s/edgelist.bin", s->dir);
-        if (nmbin_open(p, &s->edgelist) != 0) s->has_tiles = 0;
+        if (open_checked(p, &s->edgelist, err, sizeof(err)) != 0) s->has_tiles = 0;
     }
 
     /* 路名池可选 */

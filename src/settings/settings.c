@@ -179,11 +179,24 @@ int settings_save(Settings *s)
     if (!sl) sl = strrchr(dir, '\\');
     if (sl) { *sl = '\0'; if (sk_mkdir_p(dir) != 0) return -1; }
 
-    FILE *f = fopen(s->path, "wb");
+    /* 原子写（修复点）：先落临时文件、再 rename 覆盖目标。中途崩溃只会留下
+     * settings.ini.tmp，不会留下半截 settings.ini —— 否则下次启动解析失败、
+     * 所有设置被静默清零。rename 在 POSIX 与 Windows(MoveFileEx
+     * REPLACE_EXISTING) 都是原子的；临时文件与目标同目录，保证同文件系统。
+     * 临时文件打不开时退化成直接覆盖（放弃原子性，极少见，至少还能存）。 */
+    char tmp[1024];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", s->path);
+    FILE *f = fopen(tmp, "wb");
+    int via_tmp = (f != NULL);
+    if (!f) f = fopen(s->path, "wb");   /* 退化：直接覆盖（放弃原子性） */
     if (!f) return -1;
     for (int i = 0; i < s->n; i++)
         fprintf(f, "%s=%s\n", s->e[i].key, s->e[i].val);
-    fclose(f);
+    if (fclose(f) != 0) { if (via_tmp) sk_unlink(tmp); return -1; }
+    if (via_tmp && sk_rename(tmp, s->path) != 0) {
+        /* 原子替换失败：保留 .tmp、目标仍完好（旧版本），返回失败。 */
+        return -1;
+    }
     s->dirty = 0;
     return 0;
 }
