@@ -197,8 +197,10 @@ JDK 17 主机编译门禁、Range 请求数与传输字节由本地 HTTP 服务�
 | `build/` `build-san/` | 编译产物 / Sanitizer 构建 | ❌ |
 
 `products/` 由 `sync_maps.sh` **确定性重建**（路网按 manifest 指纹、地名库按 `.db.meta` 指纹）。
-`.nmbin` 格式自带版本号（`NMBIN_VERSION`），改格式必须顶版本。
+`.nmbin` 格式自带版本号（`NMBIN_VERSION`），改版本必须顶版本。
 用 `--pbf-display=sources` 可让显示层改为运行时从 PBF 解码，`lines/areas/polyrefs` 就不必落盘。
+
+**启动自愈已覆盖图集级旁路产物**（2026-11-13）：`skedaddle` 启动时发现省产物缺失/损坏会就地重建（`autobuild_repair`），此前只重建省路网图，漏掉三样**共享**产物——地名库 `places_auto.db`、地标表 `lm.bin`、块表 `chunks.json(+gz)`——缺了会静默退化（搜索恒空、算路退回直线启发式、Android 差分拿不到清单）。现在 `repair_sidecars` 一并补齐：有省被重建则三样无条件全算；否则只看各自是否缺失/打不开/为空。判据刻意不复刻 `sync_maps.sh` 的 md5 指纹（避免两份实现漂移），只触发于确定性事件。`chunks.json` 是 Python 权威源，桌面发布包不带 `python3`/`scripts/` 时明确告警并降级（桌面运行时零读取）。验收见 `scripts/check_autobuild_sidecars.py`（主机侧门禁，不进 `regress.sh`，副机缺 7 省数据会假红）。
 
 ## 目录
 

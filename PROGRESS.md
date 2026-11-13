@@ -961,3 +961,63 @@ CLI 端到端：`--datum=xa80 --datum-grid=demo.txt`（北 +100 / 东 +200）⇒
     `/bin/rm -rf` 清理 8 个残留目录（4.1 GiB），产物回落到 4.2 GiB。
 - 教训：`regress.sh:312` 只测北京，而 bug 恰恰只在 bbox 不接近正方形的省发作
   ⇒ 「只抽一个近似正方形的省做样本」等于没测；8 省全量判据必须独立存在。
+
+## 十四、2026-11-13 autobuild 补齐图集级旁路产物
+
+背景：第十一/十三节后，`autobuild_repair` 只重建省路网图，漏掉三样**共享**产物。
+它们缺了不会报错，只会静默退化 —— 搜索恒空（地名库）、算路退回直线启发式
+（地标表）、Android 差分拿不到清单（块表）。「只分发 PBF、首次启动自动重建全套」
+的承诺因此是半套的。
+
+### 设计
+- 新增 `repair_sidecars()`：与省循环同模块（`src/map/autobuild.c`），在 `autobuild_repair`
+  的省循环之后、释放 `names` 之前调用，且必须能看到 `st.rebuilt`（有省被重建 ⇒ 三样
+  必然过期，无条件全建；否则只看各自是否缺失/打不开/为空）。
+- 三样各自重建都走「临时文件 → 自检 → 原子就位」，绝不留下半截文件：
+  - 地名库 `places_auto.db(+.meta)`：调 `skedaddle_places_build --sources=全量
+    --db=tmp --meta=tmp`，再 `--selftest`，最后把 meta 里的 `db` 行从临时路径
+    改成正式路径后 `rename` 双文件就位。
+  - 地标表 `lm.bin`：调 `skedaddle_lmbuild_cli --graph=图集根 --out=tmp
+    --cell=3000 --nlm=30`，非空后 `rename`。LM 常量 `AB_LM_NLM/CELL/VER`
+    与 `scripts/sync_maps.sh` 的 `LM_NLM/LM_WANT_VER/--cell` 对齐，由门禁守同步。
+  - 块表 `chunks.json(+gz)`：`gen_chunks.py` 一次收全部省目录生成 + `--sidecar-check`
+    同源复核。找不到 `python3`/`scripts/` 时**降级为告警**（桌面运行时零读取、不算失败），
+    因为桌面发布包不带解释器与脚本。
+- ★ 判据刻意**不复刻** `sync_maps.sh` 的 md5 指纹 / lmfp / meta 下标算法：两份实现
+  必然漂移，会出现「脚本说该转、程序说不转」。autobuild 只触发于两个确定性事件
+  （有省被重建 / 产物自身不可用），永远在更保守的方向动作；`sync_maps.sh` 仍是
+  构建期唯一可信指纹源。
+- 路径：`SKEDADDLE_PLACES` 优先（发布包 start.bat 设）；否则由图集根反推 `products/`。
+  单省模式下 `parent` 取省目录的父目录，与省重建锁共用同一 `parent`。
+- ★ 修出一个真实 bug：`AutoBuildOpt o;` 只显式初始化 `enable/src_dir/tool`，新增的
+  `py/chunks_script/lm_tool` 在 `opt==NULL` 时未初始化，`rebuild_chunks` 会读成野指针。
+  改为 `memset(&o,0,sizeof(o))` 后再置 `enable=1`（与 `if(opt)o=*opt` 配合，
+  调用方均 memset opt，安全）。
+
+### 验收（主机侧门禁，不进 regress.sh）
+- 新增 `tools/autobuild_sidecar_selftest.c` + `scripts/check_autobuild_sidecars.py`：
+  8 组故障注入全绿 + C↔脚本常量一致性。判据全是「计数 + 退出码」，不看时间/体积：
+  1. 真实仓库正常态 ⇒ `sc_checked=0`（三样齐必须零动作，否则每次启动都重建 = 回归）；
+  2-4. 分别删 places / lm / chunks ⇒ 各自恰好补 1 项；
+  5. `--no-build` ⇒ `sc_skipped=1` 且 `sc_rebuilt=0`；
+  6. 注入不存在的 `python3` ⇒ 块表 `sc_degraded=1`（不算失败）；
+  7. 注入 `/bin/false` 假解释器 ⇒ 工具找到了但执行失败，`sc_failed=1`；
+  8. 删 manifest 触发省重建 ⇒ `force` ⇒ 三项全建（rebuilt=1, sc_rebuilt=3）。
+- 注入桩工具：地标表是**全图表**，本机 OOM 跑不动真实 `lmbuild_cli`（实测 exit 137）；
+  成功路径用 `--lm-tool` 注入只写非空文件的桩，验证的是 autobuild 的编排
+  （临时文件→自检→原子就位→计数），真实构建器正确性由 `sync_maps.sh`/`regress.sh` 的
+  `lm_admissible` 覆盖。
+- 与 `check_disp_coverage.py` 同属主机侧门禁的原因：副机缺 7 省数据、且未必带
+  `python3` + `scripts/`，进 `regress.sh` 会假红。
+
+### 验证
+- `cmake --build build_rel -j` 全量重编零警告（含新增 selftest target 与 `autobuild.c` 改动）。
+- `scripts/check_autobuild_sidecars.py` 正常态 + `--self-test` 全绿（`SELFTEST_RC=0`）。
+- `check_layers.sh` + `--self-test` 仍 PASS 0 违规（`<sqlite3.h>` 不触发模块依赖误判，
+  因为门禁只看项目内 `src/` 相对 include）。
+- 完整回归 `SKEDADDLE_BUILD_DIR=$PWD/build_rel scripts/regress.sh`：正常仓库三样齐全，
+  `repair_sidecars` 在 `enable` 判断前早返回，行为零变化（后台跑，结果见上）。
+- 讲义 `docs/teaching/03_binary.md` 的 `autobuild_repair` 全量逐字块同步：
+  行号 `471-586 → 862-986`、`AutoBuildOpt o` 初始化加 `memset`、省循环后插入
+  `repair_sidecars(...)` 调用与旁路产物统计输出。
+- 未做：`autobuild` 触发真实 lm 构建（本机 OOM），真实构建器正确性归 `sync_maps.sh`。

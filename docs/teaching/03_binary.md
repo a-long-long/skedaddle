@@ -1171,7 +1171,7 @@ void coverage_hint(const MapSet *ms, double lat, double lon, int cov,
 }
 ```
 
-### 11. `autobuild_repair` 全量（`autobuild.c:471-586`）
+### 11. `autobuild_repair` 全量（`autobuild.c:862-986`）
 
 ```c
 int autobuild_repair(const char *graph_dir, const AutoBuildOpt *opt,
@@ -1182,9 +1182,8 @@ int autobuild_repair(const char *graph_dir, const AutoBuildOpt *opt,
     double t0 = now_ms();
 
     AutoBuildOpt o;
+    memset(&o, 0, sizeof(o));   /* opt==NULL 时 py/chunks_script/lm_tool 必须为 0(NULL) */
     o.enable  = 1;
-    o.src_dir = NULL;
-    o.tool    = NULL;
     if (opt) o = *opt;
 
     char src_dir[4096], tool[4096];
@@ -1274,6 +1273,10 @@ int autobuild_repair(const char *graph_dir, const AutoBuildOpt *opt,
         else st.failed++;
     }
 
+    /* 省循环之后再补图集级旁路产物：必须在 names 释放前调用，且必须能看到
+     * st.rebuilt（有省被重建 ⇒ 三样全部重算）。 */
+    repair_sidecars(graph_dir, parent, src_dir, single, names, nn, &o, &st);
+
     for (int i = 0; i < nn; i++) free(names[i]);
     free(names);
 
@@ -1285,6 +1288,11 @@ done:
                 "（%.0f ms）\n",
                 st.checked, st.ok, st.rebuilt, st.failed, st.nosrc, st.skipped,
                 st.elapsed_ms);
+    if (st.sidecars_checked)
+        fprintf(stderr,
+                "[自动重建] 旁路产物：补齐 %d、失败 %d、跳过 %d、块表降级 %d\n",
+                st.sidecars_rebuilt, st.sidecars_failed, st.sidecars_skipped,
+                st.sidecars_degraded);
     if (st_out) *st_out = st;
     return 0;
 }

@@ -751,6 +751,11 @@ sk_link_tool(skedaddle_nmbin_schema_selftest skedaddle_map)
 # O2：内容摘要全链判据（标准向量 + 翻字节/截断/换哈希负向注入）
 add_executable(skedaddle_nmbin_verify tools/nmbin_verify.c)
 sk_link_tool(skedaddle_nmbin_verify skedaddle_map)
+
+# 图集级旁路产物自愈：地名库 / 地标表 / 块表，故障注入与正常态都靠计数断言。
+# 只链 skedaddle_map（autobuild.c 所在库），不加载 mapset，跑得快。
+add_executable(skedaddle_autobuild_sidecar_selftest tools/autobuild_sidecar_selftest.c)
+sk_link_tool(skedaddle_autobuild_sidecar_selftest skedaddle_map)
 add_executable(skedaddle_profile_selftest tools/profile_selftest.c)
 sk_link_tool(skedaddle_profile_selftest skedaddle_route skedaddle_map skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem)
 # 地址层（结构化拆分 + 逆地理编码）与最近地点历史：同样各带负向注入模式。
