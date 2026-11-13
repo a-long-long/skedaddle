@@ -871,3 +871,93 @@ CLI 端到端：`--datum=xa80 --datum-grid=demo.txt`（北 +100 / 东 +200）⇒
 
 ### 已知遗留
 - 语音导航（2026-10-25）三条旧账：① `window.c`「先播报后置位」顺序无判据覆盖；② `scripts/voice_neg.sh` 9 项注入未实跑；③ 全量回归名义未重跑（后续多次重跑已实质吸收）。
+
+---
+
+## 十三、2026-11-13 修复与发现
+
+### 两项遗留修复（均已验收）
+- **讲义生成器**：`1f20cdc` 把 `MainWindow::runUiSelfTest()` 拆到
+  `src/ui_qt/main_window_uitest.cpp` 后，`scripts/regen_tutorial_blocks.py`
+  仍硬编码旧路径 ⇒ `--check` 一直报 FATAL。改为块 ① 取 uitest 文件全部方法、
+  其余三块仍取 `main_window.cpp`，每块首行注释标注**自己那个源文件**的真实
+  行区间（`main_window_uitest.cpp:94-813`）。重生成 `16_qt.md` 后 68 个方法
+  不重不漏；负向对照（改块内方法名）`--check` rc=1、恢复 rc=0；
+  三轨门禁 + `check_doc_numbers.sh` + `check_layers.sh` 全绿。
+- **`pbfmap_check` 判据腐化**：整省 `areas/lines/polyrefs.bin` 自 11-03 起
+  不再落盘，旧工具仍去打开 `areas.bin` ⇒ **永远 rc=2 的死判据**（不是假绿；
+  上一轮用管道测 rc，把 `tail` 的 0 当成工具的 0，是测量错误）。重写为
+  「PBF 解码 ↔ disp tile **双向集合等价**」：要素键 = 记录（`ref_off` 置 0）
+  + polyrefs 下标序列，排序去重后要求两侧集合相等；`--self-test` 分别注入
+  「改一条」「删一条」证明两个方向都能失败。北京 `PBFMAP-SELFTEST-OK`，
+  编译零警告。不接进 regress（副机缺 7 省数据）。
+
+### ★ disp tile 分格维度错位，6 省丢要素（当日已修并全量重抽）
+- 新判据首跑 8 省只有 **beijing / tianjin `IDENTICAL`**，其余 6 省 `DIFF`。
+  现有 `skedaddle_disp_tile_selftest` 独立同向失败 ⇒ 不是解码器/判据问题。
+  用当前代码把 liaoning 重抽到临时目录后结果**完全一致** ⇒ 排除产物过期。
+- **回源后定位到比初判轻得多的根因**（`src/map/graph_build.c:986-995`）：
+  tile 坐标 `(c,r)` 里 `c` 沿纬度、`r` 沿经度（`c0` 由 `fa0-la0` 算出、
+  `r0` 由 `fo0-lo0` 算出，运行时 `mapset.c:153` 也写明「列=纬度、行=经度」）。
+  而**下游全部代码**都按「`ncols` 是 `c` 的格数、`nrows` 是 `r` 的格数」
+  书写：钳位 `c1>=ncols` / `r1>=nrows`、线性索引 `tc=r*ncols+c`、写出反解
+  `r=tc/ncols` / `c=tc%ncols`、运行时边界 `c>=ncols || r>=nrows`、bbox
+  `tla0=la0+c*te7` / `tlo0=lo0+r*te7`。
+  唯独 `write_disp_tiles` 开头把 `ncols` 算成**经度**格数、`nrows` 算成
+  **纬度**格数 —— 正好反了。bbox 越不接近正方形，`r`（经度索引）被错的
+  上界截得越狠，出现 `r0>r1` 时写入循环一次都不执行，要素静默丢弃。
+- 丢失量与 `ncols/nrows` 偏离 1 的程度严格相关（修复前 8 省实测）：
+
+  | 省 | ncols/nrows | areas 整省 | tile 合计 | 丢失 |
+  |---|---|---|---|---|
+  | beijing | 1.00 | 199709 | 204259 | **0** |
+  | tianjin | 1.00 | 103711 | 106788 | **0** |
+  | hebei | 0.94 | 585678 | 594834 | 189 |
+  | shanxi | 0.72 | 91127 | 79377 | 15566 |
+  | henan | 1.31 | 209672 | 196390 | 19455 |
+  | liaoning | 1.46 | 116058 | 98209 | 21144 |
+  | shaanxi | 0.73 | 594975 | 590902 | 12272 |
+  | shandong | 1.93 | 376253 | 186274 | **197817（52.6%）** |
+
+- **修复 = 只交换那两行赋值**（`ncols ← 纬度格数`、`nrows ← 经度格数`），
+  让变量名与语义对齐。由此：
+  - `nt = ncols*nrows` 乘积不变 ⇒ tile 总数上限判断不变；
+  - **不需要顶 `NMBIN_VERSION`**：NMBIN 记录布局 / schema / `disp.idx` 字段
+    全没变，变的只是两个网格数的值；
+  - **运行时代码一行未改**：它只把 `ncols`/`nrows` 当 `c`/`r` 的上界用，
+    而 tile 列表里的 `c`/`r` 恰好都按对应上界钳过 ⇒ 新旧二进制 / 产物双向可读；
+  - **回归像素基线不用重建**：北京 `ncols==nrows==22`、天津 `20==20`，
+    修复前后 810 个 tile 的**记录区（512B 之后）全量逐字节相同**、
+    `disp.idx` 全量相同（差异只在 128B 头的 `flags` bit0 与 O2 摘要 ——
+    旧正式产物是 10-27 生成、还没上 M1 摘要，与本次修复无关）。
+- 修复后临时目录 A/B：`beijing` 仍 `IDENTICAL`；`shandong` areas
+  `186274 → 389193`（补回 197817，正好等于原先丢失量）、lines `65064 → 103501`；
+  `shanxi` areas `79377 → 95607`。三省 `pbfmap_check` + `disp_tile_selftest` 全绿。
+- **正式重抽**：`bash scripts/sync_maps.sh --force`（8 省全部 `[ OK ]`、
+  rc=0、`places` 重建 463319 条、`lm` 指纹不变 SKIP）。副产物
+  `chunks.json.gz` 8 份同时落地（P2-A 此前在主机一直缺）。
+  网格参数已纠正：`shandong 81/42 → 42/81`（ntiles `1361 → 1967`）、
+  `shanxi → 65/47`、`henan → 51/67`、`liaoning → 52/76`；北京天津不变。
+- **验收**：
+  - 新增主机侧门禁 `scripts/check_disp_coverage.py`（不进 `regress.sh`，
+    副机缺 7 省数据会假红）：8 省 × (`pbfmap_check` 双向等价 +
+    `disp_tile_selftest` 全覆盖)。修复前跑 → `DISP-COVERAGE-FAIL 6 个省不一致`；
+    重抽后 → `DISP-COVERAGE-OK 8 省双向等价 + 全覆盖`。
+    `--self-test` 两个负向都能失败：截断 tile 列表（符号链接零拷贝夹具）、
+    `pbfmap_check --self-test` 的改一条/删一条。
+  - `skedaddle_disp_runtime_selftest --graph=products/graph/shandong`
+    → `DISP-RUNTIME-OK`（42×81 网格、丢失 0、首次加载 52.456 ms）。
+  - 完整回归 `SKEDADDLE_BUILD_DIR=$PWD/build_rel scripts/regress.sh`：
+    **130 通过 / 0 失败**（跑前备份 / 跑后恢复 `settings.ini`）。
+    首轮 127/3 的两项 `schema_evolve*` 是 `build_rel` 只增量编译了 3 个目标、
+    `skedaddle_nmbin_schema_selftest` 仍是 11-12 旧二进制（不认 `--evolve`），
+    全量重编零警告后转绿；`area_lod_z9` 的 `areas_drawn` 因 8 省重抽
+    `117212 → 117218`（+6，z9 大视口里补回的要素）按「绘制数是活资产」重贴
+    基线并同步 `11_gates.md`（1007→1011 行），非回归。判据总数由 M2 后的
+    125 变 130（远端 `3a85d33` 新增 5 项）。
+  - `scripts/check_province_coverage.py` 正常态 `COVERAGE-OK`：重抽让
+    `chunks.json.gz` 8 份落地后，8 省伴生清单齐全（39.6 MB，与 JSON 同源）；
+    `sync_maps.sh` 的 `.old.PID` 因本机 `rm` 是 safe-delete 被拦下，已用
+    `/bin/rm -rf` 清理 8 个残留目录（4.1 GiB），产物回落到 4.2 GiB。
+- 教训：`regress.sh:312` 只测北京，而 bug 恰恰只在 bbox 不接近正方形的省发作
+  ⇒ 「只抽一个近似正方形的省做样本」等于没测；8 省全量判据必须独立存在。

@@ -176,7 +176,9 @@ JDK 17 主机编译门禁、Range 请求数与传输字节由本地 HTTP 服务�
 ./build/skedaddle --graph=products/graph --pbf-display=sources:3
 ```
 
-解码结果与落盘文件**8 省逐字节相同**（`build/skedaddle_pbfmap_check` 可验证），渲染端零改动。
+解码结果与构建期显示层数据**逐要素等价**（`build/skedaddle_pbfmap_check` 可验证：整省 `lines/areas/polyrefs.bin` 自 2026-11-03 起不再落盘，判据已改为与 disp tile 做**双向集合比对**），渲染端零改动。8 省全量由 `scripts/check_disp_coverage.py` 守（`regress.sh` 只测北京，副机缺另外 7 省数据）。
+
+> 2026-11-13：该判据曾暴露 `write_disp_tiles()` 的分格维度错位（6 省丢要素，山东面要素缺 52.6%），已修并全量重抽，现 8 省均 `IDENTICAL`。根因与数据见 `PROGRESS.md` 第十三节。
 代价是首次进省要同步解码（天津 0.6 s / 北京 1.6 s / 河北 4.4 s），适合后台预热。
 
 ⚠️ 省磁盘的收益有限：nmbin 的 4.2 G 里 **94% 是路由图**（A\* 需要全图），那部分省不掉。

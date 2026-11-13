@@ -12,7 +12,7 @@
 - ★ Linux UOS aarch64 Release：`source env.sh && cmake -S . -B build_rel -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/home/along/.local/qt5-dev/usr -DQt5_DIR=/home/along/.local/qt5-dev/usr/lib/aarch64-linux-gnu/cmake/Qt5 && cmake --build build_rel -j$(nproc)`；protoc-c 缺库 `export LD_LIBRARY_PATH=/home/along/.local/usr/lib/aarch64-linux-gnu`。`build_release.sh` 仅 Windows；无头 `QT_QPA_PLATFORM=offscreen`。
 - ★★★ `skedaddle_graph_extract --out=` 必须与脚本 `OUT_ROOT`(=`products/graph`) 逐字一致；`products/` 全可删由 `sync_maps.sh` 重建；tile 化失败致命无兜底，唯一显示源 disp tile；`--graph=` 一次一省；`osmid.bin` 已停生成/停校验。
 - ★★★ Windows/MSYS2 编译期 PATH 绝不能放 Qt bin（空 stderr + 退出码 1）；Qt bin 仅运行期。包装器空 stderr ≠ Defender ⇒ `c++ -fsyntax-only` 看真错误。发布包 `rm -rf` 被 safe-delete 拦 ⇒ `--clean-first` + 旧 dist 改名 + `--no-rebuild`。
-- `regress.sh`：**2026-11-12 M2 后实跑 125/0**（87/0、109/0、115/0 均为历史口径，每加判据记新总数）。★ `SKEDADDLE_BUILD_DIR=$PWD/build_rel`（缺省 `build/` 陈旧 ⇒ 假绿）；编译零警告（`-Werror`）；完整回归写脏 `view_*` ⇒ 跑前备份 `~/.config/skedaddle/settings.ini`、跑完恢复；跑完 commit+push。改 `regress.sh` 后必跑 `regen_tutorial_blocks.py`（无 --check）→ 再 `--check`（Edit 改讲义翻 CRLF ⇒ 生成器再跑一次归一化）。
+- `regress.sh`：**2026-11-13 实跑 130/0**（87/0、109/0、115/0、125/0 均为历史口径，每加判据记新总数；`3a85d33` 加 5 项）。★ `SKEDADDLE_BUILD_DIR=$PWD/build_rel`（缺省 `build/` 陈旧 ⇒ 假绿）；★★ **只增量编译少量目标会让新增判据假红**（`schema_evolve*` 曾因 `nmbin_schema_selftest` 是旧二进制 rc=2）⇒ 改完源码跑完整回归前先 `cmake --build build_rel -j$(nproc)` 全量重编；编译零警告（`-Werror`）；完整回归写脏 `view_*` ⇒ 跑前备份 `~/.config/skedaddle/settings.ini`、跑完恢复；跑完 commit+push。改 `regress.sh` 后必跑 `regen_tutorial_blocks.py`（无 --check）→ 再 `--check`（Edit 改讲义翻 CRLF ⇒ 生成器再跑一次归一化）。
 - 副机全量还需运行期 PATH 含 `dist/skedaddle-release`（缺 ⇒ rc=127）+ Qt bin + `ucrt64/bin`；缺 7 省数据的 FAIL 非回归。
 
 ## 改动纪律（最容易翻车）
@@ -42,3 +42,9 @@
 - 渲染：简化几何/去描边/面 tile 索引/顶点内联/软件预取/合并折线/NMBIN v3/瓦片缓存条带复用；贵在间接寻址非 stride。★★★ 换语言 C→Rust 不是杠杆（`-O3`/`-march=native` 零收益）。
 - 算路：rev.bin v2 / PQ 叉数≠4 / 状态表改布局；地标 >30 无收益。分带并行与标注并行已落地（两处共享缓存坑看 FULL）。
 - D161 中国 POI 不合并；补全国走 `sync_maps.sh` 加省 PBF。性能/覆盖/Android 口径勿跨口径相减。
+
+## 2026-11-13 新增（disp tile 维度 / 对拍口径）
+- ★★★ **disp tile 网格维度**：`(c,r)` 里 **c 沿纬度、r 沿经度**；`ncols` = c 的格数（**纬度**格数）、`nrows` = r 的格数（**经度**格数）。钳位 `c1>=ncols`/`r1>=nrows`、线性索引 `tc=r*ncols+c`、写出反解、运行时边界 `c>=ncols||r>=nrows`、bbox 全按此写。`graph_build.c:989-990` 曾把两行算反 ⇒ bbox 越不接近正方形丢得越多（山东丢 52.6% 面要素）。**只交换两行即修**，NMBIN 布局 / `disp.idx` 字段 / 运行时代码全不变、不顶版本、新旧双向可读。
+- ★★★ **判据只测北京看不出这个 bug**：北京/天津 `ncols==nrows`（22/22、20/20）永远 0 丢失；`regress.sh:312` 只测北京。8 省全量走 `scripts/check_disp_coverage.py`（主机侧，副机缺 7 省数据 ⇒ 不进 regress）。改 `graph_build.c` 必须 `sync_maps.sh --force` 重抽 8 省才生效（产物不进 git）；`area_lod_z9` 的 `areas_drawn` 是活资产，重抽后重贴（117212→117218，+6）。
+- ★★ **NMBIN 产物零回归对拍要剥掉 512B 头/字段表只比记录区**：全文件哈希会因 `flags` bit0 + O2 `sha256(payload)` 全变（旧产物 10-27 生成、无摘要），与逻辑改动无关。北京 810 个 tile 记录区 + `disp.idx` 全量相同即证明像素基线不用重建。
+- ★★ 回源核验能推翻「格式级变更」的初判：先读**下游所有消费者**再定修复范围，别凭摘要里的根因描述动手。

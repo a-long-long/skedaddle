@@ -985,9 +985,18 @@ static int write_disp_tiles(Graph *g, const char *dir, const char *src,
 
     int64_t tile_e7 = 1000000;                       /* 0.1° 起，过大就翻倍 */
     long ncols, nrows;
+    /* ★ 维度约定（2026-11-13 修）：tile 坐标 (c,r) 中 c 沿纬度、r 沿经度
+     * （见下面 c0 由 fa0-la0 算出、r0 由 fo0-lo0 算出，及 mapset.c 的
+     * 「列=纬度、行=经度」）。下游一律按「ncols 是 c 的格数、nrows 是 r
+     * 的格数」书写：钳位、线性索引 tc=r*ncols+c、写出反解、运行时边界检查。
+     * 所以 ncols 必须是纬度格数、nrows 必须是经度格数。旧代码把两者按
+     * 经/纬算反，bbox 越不接近正方形，r 的上界被截得越狠，出现 r0>r1
+     * 时写入循环一次都不执行，要素被静默丢弃（山东曾丢 52.6% 面要素）。
+     * 只换这两行即对齐语义：NMBIN 记录布局与 disp.idx 字段都没变，运行时
+     * 只是把这两个数当 c/r 的上界用，新旧二进制与产物双向可读。 */
     for (;;) {
-        ncols = (long)((span_lon + tile_e7 - 1) / tile_e7);
-        nrows = (long)((span_lat + tile_e7 - 1) / tile_e7);
+        ncols = (long)((span_lat + tile_e7 - 1) / tile_e7);   /* c：纬度方向格数 */
+        nrows = (long)((span_lon + tile_e7 - 1) / tile_e7);   /* r：经度方向格数 */
         if (ncols < 1) ncols = 1;
         if (nrows < 1) nrows = 1;
         if ((uint64_t)ncols * (uint64_t)nrows <= 4096) break;
