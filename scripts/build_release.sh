@@ -65,8 +65,13 @@ cp -r "$ROOT/fonts" "$DIST/fonts"
 if [ -d "$BUILD/lang" ]; then cp -r "$BUILD/lang" "$DIST/lang"; fi
 # aria2 下载引擎随包（findAria2 优先找 exe 同目录，2026-11-15）：
 # 没有 aria2 时下载自动回退内置 Qt 段实现，缺它不影响可用性。
+# 双平台：Windows 用 aria2c.exe，Linux/macOS 用无后缀 aria2c（放哪个
+# 复制哪个；Linux 也可不发二进制、依赖发行版 PATH 里的系统 aria2）。
 if [ -f "$ROOT/tools/aria2/aria2c.exe" ]; then
     cp "$ROOT/tools/aria2/aria2c.exe" "$DIST/"
+fi
+if [ -f "$ROOT/tools/aria2/aria2c" ]; then
+    cp "$ROOT/tools/aria2/aria2c" "$DIST/"
 fi
 
 # ---- 3) Qt 依赖收集 ----------------------------------------------------

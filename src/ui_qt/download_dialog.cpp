@@ -534,10 +534,18 @@ static QString findAria2Impl()
         const QString p = QString::fromLocal8Bit(env);
         if (QFile::exists(p)) return p;
     }
+    /* Linux/macOS 同样支持（2026-11-15）：二进制名无 .exe 后缀（发行版
+     * apt/brew 装的 aria2 命中 PATH 兜底；也可把官方/静态构建的 aria2c
+     * 放到 exe 同目录或 tools/aria2/ 走"随包"路径，与 Windows 同逻辑）。 */
     const QString appDir = QCoreApplication::applicationDirPath();
+#ifdef Q_OS_WIN
+    const char *exeName = "aria2c.exe";
+#else
+    const char *exeName = "aria2c";
+#endif
     for (const QString &c : {
-             appDir + QStringLiteral("/aria2c.exe"),              /* 发布包随带 */
-             QDir::cleanPath(appDir + QStringLiteral("/../tools/aria2/aria2c.exe")),
+             appDir + QStringLiteral("/") + exeName,                    /* 发布包随带 */
+             QDir::cleanPath(appDir + QStringLiteral("/../tools/aria2/") + exeName),
          })
         if (QFile::exists(c)) return c;
     return QStandardPaths::findExecutable(QStringLiteral("aria2c"));
