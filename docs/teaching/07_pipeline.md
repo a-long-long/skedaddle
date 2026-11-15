@@ -10,19 +10,18 @@
 - 口述一帧的 9 步渲染顺序（底图 → 要素 → 标注 → 覆盖层）；
 - 解释"为什么 `app_render_to_buf` 是唯一渲染入口"——Qt 与离屏都经它；
 - 说明 `paint_route` 的"投影一次、两遍复用（白描边 + 彩芯）"与 `done_seg` 切分"已走/未走"；
-- 读懂 `app_offscreen_audit` 的"按字节比色"断言，以及 `chrome` 在最上层浮绘（含无图区提示）；
+- 读懂 `app_offscreen_audit` 的"按字节比色"断言，以及 `chrome` 在最上层浮绘（无图区提示已于 2026-11-13 移交 Qt 下载窗）；
 - 用 `render/labels.c` 的三个真实缺陷案例说清**标注层不是"把名字画上去"这么简单**：缓存何时重查、行政区名怎么分级、14px CJK 为什么发灰，以及为什么"字没了"要先切加载路径 / 缓存，而不是先怀疑数据。
 
 ## 二、功能构成
 
 | 关键函数 / 结构体 | 文件:行号区间 | 职责 |
 |---|---|---|
-| `paint_frame` | `window.c:1309-1573` | 一帧的 9 步编排（底图→要素→标注→覆盖层→夜间→chrome） |
-| `app_render_to_buf` | `window.c:1575-1592` | 绑定像素缓冲后调 `paint_frame`，Qt 与离屏共用唯一入口 |
+| `paint_frame` | `window.c:1309-1574` | 一帧的 9 步编排（底图→要素→标注→覆盖层→夜间→chrome） |
+| `app_render_to_buf` | `window.c:1576-1593` | 绑定像素缓冲后调 `paint_frame`，Qt 与离屏共用唯一入口 |
 | `PaintStats` | `paint.h:57-73` | 分阶段计时/计数（含 `areas_dotted` 等确定性量） |
 | `paint_route` / `RSeg` | `navdraw.c:49-123` / `navdraw.c:15` | 路线折线：白描边 + 蓝芯/(已走灰) 两遍 |
 | `paint_nav_car` / `fill_triangle` | `navdraw.c:151-181` / `navdraw.c:127-149` | 车头三角箭头（蓝芯白边），按航向旋转 |
-| `paint_nomap_banner` + `nfill/nrect/ntext` | `navdraw.c:551-634` / `navdraw.c:29-47` | 无图区提示横幅（"你为什么看不到东西"） |
 | `app_offscreen_audit` | `audit.c:79-217`（声明 `audit.h:43-44`） | 像素计数 + 断言共享模块（被 `offscreen_shot` 复用） |
 | `paint_chrome` / `draw_nomap` | `chrome.c:612-630` / `chrome.c:396-415` | nav-desktop 风格界面层（11 类元素）+ 无图卡片 |
 | `paint_place_labels` / `paint_road_labels` | `labels.c:667-825` / `labels.c:831-887` | 地名/POI/路名标注：SQL 缓存、行政区名分级、命令列表与避让格（§3.6） |
@@ -33,7 +32,7 @@
 
 ## 三、完整实现代码
 
-### 1. `paint_frame` 的 9 步流程（`window.c:1309-1573`）
+### 1. `paint_frame` 的 9 步流程（`window.c:1309-1574`）
 
 ```c
 static void paint_frame(Raster *rs, App *a, PaintStats *st)
@@ -288,12 +287,13 @@ static void paint_frame(Raster *rs, App *a, PaintStats *st)
         }
     }
 
-    /* 无地图区域提示画在最上层：它解释的是"你为什么看不到东西"，
-       被面板或按钮压住就失去意义了。 */
+    /* 覆盖状态照常每帧计算（cov_state / cov_place 供 Qt 前端的 tick() 判定
+     * "浏览到无图区 → 直开下载窗"，window.h 的 cov_* 块有完整说明）。
+     * ★ 2026-11-13：画布上的黑底无图横幅（paint_nomap_banner）已删除——
+     *   提示职责整体移交 Qt 前端（浏览到无图区直接弹「下载地图」窗），
+     *   不再画布上叠横幅。离屏审计 nomap_banner_px 判据同步改为
+     *   "无图区也不得再出现横幅像素"（见 audit.c）。 */
     app_update_coverage(a);
-    if (a->cov_state == COV_NONE || a->cov_state == COV_BBOX_ONLY)
-        paint_nomap_banner(rs, &a->view, a->font, a->font_size + 8, a->cov_state,
-                           &a->cov_place, app_ovl_a(a, OVL_NOMAP));
 
     /* nav-desktop 风格 chrome（自绘标题栏 / 顶栏 / 右栏 / 导航栏 /
        步骤面板 / 主菜单 / 无图卡片 / 比例尺 / 指北针 / 昼夜）叠在最上层；
@@ -303,7 +303,7 @@ static void paint_frame(Raster *rs, App *a, PaintStats *st)
 }
 ```
 
-### 2. `app_render_to_buf` —— 唯一共享渲染入口（`window.c:1575-1592`）
+### 2. `app_render_to_buf` —— 唯一共享渲染入口（`window.c:1576-1593`）
 
 ```c
 int app_render_to_buf(App *a, void *px, int w, int h, size_t stride,
@@ -487,7 +487,7 @@ void paint_nav_car(Raster *rs, const MapView *v,
 }
 ```
 
-无图区提示横幅 `paint_nomap_banner` 及其"只淡底板、前景保持清晰"的浮层助手：
+浮层助手 `nfill/nrect/ntext`（navdraw.c:29-47）仍被指令条 / 搜索框 / 导航面板使用（"只淡底板、前景保持清晰"）；曾与它们同节的画布无图横幅已于 2026-11-13整体删除，提示职责移交 Qt 前端（浏览到无图区直接打开「下载地图」窗并预选）。`paint_frame` 里只保留覆盖状态计算：
 
 ```c
 static uint8_t g_ovl_a = 255;
@@ -512,139 +512,30 @@ static void ntext(Font *f, Raster *rs, int x, int y, const char *t,
 ```
 
 ```c
-void paint_nomap_banner(Raster *rs, const MapView *v, Font *f, int line_h,
-                        int cov_state, const CovPlace *pl, uint8_t ovl_a)
-{
-    if (!rs || !v) return;
-    if (cov_state != COV_NONE && cov_state != COV_BBOX_ONLY) return;
-    g_ovl_a = ovl_a;   /* 顶部无图提示条整体半透明 */
+    /* 覆盖状态照常每帧计算（cov_state / cov_place 供 Qt 前端的 tick() 判定
+     * "浏览到无图区 → 直开下载窗"，window.h 的 cov_* 块有完整说明）。
+     * ★ 2026-11-13：画布上的黑底无图横幅（paint_nomap_banner）已删除——
+     *   提示职责整体移交 Qt 前端（浏览到无图区直接弹「下载地图」窗），
+     *   不再画布上叠横幅。离屏审计 nomap_banner_px 判据同步改为
+     *   "无图区也不得再出现横幅像素"（见 audit.c）。 */
+    app_update_coverage(a);
 
-    /* 四行：状态 / 这是哪儿 / 该下哪块 / 怎么装。
-     * 文案与 coverage_hint() 同源（都读 CovPlace），避免两处说法漂移；横幅这里
-     * 只是压短——C 核心自绘 + 离屏审计都走这条路径。 */
-    const char *country  = (pl && pl->country[0])  ? pl->country  : "";
-    const char *prov     = (pl && pl->prov[0])     ? pl->prov     : "";
-    const char *city     = (pl && pl->city[0])     ? pl->city     : "";
-    const char *district = (pl && pl->district[0]) ? pl->district : "";
-
-    char l0[160], l1[256], l2[192], l3[192];
-
-    snprintf(l0, sizeof(l0), "%s",
-             (cov_state == COV_NONE)
-                 ? "该区域没有地图数据"
-                 : "附近没有路网数据（水域 / 尚未采集的区域）");
-
-    /* "这是哪儿"：查到几层报几层；在已加载省之外时补上离最近省有多远 */
-    if (pl && pl->nearest_km > 1.0) {
-        snprintf(l1, sizeof(l1), "位置：%s%s%s，距最近的省（%s）约 %.0f km",
-                 country, *country ? " · " : "", "已加载范围之外",
-                 *prov ? prov : "—", pl->nearest_km);
-    } else if (*country || *prov || *city || *district) {
-        snprintf(l1, sizeof(l1), "位置：%s%s%s%s%s%s%s",
-                 country,  *country  ? " · " : "",
-                 prov,     *prov     ? " · " : "",
-                 city,     *city     ? " · " : "",
-                 district);
-    } else {
-        snprintf(l1, sizeof(l1), "位置：无法判断（未加载任何省份数据）");
-    }
-
-    if (pl && pl->dl_label[0])
-        snprintf(l2, sizeof(l2), "建议下载：%s", pl->dl_label);
-    else
-        snprintf(l2, sizeof(l2), "建议下载：在『地图 → 下载全球地图』里按国家/省份选择");
-
-    /* ★ 不写"按 X 键"：D 已被昼夜切换占用、Ctrl+D 是加收藏，横幅不该引导用户
-     *   去按一个会触发别的事的键。统一指向菜单项（Qt 前端里那是真入口）。 */
-    snprintf(l3, sizeof(l3), "『地图 → 下载全球地图』可直接定位到该地区");
-
-    const char *lines[4] = { l0, l1, l2, l3 };
-    int n = 4;
-
-    /* ★ 行距与高度都按 paint_nav_banner 的同一套口径算（那里是被视觉验收过的）：
-     *   基线从 line_h 起（不是从 7 起，否则首行会顶到边框外），
-     *   每行步进 line_h + 6（不是 +4，否则中文行会互相压住）。
-     *   历史坑：初版照抄了旧的 3 行版 `y+7 + i*(line_h+4)`，4 行时行距不够、
-     *   首行还超出底板 —— 截图里能直接看到文字压在边框上。 */
-    int wmax = 0;
-    if (f) for (int i = 0; i < n; i++) {
-        int tw = font_text_w(f, lines[i]);
-        if (tw > wmax) wmax = tw;
-    } else {
-        wmax = 520;
-    }
-    int row_step = line_h + 6;
-    int bw = wmax + 24;
-    if (bw > v->w - 40) bw = v->w - 40;
-    if (bw < 200) bw = 200;
-    /* ★ 首行基线的算法：font_draw_a 的 y 是**基线**，字形往上长一个字高。
-     *   line_h 传进来是 font_size + 8 ⇒ 字高 ≈ line_h - 8。
-     *   所以基线至少要 by + (line_h - 8) 才不让首行顶出底板；
-     *   取 by + line_h 再多留几像素余量。实测 by+10 会把首行裁掉上半截。 */
-    int top_pad = line_h;                  /* 首行基线相对底板顶的偏移 */
-    int bh = top_pad + (n - 1) * row_step + 12;
-    int bx = (v->w - bw) / 2;
-    int by = 12;
-
-    nfill(rs, bx, by, bw, bh, 48, 34, 8, 232);
-    nrect(rs, bx, by, bw, bh, 255, 186, 64, 255);
-
-    if (!f) return;
-    for (int i = 0; i < n; i++) {
-        int ly = by + top_pad + i * row_step;   /* 基线 */
-        if (i == 0) ntext(f, rs, bx + 12, ly, lines[0], 255, 208, 96, 0);
-        else        ntext(f, rs, bx + 12, ly, lines[i], 238, 240, 245, 0);
-    }
-}
 ```
 
 ### 4. `audit` —— 像素计数 + 断言（被 `offscreen_shot` 复用）（`audit.c:79-217`）
 
 ```c
-/* 在 C 核心地图缓冲上做全套像素计数 + 断言 + 日志打印。
- * 返回 0=全部 ASSERT-OK；1=有 ASSERT-FAIL。 */
-int app_offscreen_audit(const App *a, const uint8_t *buf, int w, int h, int stride,
-                        const PaintStats *st, const AuditCtx *c)
-{
-    /* GPX 可见性判定（用 a->view 投影）。
-     * 软件渲染不混色，画上去就是原值 ⇒ 可以精确数像素。
-     * ★ 判据与"有几条**看得见**的轨迹"挂钩，而不是"大于 0"：轨迹整段落在
-     *   视口外时画面本来就该没有轨迹像素（合法情况，不能算失败）；
-     *   反过来，看得见却一个像素都没有 ⇒ 渲染层真的坏了。 */
-    int gpx_trk_drawn = 0, gpx_trk_visible = 0, gpx_fav_visible = 0;
-    for (int i = 0; i < a->gpx.n_trk; i++) {
-        const GpxTrack *t = &a->gpx.trk[i];
-        if (t->n < 2) continue;                 /* <2 点画不出线段 */
-        gpx_trk_drawn++;
-        /* 与 paint_tracks 的裁剪口径一致：任一端点落进"视口 + 64 margin"
-         * 就算可见（整段都在外面才会被跳过）。 */
-        for (uint32_t k = 0; k + 1 < t->n; k++) {
-            int x0, y0, x1, y1;
-            mv_project(&a->view, t->lat_e7[k] / 1e7, t->lon_e7[k] / 1e7, &x0, &y0);
-            mv_project(&a->view, t->lat_e7[k + 1] / 1e7, t->lon_e7[k + 1] / 1e7, &x1, &y1);
-            if (!((x0 < -64 && x1 < -64) || (x0 > w + 64 && x1 > w + 64) ||
-                  (y0 < -64 && y1 < -64) || (y0 > h + 64 && y1 > h + 64))) {
-                gpx_trk_visible++;
-                break;
-            }
-        }
-    }
-    for (int i = 0; i < a->gpx.n_wpt; i++) {
-        /* 与 paint_favorites 自己的裁剪口径一致（视口外 16px 不计） */
-        int x, y;
-        mv_project(&a->view, a->gpx.wpt[i].lat, a->gpx.wpt[i].lon, &x, &y);
-        if (x >= -16 && y >= -16 && x <= a->view.w + 16 && y <= a->view.h + 16)
-            gpx_fav_visible++;
-    }
 
     int fail = 0;
-    /* 无地图区域时"画不出路"是预期结果，不能再当失败；
-       这时该断言的是"提示横幅画出来了没有"——否则会出现
-       "既没地图、也没提示"这种最差情况却显示 ASSERT-OK。
-       横幅边框是琥珀色 (255,186,64)，数它的像素即可。 */
+    /* 无地图区域时"画不出路"是预期结果，不能再当失败。
+     * ★ 2026-11-13 口径反转：画布上的无图横幅已删除（提示职责移交 Qt 前端
+     *   的"浏览到无图区 → 直开下载地图窗"），两个分支断言的都是
+     *   "**不得出现横幅像素**"。横幅底板是 (48,34,8)、边框琥珀色
+     *   (255,186,64)，数底板色像素即可；阈值 2000 沿用旧注释的实测依据
+     *   （密集路网/注记的深色像素在容差 8 下假阳性 222~525 px）。 */
     char cov_prov[64];
     double flat, flon;
-    app_focus_point(a, &flat, &flon);      /* 与界面上的提示用同一个点 */
+    app_focus_point(a, &flat, &flon);      /* 与 Qt 下载窗触发用同一个点 */
     int cov = mapset_coverage(&a->ms, flat, flon, 3000,
                               cov_prov, sizeof(cov_prov));
     printf("coverage       %d  省=%s\n", cov, cov_prov[0] ? cov_prov : "-");
@@ -653,95 +544,13 @@ int app_offscreen_audit(const App *a, const uint8_t *buf, int w, int h, int stri
             printf("ASSERT-FAIL    一帧都没画出来（视口里没有路？）\n");
             fail = 1;
         }
-        long bp = count_overlay_px(buf, stride, w, h, 48, 34, 8, 232,
-                                       app_ovl_a(a, OVL_NOMAP));
-        /* 阈值 2000：横幅改 75% 半透明后判的是"混合后近色（容差 8）"，会撞上
-         * 密集路网/注记的深色像素 —— 实测 8 省 z13 假阳性 222~525 px（判 200
-         * 全假红，截图目视确认根本没有横幅、cov=COV_HAS_ROAD）；真横幅
-         * r_nomap 实测 10341 px。2000 与两侧各隔 4 倍以上。 */
-        if (bp > 2000) {
-            printf("ASSERT-FAIL    有地图却画出了无地图提示横幅（%ld px）\n", bp);
-            fail = 1;
-        }
-    } else {
-        long bp = count_overlay_px(buf, stride, w, h, 48, 34, 8, 232,
-                                       app_ovl_a(a, OVL_NOMAP));
-        printf("nomap_banner_px %ld\n", bp);
-        if (bp <= 200) {
-            printf("ASSERT-FAIL    无地图区域却没有提示横幅（用户会以为程序坏了）\n");
-            fail = 1;
-        }
     }
-
-    if (c->have_search) {
-        /* 输入框是 (250,250,250) 的白底：框没画出来时会是 0。
-           几何算对了但忘了调 paint_search_box 的话，只有这条能抓住。 */
-        /* 数边框 (110,170,255) 而不是白底 (250,250,250)：
-         * 白底混完是 249，离背景色 244 太近，容差一放宽就把背景也算进来了。 */
-        long boxpix = count_overlay_px(buf, stride, w, h, 20, 28, 44, 236,
-                                       app_ovl_a(a, OVL_SEARCH));
-        printf("search_box_px  %ld\n", boxpix);
-        if (boxpix <= 200) { printf("ASSERT-FAIL    画面里没有搜索框\n"); fail = 1; }
-    }
-
-    if (c->have_route) {
-        long npix = count_color_px(buf, stride, w, h,
-                                   NAV_ROUTE_R, NAV_ROUTE_G, NAV_ROUTE_B);
-        printf("route_pixels   %ld\n", npix);
-        /* 路线画没画上去，只能靠像素数断言：几何算对了但投影/裁剪写错时，
-           里程打印全对、画面上却一条线都没有（这类"数据对、画面错"的回归
-           用眼睛最难发现）。 */
-        if (npix <= 0) { printf("ASSERT-FAIL    画面里没有路线像素\n"); fail = 1; }        if (c->have_sim) {
-            long dpix = count_color_px(buf, stride, w, h, 130, 138, 150);
-            printf("done_pixels    %ld（已走过那段的灰色像素）\n", dpix);
-            double prog = navsim_progress(&a->sim);
-            /* 走过一段之后画面上必须同时有灰和蓝：全是蓝说明"已走过"没画，
-               全是灰说明切分点写反了。 */
-            if (prog > 0.05 && prog < 0.95) {
-                if (dpix <= 0) { printf("ASSERT-FAIL    已走过那段没画成灰色\n"); fail = 1; }
-                if (npix <= 0) { printf("ASSERT-FAIL    未走那段没有蓝色像素\n"); fail = 1; }
-            }
-            if (c->deviate_m > 60.0 && !navsim_offroute(&a->sim, 0)) {
-                printf("ASSERT-FAIL    注入 %.0f m 偏移却没判偏航（实测 %.1f m）\n",
-                       c->deviate_m, a->sim.off_m);
-                fail = 1;
-            }
-        }
-        double tol = a->rr.total_m * 0.001 + 1.0;
-        if (a->man.n < 2 || fabs(a->man.sum_m - a->rr.total_m) > tol) {
-            printf("ASSERT-FAIL    指令里程和 %.1f m != 总里程 %.1f m\n",
-                   a->man.sum_m, a->rr.total_m);
-            fail = 1;
-        }
-    }
-
-    /* GPX 轨迹色（调色板四色轮换，见 map/gpx.c 的 kPalette）+ 收藏金。 */
-    if (c->n_gpx_in > 0) {
-        long trk_px = 0;
-        static const int pal[][3] = {
-            { 232, 62, 158 }, { 0, 178, 178 }, { 150, 92, 220 }, { 110, 190, 60 }
-        };
-        for (int k = 0; k < 4; k++)
-            trk_px += count_color_px(buf, stride, w, h, pal[k][0], pal[k][1], pal[k][2]);
-        long fav_px = count_color_px(buf, stride, w, h, 245, 190, 40);   /* 收藏金芯 */
-        printf("gpx_trk_px     %ld（%d 条可画 / %d 条可见）\n",
-               trk_px, gpx_trk_drawn, gpx_trk_visible);
-        printf("gpx_fav_px     %ld（%d 个可见收藏）\n", fav_px, gpx_fav_visible);
-        if (gpx_trk_visible > 0 && trk_px <= 0) {
-            printf("ASSERT-FAIL    %d 条轨迹在视口内，画面里却没有轨迹像素\n",
-                   gpx_trk_visible);
-            fail = 1;
-        }
-        if (gpx_fav_visible > 0 && fav_px <= 0) {
-            printf("ASSERT-FAIL    %d 个收藏在视口内，画面里却没有金色像素\n",
-                   gpx_fav_visible);
-            fail = 1;
-        }
-    }
-    if (fail) return 1;
-    printf("ASSERT-OK\n");
-    return 0;
-}
+    long bp = count_overlay_px(buf, stride, w, h, 48, 34, 8, 232,
+                                   app_ovl_a(a, OVL_NOMAP));
+    printf("nomap_banner_px %ld\n", bp);
+    if (bp > 2000) {
+        printf("ASSERT-FAIL    画布上仍画出了无图横幅（提示职责已移交下载窗）\n");
+        fail = 1;
 ```
 
 > `audit.c` 里的 `count_color_px` / `count_near_color_px` / `count_overlay_px` 是纯逐字节比色（`p[2]=R, p[1]=G, p[0]=B`，忽略 alpha），与 `QImage::Format_RGB32` 同源。这些辅助函数已完整存在于 `audit.c:25-75`，为控篇幅此处不再重列，可在 `src/ui/audit.c:25-75` 查阅。
@@ -988,7 +797,7 @@ static void label_flush(Raster *rs)
   `./build_rel/skedaddle --shot-offscreen --graph=products/graph/beijing --lat=39.9 --lon=116.4 --zoom=11 --w=1280 --h=800 --out=frame.bmp`
   看 stdout 的分阶段耗时 `ms_bg/ms_areas/ms_roads/ms_lines/ms_labels`，以及 `coverage` / `route_pixels` / `nomap_banner_px` / `ASSERT-OK`。
 - **练习**：在 `paint_frame` 里新加一个 `TICK(ms_mystage)`，包住某段代码，看耗时出现在哪（复用既有的 `TICK` 宏）。
-- **练习**：把一条可见路线画进无图区（或反之），跑 `app_offscreen_audit`，观察"有地图却画出无图横幅"或"无图区却没提示横幅"的 `ASSERT-FAIL` 被抓出。
+- **练习**：把一条可见路线画进无图区（或反之），跑 `app_offscreen_audit`，观察"画布上仍画出了无图横幅"的 `ASSERT-FAIL` 被抓出（2026-11-13 起横幅已删，判据反转为"不得出现横幅像素"）。
 - **练习（标注层）**：
   - **[负向对照]** 用 `SKEDADDLE_LABEL_HALO=0 SKEDADDLE_FONT_SHARP=1.0 SKEDADDLE_POI_R=6` 出一张 z12 图，与默认图跑 `python3 scripts/bmpdiff.py`；差异应为 0 的**旧图对**与明显非 0 的**新旧对**都要能解释。
   - 把 `bbox_moved_far()` 里的跨度比判据删掉，重编后用**同进程连续缩放**台架（不是离屏单帧）复现 500 米以下没字，再恢复。
@@ -999,7 +808,12 @@ static void label_flush(Raster *rs)
 - **验收（标注层）**：能说清"没字"的四步排查顺序（字体 → 缓存 → 阈值/避让 → 数据），解释纯缩放为什么骗过旧的 bbox 判据，以及为什么白描边全比例尺之后旧的「z14 像素 0%」口径作废。
 - **验收（标注层 · LOD 与开关）**：能口头画出「比例尺越大越详细」这条规格在代码里的三个落点——`kind_max_for_zoom()`（地名档位）、`road_name_cls_max()`（路名等级）、`LIMIT ?6`（候选名额）；并说清一个 POI 总开关为什么要同时改图标、文字/避让格、SQL 名额三处，少改一处分别会看到什么怪现象。
 
-## 六、源码演进补记（2026-11-12 同步）
+## 六、源码演进补记
+> **2026-11-13**：画布无图横幅（`paint_nomap_banner`）已删除，提示职责移交
+> Qt 前端"浏览到无图区 → 直开下载地图窗并预选"；`paint_frame` 只留覆盖状态
+> 计算，离屏审计 `nomap_banner_px` 判据反转为"不得出现横幅像素"。§1 逐字块
+> 与功能构成表已按当日源码重贴/删行。
+（2026-11-12 同步）
 
 > 本课主线写于 2026-11-06/07，之后 `src/` 在 11-10、11-11 两批提交里长大了
 > 约 3000 行。本节列出**讲义与当前源码的差异**，避免把历史诊断案例当成当前实现说明。

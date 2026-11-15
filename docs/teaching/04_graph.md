@@ -17,6 +17,7 @@
 | `coordkey.h` | `coord_key_e7` 坐标主键（路由跨省缝合用） |
 
 **`GraphBuildStats`**（`graph_build.h:15-47`）：建图全程计数器，`rt_unknown_drivable` 是必须为 0 的闸门（漏掉一条能走的路，比多画一条走不通的严重）。
+**2026-11-15 首次真实数据触发**：蒙古数据踩到 `highway=residentail`（OSM 拼写错误），闸门拒写 manifest——按纪律在 `road_tags.c` 补表后放行（与既有 `secundary` 条目同类）。新地图的未知 highway 取值必须补表，这条不是标语。
 
 **建图上下文 `Graph`**（`graph_build.c:71-102`）：临时 Buf 池（`ways`/`refs`/`restr`/`lines`/`areas`、边数组 `e_*`）、第 1 遍后去重排序的 `ids[]` 与经纬度 `lat/lon/osm_id`、落盘后的 CSR（`node_edge_begin`/`node_edge_count`/`csr_of` 等）、名字池与限制落盘缓冲。
 

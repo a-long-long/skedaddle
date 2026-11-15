@@ -17,7 +17,7 @@
 
 | 阶段 | 对应课次 | 关键文件 / 函数 | 路径与行号区间 |
 |---|---|---|---|
-| 数据生产（PBF→二进制→建图） | L2 / L3 / L4 | `scripts/sync_maps.sh`、`tools/graph_extract.c`（`graph_build`、`nmbin_open`、`rev_write`） | `scripts/sync_maps.sh:1-431`（完整体见第三节）；`tools/graph_extract.c:1-171`（完整体见第三节） |
+| 数据生产（PBF→二进制→建图） | L2 / L3 / L4 | `scripts/sync_maps.sh`、`tools/graph_extract.c`（`graph_build`、`nmbin_open`、`rev_write`） | `scripts/sync_maps.sh:1-483`（完整体见第三节）；`tools/graph_extract.c:1-171`（完整体见第三节） |
 | 每帧渲染（视口投影→软件光栅→管线） | L5 / L6 / L7 | `src/ui/offscreen_shot.c`（`offscreen_shot_main`、`render_buffer`、`write_bmp24`、`app_offscreen_audit`）、`map/map_view.c`（`mv_project`、`mv_visible_bbox`） | `src/ui/offscreen_shot.c:194-647`（`offscreen_shot_main` 完整体）；关键段见第三节 |
 | 用户交互（搜索→路由→导航语音） | L8 / L9 / L10 | `tools/route_cli.c`（`router_route_ll`、`maneuver_build`）、`src/ui/window.c`（`app_nav_plan_sync`）、`route/maneuver.c`、`route/voice.c`、`ui/voice_wire.c` | `tools/route_cli.c:46-338`（main 完整体）；`--maneuvers` 块见第三节 |
 | Qt 外壳（跨平台段 · 可选，第 16 课） | L16 | `src/ui_qt/qt_main.cpp`、`map_canvas.cpp`、`main_window.cpp` | `CMakeLists.txt:530-595`（`skedaddle` 目标） |
@@ -55,7 +55,13 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="$ROOT/build"
+# 构建目录：SKEDADDLE_BIN 显式指定（GUI 里下载完自动转换时由程序传入
+# exe 所在目录，兼容 build_rel 这类非标准名）> build > build_rel。
+BIN="${SKEDADDLE_BIN:-$ROOT/build}"
+if ! [ -x "$BIN/skedaddle_graph_extract" ] && ! [ -x "$BIN/skedaddle_graph_extract.exe" ] \
+   && [ -x "$ROOT/build_rel/skedaddle_graph_extract.exe" ]; then
+    BIN="$ROOT/build_rel"
+fi
 SRC_DIR="$ROOT/sources"
 OUT_ROOT="$ROOT/products/graph"
 
@@ -80,7 +86,7 @@ for arg in "$@"; do
     esac
 done
 
-# 二进制依赖 ~/.local 里的 protobuf-c（编译期链入），不 source 就跑不起来
+# 二进制链接了 ~/.local 里的 protobuf-c / SDL2，不 source 就跑不起来
 SKEDADDLE_ENV_QUIET=1 . "$ROOT/env.sh"
 
 # ---- 跨平台小工具（GNU 与 BSD/macOS 双兼容）--------------------------------
@@ -234,6 +240,34 @@ while IFS= read -r f; do
     rm -f "$tmp.check.log" || printf '        注意：%s 删不掉，请手工清理\n' "$tmp.check.log"
     fi
 
+    # ---- M2 / O3：4 KiB 块哈希 sidecar -----------------------------------
+    # 位置很关键：必须在 skedaddle_graph_check 通过**之后**（失败产物不生成块表），
+    # 且在 mv 就位**之前**（块表要和新产物一起原子切换）。
+    # 块表只是校验清单 / 差分索引，运行时加载路径一个字节都不读它。
+    if ! python3 "$ROOT/scripts/gen_chunks.py" "$tmp" > "$tmp.chunks.log" 2>&1; then
+        printf '[FAIL ] %-12s chunks.json 生成失败，已丢弃本次产物\n' "$name"
+        tail -3 "$tmp.chunks.log" | sed 's/^/        /'
+        rm -f "$tmp.chunks.log"
+        drop_tmp "$tmp"
+        n_fail=$((n_fail+1))
+        continue
+    fi
+    rm -f "$tmp.chunks.log" || printf '        注意：%s 删不掉，请手工清理\n' "$tmp.chunks.log"
+
+    # ---- P2-A：chunks.json.gz 伴生（服务端 gzip 传输 + ETag / 304） ----------
+    # gen_chunks.py 写 JSON 时已用同一份字节串同源产出 .gz；这里**只读复核一次**，
+    # 让「伴生损坏」和「块表损坏」一样丢弃本次产物，绝不发布半套清单。
+    # ★ 仍是零格式变更：chunks.json 原样保留，Android parseChunks() 不用改。
+    if ! python3 "$ROOT/scripts/gen_chunks.py" --sidecar-check "$tmp" > "$tmp.sidecar.log" 2>&1; then
+        printf '[FAIL ] %-12s chunks.json.gz 伴生校验失败，已丢弃本次产物\n' "$name"
+        tail -3 "$tmp.sidecar.log" | sed 's/^/        /'
+        rm -f "$tmp.sidecar.log"
+        drop_tmp "$tmp"
+        n_fail=$((n_fail+1))
+        continue
+    fi
+    rm -f "$tmp.sidecar.log" || printf '        注意：%s 删不掉，请手工清理\n' "$tmp.sidecar.log"
+
     # ---- 切换：先给旧产物让位，再把新产物搬到正式位置 ----
     # 顺序很关键，绝不能写成 `rm -rf "$dir"; mv "$tmp" "$dir"`：
     # 一旦删除被外部安全策略拦下（目录还在），mv 会把新产物塞进旧目录里，
@@ -356,7 +390,25 @@ else
                     "$(( $(date +%s) - t0 ))" \
                     "$(sqlite3 "$PLACES_DB" 'select count(*) from place' 2>/dev/null)" "$PLACES_DB"
             else
-                printf '[FAIL ] %-12s 新库无法就位\n' "places"; n_fail=$((n_fail+1))
+                # 2026-11-15：程序开着时（GUI 里点下载必然如此）地名库句柄被
+                # 运行中的 skedaddle 占着，mv 报 Device or resource busy——
+                # 这不是构建问题，重试几次；仍占用就保留旧库、降级为 WARN。
+                # （地名库不再 FAIL 整个转换：路网/地标表照常交付。）
+                p_ok=0
+                for _ in 1 2 3; do
+                    sleep 2
+                    if mv -f "$ptmp" "$PLACES_DB" && mv -f "$pmtmp" "$PLACES_META"; then
+                        p_ok=1; break
+                    fi
+                done
+                if [ "$p_ok" = 1 ]; then
+                    printf '[ OK  ] %-12s %s 秒，place %s 条 → %s（重试后就位）\n' "places" \
+                        "$(( $(date +%s) - t0 ))" \
+                        "$(sqlite3 "$PLACES_DB" 'select count(*) from place' 2>/dev/null)" "$PLACES_DB"
+                else
+                    printf '[WARN ] %-12s 地名库被运行中的程序占用，保留旧库；关闭程序后重跑 sync_maps.sh 即可入库新地名\n' "places"
+                    rm -f "$ptmp" "$pmtmp" "$ptmp.log"
+                fi
             fi
             rm -f "$ptmp.log" "$pmtmp"
         else

@@ -1,0 +1,8 @@
+[package]
+name = "rust-mini"
+version = "0.1.0"
+edition = "2021"
+# 零外部依赖：与 C 版演化链「零 SDL/Qt」对应——离线可编译，
+# 语言点全部落在 std（切片/Result/迭代器/BinaryHeap）上教学。
+
+[dependencies]
