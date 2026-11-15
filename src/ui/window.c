@@ -1558,12 +1558,13 @@ static void paint_frame(Raster *rs, App *a, PaintStats *st)
         }
     }
 
-    /* 无地图区域提示画在最上层：它解释的是"你为什么看不到东西"，
-       被面板或按钮压住就失去意义了。 */
+    /* 覆盖状态照常每帧计算（cov_state / cov_place 供 Qt 前端的 tick() 判定
+     * "浏览到无图区 → 直开下载窗"，window.h 的 cov_* 块有完整说明）。
+     * ★ 2026-11-13：画布上的黑底无图横幅（paint_nomap_banner）已删除——
+     *   提示职责整体移交 Qt 前端（浏览到无图区直接弹「下载地图」窗），
+     *   不再画布上叠横幅。离屏审计 nomap_banner_px 判据同步改为
+     *   "无图区也不得再出现横幅像素"（见 audit.c）。 */
     app_update_coverage(a);
-    if (a->cov_state == COV_NONE || a->cov_state == COV_BBOX_ONLY)
-        paint_nomap_banner(rs, &a->view, a->font, a->font_size + 8, a->cov_state,
-                           &a->cov_place, app_ovl_a(a, OVL_NOMAP));
 
     /* nav-desktop 风格 chrome（自绘标题栏 / 顶栏 / 右栏 / 导航栏 /
        步骤面板 / 主菜单 / 无图卡片 / 比例尺 / 指北针 / 昼夜）叠在最上层；

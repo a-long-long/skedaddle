@@ -405,7 +405,7 @@ static void draw_nomap(Raster *rs, App *a, const CLay *L)
     rtext(a->font, rs, x + 20, y + 16, "未加载地图数据", 200, 70, 50, 0);
     /* 图集为空 ⇒ 没有任何省 bbox，反查无从谈起（coverage_locate 会返回空）。
      * 所以这里只能给"去哪儿下"的通用指引；具体到某省的定位由浏览到无图区时
-     * 的横幅 / Qt 弹窗负责（那条路径才有坐标可反查）。 */
+     * 的 Qt 下载窗负责（那条路径才有坐标可反查）。 */
     rtext(a->font, rs, x + 20, y + 44,
               "打开『地图 → 下载全球地图』选国家/省份", 90, 96, 110, 0);
     rtext(a->font, rs, x + 20, y + 66,

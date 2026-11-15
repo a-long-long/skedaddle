@@ -560,7 +560,7 @@ endif()
 if(QT)
     message(STATUS "Qt 前端: 启用 (${QT} ${${QT}Widgets_VERSION})"
             " | Qt Positioning: ${HAVE_QT_POSITIONING}")
-    add_executable(skedaddle
+    set(SK_QT_SOURCES
         src/ui_qt/qt_main.cpp
         src/ui_qt/map_canvas.cpp
         src/ui_qt/qt_font.cpp
@@ -579,6 +579,25 @@ if(QT)
         src/ui_qt/satellite_source.cpp
         src/ui_qt/nmea_parser.cpp
         src/ui_qt/nmea_source.cpp)
+    # 门禁版（控制台子系统）：regress/自检要解析 stdout，终端必须保留 ——
+    # 任何 Windows 双击弹终端的问题都不许靠改这个目标解决。
+    add_executable(skedaddle ${SK_QT_SOURCES})
+    # 用户版（2026-11-13）：GUI 子系统（WIN32 ⇒ -mwindows），双击不弹终端。
+    # 与 skedaddle 同源码，仅入口子系统不同；它的 stdout 不可见，
+    # 所以 regress.sh 与全部自检一律吃门禁版，发布包（build_release.sh）吃这个。
+    if(WIN32)
+        # 用户版：双击不弹终端。★ 不用 WIN32 关键字：它会把 Qt6 的
+        # EntryPointPrivate（GUI 版 WinMain）拉进来，实测（2026-11-13，
+        # MinGW 16 + LTO）其引用的 CRT 数据导入 __imp___argc 无法解析，
+        # 链接必败；关 LTO 又会撞上本工程 -fno-fat-lto-objects 的 IR-only
+        # 对象。改用手工 -mwindows：子系统换成 windows，Qt 仍走 console 的
+        # EntryPointMinimum，WinMain 由 MinGW 运行时的默认桩提供（内部调 main）。
+        add_executable(skedaddlegui ${SK_QT_SOURCES})
+        target_link_options(skedaddlegui PRIVATE -mwindows)
+        set(SK_QT_TARGETS skedaddle skedaddlegui)
+    else()
+        set(SK_QT_TARGETS skedaddle)
+    endif()
     # 应用图标：作为 Qt 资源嵌入二进制（资源路径 :/app_icon.png），由
     # qt_main.cpp 的 QApplication::setWindowIcon 挂到所有窗口/任务栏。
     # Qt5/Qt6 各自提供对应的资源编译宏，这里按 QT 实测选择。
@@ -588,12 +607,13 @@ if(QT)
     else()
         qt5_add_resources(SKEDADDLE_QT_RC_GEN ${SKEDADDLE_QT_QRC})
     endif()
-    target_sources(skedaddle PRIVATE ${SKEDADDLE_QT_RC_GEN})
+    foreach(SK_QT_TGT ${SK_QT_TARGETS})
+    target_sources(${SK_QT_TGT} PRIVATE ${SKEDADDLE_QT_RC_GEN})
     # 直接链各子模块库（与 sk_link_tool 同款）：CMake 展开成相对路径
     # libskedaddle_*.a（链接器 cwd=build 可找到），绕开 skedaddle_core 空壳
     # （skedaddle_core 仅含 core_anchor.c，未聚合子模块，且 CMake 会把它
     #  展开成 -lskedaddle_core 而缺 -L build，导致链接失败）。
-    target_link_libraries(skedaddle PRIVATE
+    target_link_libraries(${SK_QT_TGT} PRIVATE
         skedaddle_pbf skedaddle_geo skedaddle_strpool skedaddle_plat skedaddle_mem skedaddle_units skedaddle_sha256
         skedaddle_map skedaddle_search skedaddle_route skedaddle_render skedaddle_ui skedaddle_settings skedaddle_i18n
         ${ZLIB_LIBRARIES} ${SQLITE3_LIBRARIES} ${PROTOC_LIB} ${SK_LEAF_SYS_LIBS}
@@ -601,29 +621,30 @@ if(QT)
     # skedaddle 直接引用 src/ 下的头（ui/window.h、i18n/i18n.h、utils/* 等），
     # 需要源码根在 include 路径。历史上该路径靠 skedaddle_core 的传递 + 旧 .obj
     # 缓存"恰好能编"，reconfigure 后全量重编才暴露缺失——这里显式补上。
-    target_include_directories(skedaddle PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_include_directories(${SK_QT_TGT} PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
     # 真实卫星源：平台定位后端（HAVE_QT_POSITIONING 编译期宏 + 链 Positioning）。
     # 本机 mingw_64 不带 Positioning ⇒ 宏不定义 ⇒ 整段编译降级为模拟星座兜底。
     if(HAVE_QT_POSITIONING)
-        target_compile_definitions(skedaddle PRIVATE HAVE_QT_POSITIONING=1)
-        target_link_libraries(skedaddle PRIVATE ${SKEDADDLE_POSITIONING_LIB})
+        target_compile_definitions(${SK_QT_TGT} PRIVATE HAVE_QT_POSITIONING=1)
+        target_link_libraries(${SK_QT_TGT} PRIVATE ${SKEDADDLE_POSITIONING_LIB})
     endif()
     # 串口（可选）：本机构建未带 SerialPort ⇒ 宏不定义 ⇒ nmea_source 的串口分支
     # 编译降级为"不支持串口"提示（TCP/UDP 仍可用）。
     if(HAVE_QT_SERIALPORT)
-        target_compile_definitions(skedaddle PRIVATE HAVE_QT_SERIALPORT=1)
-        target_link_libraries(skedaddle PRIVATE ${SKEDADDLE_SERIALPORT_LIB})
+        target_compile_definitions(${SK_QT_TGT} PRIVATE HAVE_QT_SERIALPORT=1)
+        target_link_libraries(${SK_QT_TGT} PRIVATE ${SKEDADDLE_SERIALPORT_LIB})
     endif()
 
-    # 语言包：拷贝到构建目录与 skedaddle.exe 同级的 lang/
+    # 语言包：拷贝到构建目录与 exe 同级的 lang/
     # （运行时 i18n 按 exe 目录下的 lang/<code>.xml 加载，文件缺失则回退内置 TR[]）
-    add_custom_command(TARGET skedaddle POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:skedaddle>/lang"
+    add_custom_command(TARGET ${SK_QT_TGT} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${SK_QT_TGT}>/lang"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_SOURCE_DIR}/lang/en.xml"
-                "$<TARGET_FILE_DIR:skedaddle>/lang/en.xml"
+                "$<TARGET_FILE_DIR:${SK_QT_TGT}>/lang/en.xml"
         COMMENT "拷贝英文语言包 lang/en.xml")
+    endforeach()
 
     message(STATUS "Qt 前端: 启用 (${QT} ${${QT}Widgets_VERSION})")
 

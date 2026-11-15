@@ -111,13 +111,15 @@ int app_offscreen_audit(const App *a, const uint8_t *buf, int w, int h, int stri
     }
 
     int fail = 0;
-    /* 无地图区域时"画不出路"是预期结果，不能再当失败；
-       这时该断言的是"提示横幅画出来了没有"——否则会出现
-       "既没地图、也没提示"这种最差情况却显示 ASSERT-OK。
-       横幅边框是琥珀色 (255,186,64)，数它的像素即可。 */
+    /* 无地图区域时"画不出路"是预期结果，不能再当失败。
+     * ★ 2026-11-13 口径反转：画布上的无图横幅已删除（提示职责移交 Qt 前端
+     *   的"浏览到无图区 → 直开下载地图窗"），两个分支断言的都是
+     *   "**不得出现横幅像素**"。横幅底板是 (48,34,8)、边框琥珀色
+     *   (255,186,64)，数底板色像素即可；阈值 2000 沿用旧注释的实测依据
+     *   （密集路网/注记的深色像素在容差 8 下假阳性 222~525 px）。 */
     char cov_prov[64];
     double flat, flon;
-    app_focus_point(a, &flat, &flon);      /* 与界面上的提示用同一个点 */
+    app_focus_point(a, &flat, &flon);      /* 与 Qt 下载窗触发用同一个点 */
     int cov = mapset_coverage(&a->ms, flat, flon, 3000,
                               cov_prov, sizeof(cov_prov));
     printf("coverage       %d  省=%s\n", cov, cov_prov[0] ? cov_prov : "-");
@@ -126,24 +128,13 @@ int app_offscreen_audit(const App *a, const uint8_t *buf, int w, int h, int stri
             printf("ASSERT-FAIL    一帧都没画出来（视口里没有路？）\n");
             fail = 1;
         }
-        long bp = count_overlay_px(buf, stride, w, h, 48, 34, 8, 232,
-                                       app_ovl_a(a, OVL_NOMAP));
-        /* 阈值 2000：横幅改 75% 半透明后判的是"混合后近色（容差 8）"，会撞上
-         * 密集路网/注记的深色像素 —— 实测 8 省 z13 假阳性 222~525 px（判 200
-         * 全假红，截图目视确认根本没有横幅、cov=COV_HAS_ROAD）；真横幅
-         * r_nomap 实测 10341 px。2000 与两侧各隔 4 倍以上。 */
-        if (bp > 2000) {
-            printf("ASSERT-FAIL    有地图却画出了无地图提示横幅（%ld px）\n", bp);
-            fail = 1;
-        }
-    } else {
-        long bp = count_overlay_px(buf, stride, w, h, 48, 34, 8, 232,
-                                       app_ovl_a(a, OVL_NOMAP));
-        printf("nomap_banner_px %ld\n", bp);
-        if (bp <= 200) {
-            printf("ASSERT-FAIL    无地图区域却没有提示横幅（用户会以为程序坏了）\n");
-            fail = 1;
-        }
+    }
+    long bp = count_overlay_px(buf, stride, w, h, 48, 34, 8, 232,
+                                   app_ovl_a(a, OVL_NOMAP));
+    printf("nomap_banner_px %ld\n", bp);
+    if (bp > 2000) {
+        printf("ASSERT-FAIL    画布上仍画出了无图横幅（提示职责已移交下载窗）\n");
+        fail = 1;
     }
 
     if (c->have_search) {

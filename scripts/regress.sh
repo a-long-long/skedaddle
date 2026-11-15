@@ -139,7 +139,7 @@ shot r_liaoning "$GRAPH/liaoning" 41.80 123.43 13
 shot r_all_z9   "$GRAPH"          39.90 116.40  9
 shot r_all_z11  "$GRAPH"          39.90 116.40 11
 shot r_all_z13  "$GRAPH"          39.90 116.40 13
-shot r_nomap    "$GRAPH"          30.00 110.00 11   # 图集外：必须出下载提示横幅
+shot r_nomap    "$GRAPH"          30.00 110.00 11   # 图集外：横幅已删（2026-11-13），判据=不得出现横幅像素
 
 echo "=== 面要素 LOD 档位（AREA_DOT_PX=4，2026-11-02 按 tile 路径重定档）"
 # 主判据是确定性量 areas_dotted（走小面路径的面数），不是时间。
