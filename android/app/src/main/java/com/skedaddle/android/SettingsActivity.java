@@ -119,7 +119,7 @@ public class SettingsActivity extends AppCompatActivity {
         dlg.show();
         new Thread(() -> {
             try {
-                File apk = UpdateChecker.downloadApk(this, u.apkUrl);
+                File apk = UpdateChecker.downloadApk(this, u.apkUrl, u.sha256);
                 mUi.post(() -> {
                     dlg.dismiss();
                     Toast.makeText(this, R.string.update_downloaded, Toast.LENGTH_SHORT).show();

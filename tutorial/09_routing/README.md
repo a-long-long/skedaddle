@@ -29,3 +29,16 @@ gcc -std=c11 -O2 -o tut main.c && ./tut
 `src/route/st.c`（`StateTab`，主键 `coord_key_e7`）、`src/route/lmtable.c`（Landmark 下界）。
 
 **练习**：把 `w` 在 1.0~2.0 之间多取几个值，画出"展开数 vs w"的曲线，观察贪心度与代价/最优性的权衡。
+
+**生产补记（2026-11-15）**：算路不只要答案，还要保证**对象活得比搜索久**。
+
+- `Router` 里保存的是 `&MapSet`；`app_reload_maps()` 现在先 `nav_stop=1` 并等待 `nav_busy` 归零，
+  再销毁 `Router`，最后才 `mapset_free()`。否则下一次算路会读已释放的 `ms`。
+- 后台算路期间 `paint_frame()` 不再调用 `mapset_set_view()` / `app_update_coverage()`：
+  卸省会 `munmap` 正在被 A* 读的 `nodes/edges`，加载新省也会改 `loaded` 和文件指针。
+- `rev.bin` 加载新增 `start[]` 单调性检查：尾哨兵只能证明最后一项没坏，不能证明中间项。
+- 对 Rust 读者：这类问题是 C 的“所有权没有类型表达”；Rust 里对应的做法是让搜索持有
+  `Arc<MapSet>` 或用生命周期把 `Router<'a>` 钉在 `MapSet` 上，重载时类型系统会逼你先处理借用。
+
+**练习**：把 `w` 在 1.0~2.0 之间多取几个值，画出"展开数 vs w"的曲线；再思考：如果 `Router` 改成
+`Router<'a> { ms: &'a MapSet }`，`app_reload_maps()` 的签名需要怎样改？

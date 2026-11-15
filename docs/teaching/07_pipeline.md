@@ -17,8 +17,8 @@
 
 | 关键函数 / 结构体 | 文件:行号区间 | 职责 |
 |---|---|---|
-| `paint_frame` | `window.c:1309-1574` | 一帧的 9 步编排（底图→要素→标注→覆盖层→夜间→chrome） |
-| `app_render_to_buf` | `window.c:1576-1593` | 绑定像素缓冲后调 `paint_frame`，Qt 与离屏共用唯一入口 |
+| `paint_frame` | `window.c:1380-1650` | 一帧的 9 步编排（底图→要素→标注→覆盖层→夜间→chrome） |
+| `app_render_to_buf` | `window.c:1652-1669` | 绑定像素缓冲后调 `paint_frame`，Qt 与离屏共用唯一入口 |
 | `PaintStats` | `paint.h:57-73` | 分阶段计时/计数（含 `areas_dotted` 等确定性量） |
 | `paint_route` / `RSeg` | `navdraw.c:49-123` / `navdraw.c:15` | 路线折线：白描边 + 蓝芯/(已走灰) 两遍 |
 | `paint_nav_car` / `fill_triangle` | `navdraw.c:151-181` / `navdraw.c:127-149` | 车头三角箭头（蓝芯白边），按航向旋转 |
@@ -32,7 +32,7 @@
 
 ## 三、完整实现代码
 
-### 1. `paint_frame` 的 9 步流程（`window.c:1309-1574`）
+### 1. `paint_frame` 的 9 步流程（`window.c:1380-1650`）
 
 ```c
 static void paint_frame(Raster *rs, App *a, PaintStats *st)
@@ -65,7 +65,12 @@ static void paint_frame(Raster *rs, App *a, PaintStats *st)
         (int32_t)(vb[0] * 1e7), (int32_t)(vb[1] * 1e7),
         (int32_t)(vb[2] * 1e7), (int32_t)(vb[3] * 1e7)
     };
-    mapset_set_view(&a->ms, evb);   /* 进省才加载、离省卸载（见 mapset.c） */
+    /* ★ 后台算路期间主线程不得改 MapSet：Router/A* 直接读 srcs[].nodes/edges，
+     *   卸省会 munmap 正在被搜索的映射；加载新省同样会改 loaded/指针。
+     *   算路结束后下一帧再恢复正常的按需加载/卸载。 */
+    int nav_busy = nav_busy_snapshot(a);
+    if (!nav_busy)
+        mapset_set_view(&a->ms, evb);   /* 进省才加载、离省卸载（见 mapset.c） */
 
     /* ★ 整省被别的省完全包含的（dup_of >= 0，加载时按 bbox 包含 + 抽样
        ≥99% 命中判定，实测北京/天津 ⊂ 河北 100%）——渲染直接跳过，不去重、
@@ -293,7 +298,7 @@ static void paint_frame(Raster *rs, App *a, PaintStats *st)
      *   提示职责整体移交 Qt 前端（浏览到无图区直接弹「下载地图」窗），
      *   不再画布上叠横幅。离屏审计 nomap_banner_px 判据同步改为
      *   "无图区也不得再出现横幅像素"（见 audit.c）。 */
-    app_update_coverage(a);
+    if (!nav_busy) app_update_coverage(a);
 
     /* nav-desktop 风格 chrome（自绘标题栏 / 顶栏 / 右栏 / 导航栏 /
        步骤面板 / 主菜单 / 无图卡片 / 比例尺 / 指北针 / 昼夜）叠在最上层；
@@ -303,7 +308,7 @@ static void paint_frame(Raster *rs, App *a, PaintStats *st)
 }
 ```
 
-### 2. `app_render_to_buf` —— 唯一共享渲染入口（`window.c:1576-1593`）
+### 2. `app_render_to_buf` —— 唯一共享渲染入口（`window.c:1652-1669`）
 
 ```c
 int app_render_to_buf(App *a, void *px, int w, int h, size_t stride,

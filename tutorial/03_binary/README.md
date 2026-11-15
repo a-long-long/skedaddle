@@ -27,3 +27,17 @@ gcc -std=c11 -O2 -o tut main.c && ./tut
 `src/map/mapset.c`（`MapSrc`/`MapSet`、后台解码线程）。
 
 **练习**：给字段表加一个 `speed`(u32)，重新写+读，确认读端只改字段表就能解析新字段、无需改 struct。
+
+**生产补记（2026-11-15）**：自描述头只证明“布局自洽”，不证明文件内容可信。
+本批给四类加载器补了语义校验：
+
+- `names.bin`：`count` 必须能容纳 `count+1` 个 offset，`off[0]=0`、`off[count]=blob_len`、offset 单调且不越过 blob；
+  `count=UINT32_MAX` 不再因 `count+1` 回绕而跳过检查。
+- `tiles.bin`：`rec_count>=2`，且 `minx+nx`、`miny+ny`、`nx*ny` 都在网格/记录数范围内；
+  避免 `rec_count-2` 无符号下溢。
+- `lm.bin`：头里的 `nrow*ncol*nlm*2` 先做溢出检查，并要求文件长度精确等于“头 + 表体”。
+- `rev.bin`：除尾哨兵外，还要求 `start[]` 全表单调不减且不超过 `list_count`，防止正文被篡改后越界读 `list`。
+
+**练习**：构造一个 `names.bin`，把 `off[1]` 改成 `0xFFFFFFFF`，确认 `name_pool_open()` 返回失败而不是让渲染读坏内存。
+
+**Rust 对照**：Rust 教程 step03 的 `Result` + 切片索引已经挡住“越界读”，但“offset 语义”仍要显式校验；见 `tutorial/rust/README.md` §七。

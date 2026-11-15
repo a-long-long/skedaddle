@@ -30,3 +30,15 @@ gcc -std=c11 -O2 -D_DEFAULT_SOURCE -o tut main.c plat.c && ./tut
 
 **练习**：在 `plat.c` 里加一个 `sk_mkdir_p(const char*)`（Windows 用 `_mkdir`、POSIX 用 `mkdir`），
 并在 `main.c` 里调用它创建一个目录——体会"只改 plat.c、业务侧零改动"。
+
+**生产补记（2026-11-15）**：平台层不是“编过就算”，要覆盖真实路径形态。
+
+- `graph_root_dir()` 改用 `sk_last_sep()`，Windows 的 `C:\beijing` / `products\graph\beijing` 也能找对父目录；
+  旧实现只 `strrchr('/')`，反斜杠路径会返回 `"."`，`lm.bin` 被静默跳过。
+- `app_gpx_import_dir()` 从直接 `opendir/readdir/closedir` 改为 `sk_dir_open/sk_dir_next/sk_dir_close`，
+  MSVC 不再需要 `dirent.h`。
+- CMake 把 SDL2 改为**可选**：只有 `skedaddle_blend_equiv` / `skedaddle_clip_equiv` 需要它；
+  核心/Qt 在没有 SDL2 的机器上照常构建。
+
+**练习**：在 Windows 上分别用 `--graph=products/graph/beijing` 和 `--graph=products\graph\beijing` 启动，
+确认两条路径都能加载 `lm.bin`（没有表时日志应明确说“未加载”而不是悄悄退回）。

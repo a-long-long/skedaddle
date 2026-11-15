@@ -1540,3 +1540,20 @@ void maneuver_text(const Maneuver *m, char *buf, size_t n)
   2. `coord_key_e7`（`coordkey.h:26`）让一个物理路口只展开一次——对比 `(省,节点)` 主键初版的 111 万状态/97 秒问题。
   3. `skedaddle_heap_selftest` 随机序列下每次 pop 取当前最小值；`skedaddle_restr_ab` 验证转向限制使里程变化只在被测因素上。
   4. `lm_table_match`（`lmtable.c:90`）保证重抽 PBF 后旧 `lm.bin` 被丢弃回退直线启发式，避免悄悄次优。
+
+## 附：2026-11-15 生命周期补记
+
+- **`Router` 里保存 `&MapSet`**：`router_create()` 只保存指针；`app_reload_maps()` 必须先
+  `nav_stop=1` 并等 `nav_busy` 归零，再 `router_destroy()`，最后 `mapset_free()`。
+  否则下载新省后下一次算路会读已释放的 `MapSet`；新图集省份更多时 `r->ri/rv` 还会越界。
+- **算路期间冻结图集变更**：`paint_frame()` 在 `nav_busy` 时不调用 `mapset_set_view()` /
+  `app_update_coverage()`。原因是后台 A* 直接读 `ms->srcs[].nodes/edges`，而
+  `src_unload()` 会 `munmap`，`src_open_files()` 会改 `loaded` 与文件指针。
+- **`rev.bin` 全表单调性**：尾哨兵只证明最后一项；`rev_load()` 现在还要求
+  `start[0] <= … <= start[n] <= list_count`，防止正文被改后 `expand_dir()` 越界读 `list`。
+
+**Rust 对照**：Rust 里对应的是让 `Router<'a>` 借 `MapSet`，或搜索持有 `Arc<MapSet>`；
+重载时借用检查会先逼你处理旧 `Router`。见 `tutorial/rust/README.md` §七。
+
+**验收口径**：`app_reload_maps()` 后 `router==NULL`，随后重新创建 Router 仍 `ROUTE-OK`；
+算路中把视口移出省，省保持 loaded，算路结束后才卸载。

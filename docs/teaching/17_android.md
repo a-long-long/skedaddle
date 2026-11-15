@@ -265,6 +265,19 @@ Android 工程里没有任何 `src/` 的拷贝。编成单个 STATIC 再链进 S
   `sk_android_set_paths` 为什么必须早于 `app_init`、alpha 为什么必须补、thirdparty 为什么
   必须 vendor、以及为什么新增一个前端没有改动分层 DAG。
 
+## 2026-11-15 安全补记（下载清单 / OTA）
+
+- **清单 `id` 白名单**：`Manifests.validProvinceId()` 只允许 `[A-Za-z0-9._-]`，
+  拒绝 `.`、`..` 和包含 `..` 的值。`id` 会进入 `new File(graphDir, id)` 与
+  `new File(cacheDir, id + ".zip")`，不能再靠“服务端不会返回怪值”。
+- **APK sha256**：`app/update.json` 新增可选 `sha256`；`UpdateChecker.downloadApk(ctx, url, sha256)`
+  调用 `Downloader.downloadVerified()`，清单带哈希时整包校验一致才落盘。
+  旧服务端不带该字段时仍兼容，但会记录“未校验”，只依赖 Android 安装器签名校验。
+- **文档**：`docs/android.md` 的更新清单示例已加入 `sha256` 字段。
+
+**验收**：`Manifests.java` 用 `android/tests/stub/org/json` 做 `javac` 编译；
+真实 APK 安装仍需 ARM64 构建机 / 真机，不在本次静态改动范围内。
+
 ## 已知限制（v1，见 `docs/android.md` §9）
 
 未接真实 GPS / NMEA（起终点靠屏幕点选）、离线 TTS 仅 DRYRUN、顶底栏为简易浮层、

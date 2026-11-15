@@ -294,6 +294,25 @@ static int open_checked(const char *path, NMBinFile *f, char *err, size_t ec)
     return 0;
 }
 
+/* tiles.bin 的 payload 是：rec0={minx,miny}、rec1={nx,ny}，其后每 tile 一条。
+ * nmbin_check 只验记录区长度；这里补网格语义，防止 rec_count<2 时
+ * `rec_count - 2` 无符号下溢、以及 nx*ny 越界后按 tile 下标读穿映射区。 */
+static int tiles_index_ok(const NMBinFile *t)
+{
+    if (!t || !t->data || t->hdr.rec_count < 2 ||
+        t->data_len < 2 * SK_TILE_REC_BYTES) return 0;
+    const uint8_t *d = t->data;
+    uint32_t minx = sk_get_u32(d + TF_EDGE_OFF);
+    uint32_t miny = sk_get_u32(d + TF_EDGE_CNT);
+    uint32_t nx   = sk_get_u32(d + SK_TILE_REC_BYTES + TF_EDGE_OFF);
+    uint32_t ny   = sk_get_u32(d + SK_TILE_REC_BYTES + TF_EDGE_CNT);
+    if (nx == 0 || ny == 0) return 0;
+    uint64_t z = (uint64_t)1u << SK_TILE_Z;
+    if ((uint64_t)minx + nx > z || (uint64_t)miny + ny > z) return 0;
+    if ((uint64_t)nx * ny > t->hdr.rec_count - 2) return 0;
+    return 1;
+}
+
 /* 只打开文件、不碰身份（name/dir/bbox/dup_of/loaded 由调用方保持）。
  * 重载走这个，身份不变；首次打开由 src_open 先置身份再调它。 */
 static int src_open_files(MapSrc *s)
@@ -382,7 +401,13 @@ static int src_open_files(MapSrc *s)
      * （退化到全量扫描路径，画面照旧、只是慢），不再静默用坏索引。 */
     s->has_tiles = 1;
     snprintf(p, sizeof(p), "%s/tiles.bin", s->dir);
-    if (open_checked(p, &s->tiles, err, sizeof(err)) != 0) s->has_tiles = 0;
+    if (open_checked(p, &s->tiles, err, sizeof(err)) != 0) {
+        s->has_tiles = 0;
+    } else if (!tiles_index_ok(&s->tiles)) {
+        fprintf(stderr, "图集: %s tiles.bin 网格非法，按无索引处理\n", s->name);
+        nmbin_close(&s->tiles);
+        s->has_tiles = 0;
+    }
     if (s->has_tiles) {
         snprintf(p, sizeof(p), "%s/edgelist.bin", s->dir);
         if (open_checked(p, &s->edgelist, err, sizeof(err)) != 0) s->has_tiles = 0;
@@ -548,7 +573,7 @@ static int xl_entry(const MapSrc *s, uint64_t pos, uint32_t *from, uint32_t *eid
 
 static int tile_has_coord(const MapSrc *s, int tx, int ty, uint64_t ck)
 {
-    if (!s->has_tiles) return 0;
+    if (!s->has_tiles || s->tiles.hdr.rec_count < 2 || !s->tiles.data) return 0;
     const uint8_t *td = s->tiles.data;
     uint32_t minx = sk_get_u32(td + TF_EDGE_OFF);
     uint32_t miny = sk_get_u32(td + TF_EDGE_CNT);
@@ -1093,7 +1118,7 @@ const char *mapset_edge_lanes(const MapSet *ms, int prov, uint32_t edge)
     if (!s->loaded || !s->has_lanes || !s->lnp.ready || !s->lanes.data) return NULL;
     if ((uint64_t)edge >= s->lanes.hdr.rec_count) return NULL;
     uint32_t sid = sk_get_u32(s->lanes.data + (size_t)edge * 4);
-    if (sid == 0 || sid > s->lnp.n) return NULL;       /* 0 = 无车道信息 */
+    if (sid == 0 || sid >= s->lnp.n) return NULL;      /* 0 = 无车道信息；n 是含 id0 的计数 */
     return s->lnp.blob + s->lnp.off[sid];
 }
 
@@ -1106,7 +1131,8 @@ int mapset_query_tile(const MapSet *ms, int tx, int ty, MapsetTileFn fn, void *u
     int total = 0;
     for (int i = 0; i < ms->n; i++) {
         const MapSrc *s = &ms->srcs[i];
-        if (!s->loaded || !s->has_tiles) continue;
+        if (!s->loaded || !s->has_tiles || s->tiles.hdr.rec_count < 2 ||
+            !s->tiles.data) continue;
 
         const uint8_t *td = s->tiles.data;
         uint32_t minx = sk_get_u32(td + TF_EDGE_OFF);

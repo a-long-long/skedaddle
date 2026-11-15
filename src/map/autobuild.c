@@ -262,7 +262,7 @@ static int prov_check(const char *dir, const char *pbf, char *why, size_t cap)
     if (mani_get(dir, "binfmt_version", v, sizeof(v)) == 0) {
         int ver = atoi(v);
         if (ver > 0 && ver != NMBIN_VERSION) {
-            snprintf(why, cap, "二进制格式升级 v%d → v%d", ver, NMBIN_VERSION);
+            snprintf(why, cap, "二进制格式升级 v%d → v%u", ver, (unsigned)NMBIN_VERSION);
             return PV_STALE;
         }
     }

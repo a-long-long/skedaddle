@@ -113,20 +113,37 @@ static const struct { const char *id; const char *cn; } PROV_CN[] = {
     { "guangdong",      "广东"     }, { "guangxi",     "广西"     },
     { "hainan",         "海南"     }, { "chongqing",   "重庆"     },
     { "sichuan",        "四川"     }, { "guizhou",     "贵州"     },
-    { "yunnan",         "云南"     }, { "tibet",       "西藏"     },
+    { "yunnan",         "云南"     }, { "xizang",      "西藏"     },
+    { "tibet",          "西藏"     },   /* 旧目录名兼容；下载/新产物用 xizang */
     { "shaanxi",        "陕西"     }, { "gansu",       "甘肃"     },
     { "qinghai",        "青海"     }, { "ningxia",     "宁夏"     },
-    { "xinjiang",       "新疆"     }, { "hong-kong",   "中国香港" },
+    { "xinjiang",       "新疆"     }, { "hongkong",    "中国香港" },
+    { "hong-kong",      "中国香港" },   /* 旧目录名兼容；下载/新产物用 hongkong */
     { "macau",          "中国澳门" }, { "taiwan",      "中国台湾" },
     /* 本机出现过的市级目录也收进来：不在表里就会退化成显示拼音 */
     { "shijiazhuang",   "石家庄"   },
 };
 
+/* 目录名可能带 Geofabrik 的 -latest 后缀（macau-latest/mongolia-latest）。
+ * 表里的 id 是 canonical slug，查表前统一剥掉后缀。 */
+static void prov_base_id(const char *id, char *out, size_t cap)
+{
+    if (!out || cap == 0) return;
+    snprintf(out, cap, "%s", id ? id : "");
+    size_t n = strlen(out);
+    static const char suffix[] = "-latest";
+    size_t sl = sizeof(suffix) - 1;
+    if (n > sl && strcmp(out + n - sl, suffix) == 0)
+        out[n - sl] = '\0';
+}
+
 static const char *prov_cn(const char *id)
 {
     if (!id || !*id) return "";
+    char base[64];
+    prov_base_id(id, base, sizeof(base));
     for (size_t i = 0; i < sizeof(PROV_CN) / sizeof(PROV_CN[0]); i++)
-        if (strcmp(PROV_CN[i].id, id) == 0) return PROV_CN[i].cn;
+        if (strcmp(PROV_CN[i].id, base) == 0) return PROV_CN[i].cn;
     return "";   /* 未知目录名：调用方决定退化显示 */
 }
 
@@ -170,16 +187,28 @@ static const struct { const char *id; const char *cn; double lat, lon; } CAPITAL
     { "sichuan",        "四川",     30.573, 104.066 },
     { "guizhou",        "贵州",     26.647, 106.630 },
     { "yunnan",         "云南",     25.038, 102.718 },
-    { "tibet",          "西藏",     29.652,  91.132 },
+    { "xizang",         "西藏",     29.652,  91.132 },
     { "shaanxi",        "陕西",     34.341, 108.940 },
     { "gansu",          "甘肃",     36.061, 103.834 },
     { "qinghai",        "青海",     36.617, 101.778 },
     { "ningxia",        "宁夏",     38.487, 106.231 },
     { "xinjiang",       "新疆",     43.826,  87.617 },
-    { "hong-kong",      "中国香港", 22.320, 114.173 },
+    { "hongkong",       "中国香港", 22.320, 114.173 },
     { "macau",          "中国澳门", 22.199, 113.544 },
     { "taiwan",         "中国台湾", 25.033, 121.565 },
 };
+
+/* 目录名 → 当前 Geofabrik/下载树使用的 slug：去 -latest 后缀，再折叠旧别名。 */
+static const char *dl_id_for_prov(const char *id, char *buf, size_t cap)
+{
+    char base[64];
+    prov_base_id(id, base, sizeof(base));
+    const char *canon = base;
+    if (strcmp(base, "tibet") == 0)     canon = "xizang";
+    if (strcmp(base, "hong-kong") == 0) canon = "hongkong";
+    snprintf(buf, cap, "%s", canon);
+    return buf;
+}
 
 /* 找最近的省会。返回其下标，*dist_km 写球面距离。 */
 static int nearest_capital(double lat, double lon, double *dist_km)
@@ -239,7 +268,9 @@ int coverage_locate(const MapSet *ms, double lat, double lon, CovPlace *out)
         /* 目录在我们的省表里 ⇒ 一定在中国境内 */
         snprintf(out->country, sizeof(out->country), "%s", (cn && *cn) ? "中国" : "");
         out->nearest_km = 0.0;
-        snprintf(out->dl_name,  sizeof(out->dl_name),  "%s", id);
+        char dl_id[64];
+        dl_id_for_prov(id, dl_id, sizeof(dl_id));
+        snprintf(out->dl_name,  sizeof(out->dl_name),  "%s", dl_id);
         snprintf(out->dl_label, sizeof(out->dl_label), "%s", (cn && *cn) ? cn : id);
         return detail;
     }

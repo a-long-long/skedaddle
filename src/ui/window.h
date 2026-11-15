@@ -245,7 +245,9 @@ int  app_init(App *a, const char *graph_dir, int w, int h,
               const char *font_path, int font_size, const AutoBuildOpt *ab);
 
 /* 下载新省并转换后，重扫 graph_dir 重新加载图集（不重启程序）。
-   返回 0 成功；-1 失败（此时 a->ms 已被释放，调用方应退出或重建 App）。 */
+   返回 0 成功；-1 失败。
+   ★ 失败分两种：后台算路 60s 内没停 ⇒ 旧图集/旧 Router 原样保留，可重试；
+     已经进入释放阶段但新图集加载失败 ⇒ a->ms 是空壳，调用方应退出或重建 App。 */
 int  app_reload_maps(App *a);
 
 /* 立刻重算"关注点有没有地图 + 这是哪儿"（cov_state / cov_place / cov_hint）。

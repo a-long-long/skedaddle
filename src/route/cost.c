@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "utils/plat.h"
+
 /* 代价 / 启发式 / 地标表辅助：原 route.c 的"代价与启发式"段与生命周期辅助，
  * 整段迁来，行为未改。
  * 注意 fallback_speed 除本书件的 edge_cost 外，还被 route.c 的结果回填
@@ -131,8 +133,11 @@ uint32_t lm_penalty_add_m(void)
 int graph_root_dir(const MapSet *ms, char *out, size_t cap)
 {
     if (!ms || ms->n == 0 || !ms->srcs[0].dir[0]) return -1;
+    if (!out || cap == 0) return -1;
     const char *d = ms->srcs[0].dir;
-    const char *slash = strrchr(d, '/');
+    /* 必须用平台层：Windows 的 dir 由 sk_path_join() 拼成反斜杠形式，
+     * 旧实现只 strrchr('/') ⇒ 整个图集目录返回 "."，lm.bin 静默不加载。 */
+    const char *slash = sk_last_sep(d);
     size_t n;
     if (!slash) {                        /* 相对的单层目录 ⇒ 父目录是 "." */
         if (cap < 2) return -1;
@@ -141,6 +146,12 @@ int graph_root_dir(const MapSet *ms, char *out, size_t cap)
     }
     n = (size_t)(slash - d);
     if (n == 0) n = 1;                   /* "/beijing" ⇒ 父目录是 "/" */
+    /* Windows 盘符根：C:\beijing 的父目录是 C:\ 而不是 C:（C: 是驱动器相对路径）。 */
+    if (n == 2 && d[1] == ':') {
+        if (cap < 4) return -1;
+        out[0] = d[0]; out[1] = ':'; out[2] = sk_sep(); out[3] = '\0';
+        return 0;
+    }
     if (n >= cap) return -1;
     memcpy(out, d, n);
     out[n] = '\0';

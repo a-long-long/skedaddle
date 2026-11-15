@@ -4,7 +4,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
-#include <dirent.h>             /* 目录扫描：C 前端无文件对话框，GPX 走"配置目录"约定 */
 
 #include "ui/voice_wire.h"
 #include "render/paint.h"
@@ -51,6 +50,7 @@ static int app_big_size(int base)
 static void nav_announce_reset(App *a);
 static void nav_announce_at(App *a, uint64_t now_ms);
 static void app_update_daynight(App *a);   /* 昼夜模式：mode → 有效 day_night，自动模式按日出日落推算 */
+static void nav_drop_route(App *a);        /* 清路线/模拟状态；reload 在释放图集前也要用 */
 
 int app_init(App *a, const char *graph_dir, int w, int h,
              const char *font_path, int font_size, const AutoBuildOpt *ab)
@@ -263,19 +263,90 @@ int app_init(App *a, const char *graph_dir, int w, int h,
     return 0;
 }
 
+/* nav_busy 的线程安全快照：worker 在锁内写，渲染/重载路径不能裸读。 */
+static int nav_busy_snapshot(App *a)
+{
+    if (!a) return 0;
+    if (!a->nav_mu) return a->nav_busy;
+    sk_mutex_lock(a->nav_mu);
+    int busy = a->nav_busy;
+    sk_mutex_unlock(a->nav_mu);
+    return busy;
+}
+
+/* 等后台算路退出。返回 1=已空闲，0=超时。 */
+static int nav_wait_idle(App *a, int timeout_ms)
+{
+    int waited = 0;
+    for (;;) {
+        if (!nav_busy_snapshot(a)) return 1;
+        if (waited >= timeout_ms) return 0;
+        sk_sleep_ms(10);
+        waited += 10;
+    }
+}
+
 int app_reload_maps(App *a)
 {
     if (!a || !a->graph_dir[0]) return -1;
-    /* 释放旧图集，清零（mapset_load 内部按空结构重新初始化，旧指针不能留着）。
-     * 单线程：只在主循环 tick 里被调用，reload 完成前不会再有渲染拿旧 ms。 */
+
+    /* 1) 先让后台算路停手，并等它退出。Router 里存着 &a->ms，
+     *    A* 直接读 ms->srcs[].nodes/edges；带线程释放 ms 是确定的 UAF。 */
+    int nav_stopped = 0;
+    if (a->nav_mu) {
+        sk_mutex_lock(a->nav_mu);
+        a->nav_stop = 1;
+        sk_mutex_unlock(a->nav_mu);
+        nav_stopped = 1;
+        if (!nav_wait_idle(a, 60000)) {
+            /* 超时就别冒险释放：旧图集/旧 Router 原样保留，调用方可重试。 */
+            sk_mutex_lock(a->nav_mu);
+            a->nav_stop = 0;
+            sk_mutex_unlock(a->nav_mu);
+            fprintf(stderr,
+                    "图集重载: 后台算路 60 秒内未结束，保留旧图集，稍后重试\n");
+            return -1;
+        }
+    }
+
+    /* 2) 所有持有旧 MapSet 指针的对象先销毁。Router 必须在 mapset_free 前销毁；
+     *    否则下一次算路会读已释放的 ms，且新图集省份更多时 ri/rv 还会越界。 */
+    if (a->nav_mu) {
+        sk_mutex_lock(a->nav_mu);
+        if (a->nav_done) {
+            route_result_set_free(&a->nav_done->alts);
+            free(a->nav_done);
+            a->nav_done = NULL;
+        }
+        a->nav_done_flag = 0;
+        a->nav_pending = 0;
+        sk_mutex_unlock(a->nav_mu);
+    }
+    nav_drop_route(a);
+    if (a->router) {
+        router_destroy(a->router);
+        a->router = NULL;
+    }
+
+    /* 3) 释放旧图集，清零后重新加载。 */
     mapset_free(&a->ms);
     memset(&a->ms, 0, sizeof(a->ms));
     if (mapset_load_repair(&a->ms, a->graph_dir, &a->ab, NULL) != 0) {
         /* 失败：ms 已是空壳，调用方应退出或重建，别拿去渲染 */
         a->total_nodes = a->total_edges = 0;
+        if (nav_stopped) {
+            sk_mutex_lock(a->nav_mu);
+            a->nav_stop = 0;
+            sk_mutex_unlock(a->nav_mu);
+        }
         return -1;
     }
     mapset_totals(&a->ms, &a->total_nodes, &a->total_edges);
+    if (nav_stopped) {
+        sk_mutex_lock(a->nav_mu);
+        a->nav_stop = 0;
+        sk_mutex_unlock(a->nav_mu);
+    }
     return 0;
 }
 
@@ -1336,7 +1407,12 @@ static void paint_frame(Raster *rs, App *a, PaintStats *st)
         (int32_t)(vb[0] * 1e7), (int32_t)(vb[1] * 1e7),
         (int32_t)(vb[2] * 1e7), (int32_t)(vb[3] * 1e7)
     };
-    mapset_set_view(&a->ms, evb);   /* 进省才加载、离省卸载（见 mapset.c） */
+    /* ★ 后台算路期间主线程不得改 MapSet：Router/A* 直接读 srcs[].nodes/edges，
+     *   卸省会 munmap 正在被搜索的映射；加载新省同样会改 loaded/指针。
+     *   算路结束后下一帧再恢复正常的按需加载/卸载。 */
+    int nav_busy = nav_busy_snapshot(a);
+    if (!nav_busy)
+        mapset_set_view(&a->ms, evb);   /* 进省才加载、离省卸载（见 mapset.c） */
 
     /* ★ 整省被别的省完全包含的（dup_of >= 0，加载时按 bbox 包含 + 抽样
        ≥99% 命中判定，实测北京/天津 ⊂ 河北 100%）——渲染直接跳过，不去重、
@@ -1564,7 +1640,7 @@ static void paint_frame(Raster *rs, App *a, PaintStats *st)
      *   提示职责整体移交 Qt 前端（浏览到无图区直接弹「下载地图」窗），
      *   不再画布上叠横幅。离屏审计 nomap_banner_px 判据同步改为
      *   "无图区也不得再出现横幅像素"（见 audit.c）。 */
-    app_update_coverage(a);
+    if (!nav_busy) app_update_coverage(a);
 
     /* nav-desktop 风格 chrome（自绘标题栏 / 顶栏 / 右栏 / 导航栏 /
        步骤面板 / 主菜单 / 无图卡片 / 比例尺 / 指北针 / 昼夜）叠在最上层；
@@ -1721,13 +1797,12 @@ int app_gpx_del_track(App *a, int idx)
 int app_gpx_import_dir(App *a, const char *dir)
 {
     if (!a || !dir || !*dir) return -1;
-    DIR *d = opendir(dir);
+    SkDir *d = sk_dir_open(dir);
     if (!d) return 0;                      /* 目录不存在 = 0 条，不是失败 */
     int added = 0;
     char path[2048];
-    struct dirent *e;
-    while ((e = readdir(d)) != NULL) {
-        const char *nm = e->d_name;
+    const char *nm;
+    while ((nm = sk_dir_next(d)) != NULL) {
         size_t L = strlen(nm);
         if (L < 4u || strcmp(nm + L - 4, ".gpx") != 0) continue;
         if (sk_path_join(path, sizeof(path), dir, nm) != 0) continue;
@@ -1735,7 +1810,7 @@ int app_gpx_import_dir(App *a, const char *dir)
         if (rc > 0) added += rc;
         else if (rc < 0) fprintf(stderr, "[gpx] 导入失败: %s\n", path);
     }
-    closedir(d);
+    sk_dir_close(d);
     if (added > 0) fprintf(stderr, "[gpx] 从 %s 导入了 %d 条轨迹\n", dir, added);
     else            fprintf(stderr, "[gpx] %s 下没有可导入的 .gpx 文件\n", dir);
     a->need_redraw = 1;

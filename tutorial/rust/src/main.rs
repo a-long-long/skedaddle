@@ -6,6 +6,11 @@
 //!   - 末行 RUST-MINI-CHAIN-OK steps=N ink=… gates=ok/fail，退出码即门禁；
 //!   - 零外部 crate（纯 std）——对应 C 版「零 SDL/Qt 依赖」。
 //!
+//! 2026-11-15：C 版补了二进制加载器语义校验、Router/MapSet 生命周期、
+//! 算路期间冻结省份卸载、maxspeed mph/knots、下载 slug 等生产化修复。
+//! 本链不复制这些状态机（无 mmap / 无 Qt / 无下载层）；逐条对照与练习见
+//! `README.md` §七。
+//!
 //! 演化纪律（与 C 版 scripts/check_mini_chain.py 同精神，本题收进单文件）：
 //!   - `// ============ stepNN: <主题> ============` 段只能**追加**；
 //!   - `fn main` 里 `// @@CALL@@` 锚点之前只能**插入**一行 `step_NN(...)`；

@@ -62,6 +62,17 @@
 #include <QColor>
 
 
+/* Qt6 把 QMouseEvent::globalPos() 标记为弃用；统一走 globalPosition().toPoint()，
+ * Qt5 仍用 globalPos()。这样 Qt6 构建不再产生 -Wdeprecated-declarations。 */
+static inline QPoint mouse_global_pos(const QMouseEvent *me)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    return me->globalPosition().toPoint();
+#else
+    return me->globalPos();
+#endif
+}
+
 /* ---------------- 构造 / 生命周期 ---------------- */
 
 MainWindow::MainWindow(App *a, QWidget *parent)
@@ -212,12 +223,12 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *ev)
             case QEvent::MouseButtonPress:
                 if (me->button() == Qt::LeftButton) {
                     m_winDragging = true;
-                    m_winDragOff  = me->globalPos() - pos();
+                    m_winDragOff  = mouse_global_pos(me) - pos();
                 }
                 break;
             case QEvent::MouseMove:
                 if (m_winDragging && (me->buttons() & Qt::LeftButton)) {
-                    if (!m_winMaxed) move(me->globalPos() - m_winDragOff);
+                    if (!m_winMaxed) move(mouse_global_pos(me) - m_winDragOff);
                     return true;
                 }
                 break;

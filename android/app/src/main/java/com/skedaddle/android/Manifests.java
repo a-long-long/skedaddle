@@ -42,6 +42,19 @@ public final class Manifests {
         public List<ProvinceEntry> entries = new ArrayList<>();
     }
 
+    /** 省目录名会直接拼进文件路径；只允许 Geofabrik 风格的 slug。 */
+    private static boolean validProvinceId(String id) {
+        if (id == null || id.isEmpty() || id.length() > 64) return false;
+        if (id.equals(".") || id.equals("..") || id.contains("..")) return false;
+        for (int i = 0; i < id.length(); i++) {
+            char c = id.charAt(i);
+            boolean ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                    || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+            if (!ok) return false;
+        }
+        return true;
+    }
+
     public static ProvinceManifest parseProvinces(String json)
             throws JSONException {
         ProvinceManifest m = new ProvinceManifest();
@@ -53,6 +66,8 @@ public final class Manifests {
                 JSONObject e = a.getJSONObject(i);
                 ProvinceEntry pe = new ProvinceEntry();
                 pe.id = e.getString("id");
+                if (!validProvinceId(pe.id))
+                    throw new JSONException("invalid province id: " + pe.id);
                 pe.name = e.optString("name", pe.id);
                 pe.version = e.optLong("version", 1);
                 pe.size = e.optLong("size", 0);
@@ -120,6 +135,7 @@ public final class Manifests {
         public int versionCode;
         public String versionName = "";
         public String apkUrl = "";
+        public String sha256 = "";   // 可选；有值时下载后强制校验
         public String notes = "";
     }
 
@@ -129,6 +145,7 @@ public final class Manifests {
         u.versionCode = o.getInt("versionCode");
         u.versionName = o.optString("versionName", "");
         u.apkUrl = o.getString("apkUrl");
+        u.sha256 = o.optString("sha256", "");
         u.notes = o.optString("notes", "");
         return u;
     }

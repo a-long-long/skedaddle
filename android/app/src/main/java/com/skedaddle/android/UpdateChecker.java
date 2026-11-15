@@ -39,12 +39,23 @@ public final class UpdateChecker {
         return (u.versionCode > currentVersionCode) ? u : null;
     }
 
-    /** 下载 APK 到 <external-files>/updates/skedaddle-update.apk。 */
+    /** 下载 APK 到 <external-files>/updates/skedaddle-update.apk（旧接口，无哈希）。 */
     public static File downloadApk(Context ctx, String apkUrl) throws IOException {
+        return downloadApk(ctx, apkUrl, "");
+    }
+
+    /** 下载 APK；清单给了 sha256 时必须整包校验一致才落盘。 */
+    public static File downloadApk(Context ctx, String apkUrl, String expectedSha256)
+            throws IOException {
         File dir = new File(ctx.getExternalFilesDir(null), "updates");
         dir.mkdirs();
         File apk = new File(dir, "skedaddle-update.apk");
-        new Downloader().download(apkUrl, apk, null);
+        boolean verified = new Downloader().downloadVerified(apkUrl, apk,
+                expectedSha256, null);
+        if (!verified) {
+            // 老服务端没有 sha256；仍可安装，但记录“未校验”，别伪装成安全。
+            Log.w(TAG, "APK 下载未提供 sha256，依赖 Android 安装器签名校验");
+        }
         return apk;
     }
 

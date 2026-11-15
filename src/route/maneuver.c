@@ -83,7 +83,7 @@ static void road_name_of(const RouteResult *rr, const MapSet *ms,
     if (cls_out) *cls_out = er[EF_CLASS];
     uint32_t nid = sk_get_u32(er + EF_NAME_ID);
     const NamePool *np = &src->np;
-    if (!nid || !np->ready || nid > np->n) return;
+    if (!nid || !np->ready || nid >= np->n) return;
     const char *s2 = np->blob + np->off[nid];
     snprintf(buf, cap, "%s", s2);
 }

@@ -123,7 +123,9 @@ DownloadDialog::DownloadDialog(const QString &sourcesDir, const QString &repoRoo
 
 QVector<GeoRegion> DownloadDialog::buildRegions() const
 {
-    /* 中国省级（asia/china/<prov>），本程序主战场，全部列出 */
+    /* 中国省级（asia/china/<prov>），本程序主战场，全部列出。
+     * ★ 这些 slug 必须与 map/coverage.c 的 canonical id 一致：
+     *   西藏 = xizang、香港 = hongkong；旧目录名由 coverage.c 做别名归一。 */
     QVector<GeoRegion> cn;
     cn << leaf(i18n_tr("北京"), "asia/china/beijing")
        << leaf(i18n_tr("天津"), "asia/china/tianjin")
@@ -358,7 +360,9 @@ bool DownloadDialog::regionDownloaded(const QString &path) const
 {
     if (path.isEmpty()) return false;              /* 枝不计已下载 */
     QString nm = path.section('/', -1);            /* asia/china/gansu → gansu */
+    /* Geofabrik 源文件名是 <leaf>-latest.osm.pbf，sync_maps 可能产出同名目录。 */
     if (QDir(m_repo + "/products/graph/" + nm).exists()) return true;
+    if (QDir(m_repo + "/products/graph/" + nm + "-latest").exists()) return true;
     if (QFile::exists(m_sources + "/" + nm + "-latest.osm.pbf")) return true;
     return false;
 }
@@ -1195,8 +1199,12 @@ void DownloadDialog::onConvertFinished(int code, QProcess::ExitStatus)
 /* 运行等高线生成（若工具可用）*/
 void DownloadDialog::runContoursGeneration()
 {
-    // 省目录路径
+    // 省目录路径：sync_maps 可能用 <leaf>-latest 作为目录名
     QString provDir = m_repo + "/products/graph/" + m_dlName;
+    if (!QDir(provDir).exists()) {
+        QString alt = provDir + "-latest";
+        if (QDir(alt).exists()) provDir = alt;
+    }
     
     // 用 skedaddle_pbf_info 获取 PBF 的 bbox
     QString pbfPath = m_sources + "/" + m_dlName + "-latest.osm.pbf";

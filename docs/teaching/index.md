@@ -74,7 +74,7 @@
   改完 `_parts/` 跑 `python3 scripts/regen_mini_chain.py` 重新生成，再用 `python3 scripts/check_mini_chain.py`
   验收累加不变量（含 `--self-test` 的 5 类负向对照）。该门禁与 `check_tutorial_tracks.py` 一样未接进 `regress.sh`。
 
-## 源码演进索引（2026-11-10 / 11-11）
+## 源码演进索引（2026-11-10 / 11-11 / 11-15）
 
 > 讲义主线定稿于 2026-11-07。以下两批提交给 `src/` 带来的新模块，按
 > 「功能 → 真实源码 → 相关课次」列出；这些课次正文仍以 11-07 基线讲原理，
@@ -97,3 +97,8 @@
 - **外部 POI / 新地图可检索（11-11）**：`search_add_external()`、`tests/xintu.osm.pbf` → 第 8 课。
 - **验收口径（11-11/12）**：`scripts/regress.sh` 新增 5 条用例并支持 `SKEDADDLE_BUILD_DIR`
   → 第 11 课（内嵌全文已由生成器同步；旧的「87/0」不再代表当前用例集）。
+- **2026-11-15 生产化修复批次**：二进制加载器语义校验（`namepool.c` / `mapset.c` / `lmtable.c` / `revidx.c`）、
+  `Router`/`MapSet` 生命周期与算路期间冻结 `mapset_set_view`（`window.c`）、Windows 路径与 `SkDir`
+  （`cost.c` / `window.c`）、`maxspeed` mph/knots 与省 slug（`road_tags.c` / `coverage.c`）、
+  Android 清单 id 白名单与 APK sha256（`Manifests.java` / `UpdateChecker.java`）。
+  C 教程落点：第 3、4、9、11、15、16 课；Rust 对照见 `tutorial/rust/README.md` §七。

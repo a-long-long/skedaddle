@@ -110,3 +110,30 @@ cargo run --release  # release 档：同一组数字（确定性判据与优化�
 | 15_platform（平台层） | `std::process`/`std::net` 对应 C 的 `plat.c`——std 已覆盖大半 |
 | 16_qt（窗口壳） | 见练习 5（minifb/winit + softbuffer） |
 | 17_android | JNI：`uniffi` 或手写 `jni` crate 绑定；C 侧 `mini_step_*` 的对等物直接编译进 .so |
+
+## 七、2026-11-15 C 版生产化修复对照
+
+C 版这一批不是新功能，而是把“正常数据能跑”补成“坏数据、线程退出、Windows 路径、下载目录名都不能骗过”。
+Rust 链不复制这些生产状态机（它仍是 8 段、单文件、无 mmap/无 Qt），但每条都能在现有段上做一个小练习：
+
+| C 版修复 | Rust 现有落点 | 教学点 / 练习 |
+|---|---|---|
+| `names.bin` 的 `count`/offset 校验 | step03 `parse_bin` | `Result` 挡住越界读，但 offset 语义仍要显式查；构造 `off[1]=0xFFFFFFFF` 必须 `Err` |
+| `tiles.bin` 的 `rec_count - 2` 下溢 | step03/04 | 用 `checked_sub(2)` → `Option`，而不是依赖无符号回绕；`nx*ny` 用 `checked_mul` |
+| `lm.bin` 的维度乘法溢出 | step07 | `usize::try_from` + `checked_mul`；先反推文件长度，再分配 |
+| `rev.bin` 的 `start[]` 单调性 | step07 | `start.windows(2).all(|w| w[0] <= w[1])`；尾哨兵不能代替全表校验 |
+| `Router`/`MapSet` 重载 UAF | 本链无 mmap | 让 `Router<'a>` 借 `MapSet`，或搜索持有 `Arc<MapSet>`；重载时类型系统会先拦住借用 |
+| 算路期间省份被卸载 | step04/07 | `Arc<RwLock<MapSet>>` + 搜索期间持有 `Arc`；Rust 的共享所有权把“pin 住”写进类型 |
+| `maxspeed` 的 mph/knots | step04 的图属性 | `split_whitespace()` + `parse::<f64>()`；断言 `50 mph=80 km/h`、`30 knots=56 km/h` |
+| 省 slug / `-latest` 目录 | 本链无下载层 | `strip_suffix("-latest")` + `Path::components()`；拒绝 `..` 和绝对路径 |
+| Android 清单 id 白名单 / APK sha256 | 本链无 Android | `Path` 组件白名单；哈希用 `sha2`（唯一允许的依赖练习） |
+
+### 给 Rust 链的负向对照
+
+1. 在 step03 的二进制头里把某个 section 长度改成大于文件长度，解析必须返回 `Err`，不能 panic 到读越界。
+2. 把 step03 的 `rec_count` 改成 0，再算 `rec_count - 2`；如果代码 panic 或回绕，就说明还没学会用 `Option`/`checked_sub`。
+3. 把 step07 的 `start[]` 改成非单调，路径回溯必须拒绝这份索引，而不是读出错误路径。
+4. 给道路属性加 `maxspeed="50 mph"`，确认速度是 80 而不是 50。
+
+> 这批判定的共同点：**“文件头自洽”不等于“内容可信”**，**“编译通过”不等于“对象生命周期正确”**。
+> C 版用显式校验和停线程顺序补上；Rust 版用 `Result`、`Option`、借用/`Arc` 把同样的不变量前移。

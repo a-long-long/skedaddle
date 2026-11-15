@@ -43,7 +43,9 @@ macro(sk_require_pc var mod)
     endif()
 endmacro()
 
-sk_require_pc(SDL2       sdl2)
+# SDL2 只用于去 SDL 化门禁的两个对照工具，核心/Qt 前端并不链接它。
+# 因此这里必须是**可选**依赖：缺 SDL2 时跳过对照工具，而不是让整个项目配置失败。
+pkg_check_modules(SDL2 QUIET sdl2)
 sk_require_pc(ZLIB       zlib)
 sk_require_pc(SQLITE3    sqlite3)
 sk_require_pc(PROTOC     libprotobuf-c)
@@ -86,7 +88,11 @@ else()
     message(STATUS "protoc-c       ${PROTOC_C}")
 endif()
 
-message(STATUS "sdl2          ${SDL2_VERSION}")
+if(SDL2_FOUND)
+    message(STATUS "sdl2          ${SDL2_VERSION}")
+else()
+    message(STATUS "sdl2          未找到（跳过 SDL 等价性对照工具）")
+endif()
 message(STATUS "protobuf-c    ${PROTOC_VERSION}")
 message(STATUS "protoc-c      ${PROTOC_C}")
 
@@ -400,14 +406,13 @@ target_link_libraries(skedaddle_core PUBLIC
 
 # Windows（MSVC）需要这两个宏：_CRT_SECURE_NO_WARNINGS 关掉 POSIX 名字的"不安全"
 # 警告（fopen/snprintf 我们是故意用的），_USE_MATH_DEFINES 放 M_PI。
-# SDL_MAIN_HANDLED：SDL.h 默认会把 main 改写成 SDL_main，要求链 SDL2main；本程序
-# 入口就是自己的 main()，不需要那层包装。
+# ★ 核心/Qt 不包含 SDL 头，因此不再给它们挂 SDL_MAIN_HANDLED；
+#   仅两个 SDL 等价性对照目标在自己的 target 上定义该宏。
 if(MSVC)
     target_compile_definitions(skedaddle_core PUBLIC
         _CRT_SECURE_NO_WARNINGS _USE_MATH_DEFINES)
 endif()
 if(WIN32)
-    target_compile_definitions(skedaddle_core PUBLIC SDL_MAIN_HANDLED)
     # MinGW-w64 的 printf 格式检查把 %z / %ll 当成非法（ms_printf 原型），但这些
     # 是合法 C99，在 glibc/Linux 下零警告。此处仅抑制该工具链误报，不改变语义。
     target_compile_options(skedaddle_core PUBLIC -Wno-format)
@@ -424,7 +429,6 @@ if(MSVC)
 endif()
 if(WIN32)
     foreach(t ${SK_ALL_MOD_LIBS})
-        target_compile_definitions(${t} PUBLIC SDL_MAIN_HANDLED)
         target_compile_options(${t} PUBLIC -Wno-format)
     endforeach()
 endif()
@@ -677,18 +681,25 @@ endif()
 
 
 # 光栅 alpha 混色与 SDL 软渲染器的逐像素等价性（去 SDL 化的门禁）。
-add_executable(skedaddle_blend_equiv tools/blend_equiv.c)
-target_include_directories(skedaddle_blend_equiv PRIVATE ${SDL2_INCLUDE_DIRS})
-target_link_directories(skedaddle_blend_equiv PRIVATE ${SDL2_LIBRARY_DIRS})
-sk_link_tool(skedaddle_blend_equiv skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
-target_link_libraries(skedaddle_blend_equiv PRIVATE ${SDL2_LIBRARIES} Threads::Threads)
+# 没有 SDL2 时整组跳过；核心构建不依赖它。
+if(SDL2_FOUND)
+    add_executable(skedaddle_blend_equiv tools/blend_equiv.c)
+    target_include_directories(skedaddle_blend_equiv PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_directories(skedaddle_blend_equiv PRIVATE ${SDL2_LIBRARY_DIRS})
+    sk_link_tool(skedaddle_blend_equiv skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
+    target_link_libraries(skedaddle_blend_equiv PRIVATE ${SDL2_LIBRARIES} Threads::Threads)
+    target_compile_definitions(skedaddle_blend_equiv PRIVATE SDL_MAIN_HANDLED)
 
-# 线段裁剪与 SDL_IntersectRectAndLine 的等价性（去 SDL 化的门禁）。
-add_executable(skedaddle_clip_equiv tools/clip_equiv.c)
-target_include_directories(skedaddle_clip_equiv PRIVATE ${SDL2_INCLUDE_DIRS})
-target_link_directories(skedaddle_clip_equiv PRIVATE ${SDL2_LIBRARY_DIRS})
-sk_link_tool(skedaddle_clip_equiv skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
-target_link_libraries(skedaddle_clip_equiv PRIVATE ${SDL2_LIBRARIES} Threads::Threads)
+    # 线段裁剪与 SDL_IntersectRectAndLine 的等价性（去 SDL 化的门禁）。
+    add_executable(skedaddle_clip_equiv tools/clip_equiv.c)
+    target_include_directories(skedaddle_clip_equiv PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_directories(skedaddle_clip_equiv PRIVATE ${SDL2_LIBRARY_DIRS})
+    sk_link_tool(skedaddle_clip_equiv skedaddle_map skedaddle_route skedaddle_search skedaddle_render skedaddle_ui)
+    target_link_libraries(skedaddle_clip_equiv PRIVATE ${SDL2_LIBRARIES} Threads::Threads)
+    target_compile_definitions(skedaddle_clip_equiv PRIVATE SDL_MAIN_HANDLED)
+else()
+    message(STATUS "SDL2 未找到：跳过 skedaddle_blend_equiv / skedaddle_clip_equiv")
+endif()
 
 # 架构门禁：核心与 Qt 前端零 SDL 符号（正反双向）。
 add_executable(skedaddle_core_no_sdl tools/core_no_sdl.c)

@@ -61,7 +61,7 @@ int tile_prov_count(const MapSet *ms, int tx, int ty)
     int seen[32], ns = 0, c = 0;
     for (int i = 0; i < ms->n; i++) {
         const MapSrc *s = &ms->srcs[i];
-        if (!s->has_tiles) continue;
+        if (!s->has_tiles || s->tiles.hdr.rec_count < 2 || !s->tiles.data) continue;
         const uint8_t *td = s->tiles.data;
         uint32_t minx = sk_get_u32(td + TF_EDGE_OFF);
         uint32_t miny = sk_get_u32(td + TF_EDGE_CNT);

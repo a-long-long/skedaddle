@@ -35,3 +35,15 @@ g++ -std=c++17 \
 `QImage::Format_RGB32`）、`src/ui_qt/qt_main.cpp`（唯一 GUI 进程入口）。
 
 **练习**：把 `main_windows.cpp` 里的 `px` 换成第 7 课 `paint_frame` 的输出，让真实窗口显示一张完整地图帧。
+
+**生产补记（2026-11-15）**：Qt 壳不只是“显示缓冲”，还要处理跨平台 API 与下载窗状态。
+
+- 下载树的省 slug 与 `coverage.c` 对齐：西藏 `xizang`、香港 `hongkong`；
+  旧目录 `tibet` / `hong-kong` 由 C 侧做别名归一，`macau-latest` 这类目录会在查表前剥离 `-latest`。
+- 下载窗同时识别 `products/graph/<leaf>` 与 `<leaf>-latest`，等高线生成找不到目录时自动回退到 `-latest`。
+- `QMouseEvent::globalPos()` 在 Qt6 已弃用；无边框窗口拖动改用 `globalPosition().toPoint()`，
+  Qt5 分支保留 `globalPos()`。最终 Release 构建不再出现该 deprecation 警告。
+- 离屏出图仍走 C 核心缓冲：`dist\skedaddle-release\skedaddle.exe --shot-offscreen` 已验证可退出 0 并生成 BMP。
+
+**练习**：在下载窗里选中一个只有 `sources/*.pbf`、没有 `products/graph` 的地区，观察“保存到”路径与
+`products/graph` 实际目录；思考“源文件已下载”和“产物已就绪”为什么不应共用一个勾选状态。

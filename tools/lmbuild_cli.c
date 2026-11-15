@@ -376,16 +376,20 @@ int main(int argc, char **argv)
                g_total[p] ? 100.0 * (double)g_reach[p] / (double)g_total[p] : 0.0);
     }
 
-    if (out == NULL) {
-        char path[4096 + 32];
-        snprintf(path, sizeof(path), "%s/lm.bin", graph);
-        out = path;
+    /* ★ out 是可选的：默认路径必须活到 lm_table_save() 返回之后。
+     * 原实现把 path 声明在 if 块里、把 out 指向它，出了块就是悬垂指针
+     * （未定义行为；sync_maps.sh 总传 --out，所以回归抓不到）。 */
+    char default_out[4096 + 32];
+    const char *out_path = out;
+    if (!out_path) {
+        snprintf(default_out, sizeof(default_out), "%s/lm.bin", graph);
+        out_path = default_out;
     }
-    if (lm_table_save(&t, out) != 0) {
-        fprintf(stderr, "写 %s 失败\n", out);
+    if (lm_table_save(&t, out_path) != 0) {
+        fprintf(stderr, "写 %s 失败\n", out_path);
         bad++;
     } else {
-        printf("写出          %s\n", out);
+        printf("写出          %s\n", out_path);
     }
 
     /* ---- 顺手对拍：表下界 vs 需要外部给的真值 ---- */

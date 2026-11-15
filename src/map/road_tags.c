@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 
 typedef struct {
     const char *name;
@@ -97,6 +98,31 @@ static const HwEnt *find_hw(const char *v)
 static int eq_ci(const char *a, const char *b)
 {
     return sk_strcasecmp(a, b) == 0;   /* 平台层：strcasecmp / _stricmp */
+}
+
+/* 单位前缀（忽略大小写与尾随空白/分号）。`50 mph` 必须换算，不能把 50 当 km/h。 */
+static int unit_is(const char *s, const char *unit)
+{
+    while (*unit) {
+        if (!*s || tolower((unsigned char)*s) != tolower((unsigned char)*unit)) return 0;
+        s++; unit++;
+    }
+    return 1;
+}
+
+/* maxspeed 解析：数字 + 可选单位。支持 km/h、mph、knots/kt；
+ * 无单位按 OSM 默认 km/h。超出合理范围的脏值返回 0，让调用方保留 class 缺省速度。 */
+static uint16_t parse_maxspeed_kmh(const char *s)
+{
+    if (!s || !*s) return 0;
+    char *end = NULL;
+    double v = strtod(s, &end);
+    if (end == s) return 0;
+    while (*end == ' ' || *end == '\t') end++;
+    if (unit_is(end, "mph"))        v *= 1.609344;
+    else if (unit_is(end, "knots") || unit_is(end, "kt")) v *= 1.852;
+    if (!(v > 0.0 && v < 300.0)) return 0;   /* 同时挡住 NaN */
+    return (uint16_t)(v + 0.5);
 }
 
 static int access_denied(const char *v)
@@ -258,9 +284,8 @@ void road_tags_parse(const uint32_t *keys, size_t n_keys,
     }
 
     if (maxspeed) {
-        /* "60"、"60 km/h"、"60;80"、"CN:urban" 之类，只吃纯数字前缀 */
-        int v = atoi(maxspeed);
-        if (v > 0 && v < 200) out->speed_kmh = (uint16_t)v;
+        uint16_t sp = parse_maxspeed_kmh(maxspeed);
+        if (sp) out->speed_kmh = sp;
     }
     if (lanes) {
         int v = atoi(lanes);

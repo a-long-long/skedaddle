@@ -114,3 +114,19 @@ python3 scripts/check_mini_chain.py --self-test # 5 类负向对照，证明门�
 **「最后到最终代码」这一步由 [`MAP.md`](MAP.md) 完成**：18 行逐模块对照 +
 差距清单 + 对照阅读方法。那里明确写了 mini 少了什么、真实版多做了什么，
 不含糊地说成「mini 编译出来就是 skedaddle」。
+
+## 七、2026-11-15 生产化补记（不在 mini 链内）
+
+本批修的是**生产工程边界**：坏二进制输入、`Router`/`MapSet` 生命周期、算路与省份卸载的并发、
+Windows 路径、下载窗 `-latest` 目录与 Qt6 弃用 API。它们**没有**塞进 mini 快照链：
+mini 的职责是“从最小框架长到概念骨架”，不是复制 4.2 GB 图集、mmap 生命周期和下载器状态机。
+
+对应阅读位置：
+
+- C 独立课：第 3 课（加载器校验）、第 4 课（mph/knots）、第 9 课（生命周期）、
+  第 11 课（生产修复批次表）、第 15 课（路径/`SkDir`/SDL 可选）、第 16 课（下载窗与 Qt6）。
+- C 讲义索引：[`docs/teaching/index.md`](../../docs/teaching/index.md) 的「源码演进索引」新增 2026-11-15 条目。
+- Rust 对照：[`tutorial/rust/README.md`](../rust/README.md) §七。
+
+**硬规则不变**：mini 仍只增不减；这批生产修复不改变 `_parts/` 与生成快照，
+`python3 scripts/regen_mini_chain.py --check` / `check_mini_chain.py` 仍应保持原口径。

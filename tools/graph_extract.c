@@ -31,7 +31,7 @@ int main(int argc, char **argv)
        所有旧产物的 manifest 版本号就对不上，必须重转——否则加载端
        （app_init 只比对 magic，不校验版本）会静默画错图。 */
     if (argc == 2 && strcmp(argv[1], "--fmt-version") == 0) {
-        printf("%d\n", NMBIN_VERSION);
+        printf("%u\n", NMBIN_VERSION);
         return 0;
     }
 
@@ -111,12 +111,12 @@ int main(int argc, char **argv)
     snprintf(mp, sizeof(mp), "%s/manifest.txt", out_dir);
     FILE *f = fopen(mp, "wb");
     if (f) {
-        fprintf(f, "# Skedaddle 路网抽取结果（自描述二进制 NAVMBIN v%d）\n", NMBIN_VERSION);
+        fprintf(f, "# Skedaddle 路网抽取结果（自描述二进制 NAVMBIN v%u）\n", NMBIN_VERSION);
         fprintf(f, "source         %s\n", src);
         fprintf(f, "src_bytes      %" PRIu64 "\n", src_bytes);
         fprintf(f, "src_mtime      %" PRId64 "\n", src_mtime);
         fprintf(f, "generated_at   %" PRId64 "\n", (int64_t)time(NULL));
-        fprintf(f, "binfmt_version %d\n", NMBIN_VERSION);
+        fprintf(f, "binfmt_version %u\n", NMBIN_VERSION);
         fprintf(f, "ways_total     %" PRIu64 "\n", st.ways_total);
         fprintf(f, "ways_kept      %" PRIu64 "\n", st.ways_kept);
         fprintf(f, "ways_skip      %" PRIu64 "\n", st.ways_skip);

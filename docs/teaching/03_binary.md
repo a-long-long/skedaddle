@@ -1746,6 +1746,27 @@ void road_tags_parse(const uint32_t *keys, size_t n_keys,
 （从 `HEAD` 独立导出编译）与 M1 后 exe 在 z12/z14/z17 三档出图
 `bmpdiff` 均 **0 / 1024000 像素**，审计计数逐项相同。
 
+### 附：M2 生产化补记（2026-11-15，加载器语义校验）
+
+> schema/摘要解决的是“布局与完整性”，不解决“文件自称的 count/offset 是否可信”。
+> 本批在 `nmbin_check()` 之后补了按文件类型的语义校验，避免坏产物把渲染/路由读穿。
+
+- **`names.bin`（`name_pool_open`）**：`count` 必须能容纳 `count+1` 个 offset；
+  `off[0]=0`、`off[count]=blob_len`、offset 单调且不越过 blob。旧实现对
+  `count=UINT32_MAX` 会因 `count+1` 回绕跳过长度检查。
+- **`tiles.bin`（`tiles_index_ok`）**：要求 `rec_count>=2`，且
+  `minx+nx`、`miny+ny`、`nx*ny` 在网格/记录数范围内；`tile_has_coord` /
+  `mapset_query_tile` / `tile_prov_count` 三处也补了 `rec_count>=2` 防护，
+  消除 `rec_count-2` 无符号下溢。
+- **`lm.bin`（`lm_table_load`）**：`nrow*ncol*nlm*2` 先做溢出检查，
+  文件长度必须精确等于“头 + 表体”；`lm_table_save` 检查 `fclose`。
+- **`rev.bin`（`rev_load`）**：除尾哨兵外，新增 `start[]` 全表单调不减且
+  `<= list_count` 的检查；尾哨兵只能证明最后一项没坏。
+
+**共性**：`nmbin_check` 只证明“记录区长度自洽”，不证明内容可信；
+语义校验必须放在按文件类型理解的加载器里。**Rust 对照**见
+[`tutorial/rust/README.md`](../../tutorial/rust/README.md) §七（`Result`/`Option`/`checked_*`）。
+
 ## 四、与其他功能之间的联系
 
 - **上游 · 第 4 课（建图）**：`graph_build` 写出 `nodes/edges/… .bin`；`autobuild_repair` 是其损坏兜底（第 11 课架构门禁也复用其判据）。

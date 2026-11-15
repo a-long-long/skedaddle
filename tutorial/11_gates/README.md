@@ -42,3 +42,21 @@ gcc -std=c11 -O2 -o tut main.c && ./tut ; echo "exit=$?"
 2. 把 `classify_bug` 的 bug 去掉（改成和 `classify` 一样），重跑——你会发现负向对照那条 `ASSERT-FAIL`，
    这就证明了“负向对照本身在起作用”：判据确实能区分对错。
 3. （进阶）读 `scripts/check_layers.sh`，找一条真实工程里曾因反向依赖被它拦下的改动。
+
+**2026-11-15 生产化修复批次**：这一批不是新功能，而是把“考试题”从“正常数据能跑”推进到
+“坏数据、线程退出、Windows 路径、下载目录名都不能骗过”。和门禁相关的落点：
+
+| 修复 | C 教程落点 | 验收方式 |
+|---|---|---|
+| `names.bin` / `tiles.bin` / `lm.bin` / `rev.bin` 语义校验 | 第 3 课、第 9 课 | 注入坏 count / 坏 offset / 截断 / 非单调 start，必须拒绝 |
+| `Router` / `MapSet` 生命周期 | 第 9 课、第 16 课 | `app_reload_maps()` 后 `router==NULL`，重新算路仍 `ROUTE-OK` |
+| 算路期间冻结 `mapset_set_view()` | 第 9 课 | 算路中把视口移出省，省仍保持 loaded；算路结束后才卸载 |
+| Windows 路径 / `-latest` 目录 | 第 15 课、第 16 课 | 反斜杠 graph 路径、`macau-latest` 反查 |
+| `maxspeed` mph/knots | 第 4 课 | `50 mph → 80`、`30 knots → 56` |
+| SDL2 可选 | 第 15 课 | 无 SDL2 配置成功，仅跳过两个对照目标 |
+
+**最终产物验收**：`scripts/build_release.sh` 退出 0，`dist/skedaddle-release` 78 个文件、约 107 MB；
+`build_rel` 控制台版与 dist GUI 版都跑过 `--shot-offscreen`，路由回归仍 `ROUTE-OK`。
+
+**练习**：把本表任一条改成“只跑正常路径、不做负向对照”，观察它是否还能算门禁；
+然后用 `check_teaching_sync.py` / `check_tutorial_tracks.py` 检查讲义是否仍与 H1/分类一致。

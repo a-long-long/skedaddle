@@ -28,14 +28,24 @@ int name_pool_open(NamePool *np, const char *names_path)
     NMBinFile nf;
     if (nmbin_open(names_path, &nf) != 0) return -1;
 
+    /* names.bin 的 payload 是：u32 count + u32 off[count+1] + NUL 分隔 blob。
+     * 这里必须把 count/offset 当成**不可信输入**校验：nmbin_check 只验记录区长度，
+     * 不验 count 与 offset 的语义。旧实现遇到 cnt=UINT32_MAX 会因 cnt+1 回绕
+     * 跳过长度检查，随后 i<=cnt 的循环越界；偏移越界也会让 paint 直接读坏内存。 */
+    if (nf.data_len < 9) { nmbin_close(&nf); return -1; }
     const uint8_t *d = nf.data;
     uint32_t cnt = sk_get_u32(d);
-    size_t offs_bytes = (size_t)(cnt + 1) * 4;
-    if (nf.data_len < 4 + offs_bytes) { nmbin_close(&nf); return -1; }
+    if (cnt == 0) { nmbin_close(&nf); return -1; }
+    uint64_t max_cnt = (uint64_t)((nf.data_len - 4) / 4) - 1;
+    if ((uint64_t)cnt > max_cnt) { nmbin_close(&nf); return -1; }
+
+    size_t offs_bytes = ((size_t)cnt + 1) * 4;
+    size_t blob_len = nf.data_len - 4 - offs_bytes;
+    if (blob_len == 0 || blob_len == SIZE_MAX) { nmbin_close(&nf); return -1; }
 
     np->n = cnt;
-    np->off = calloc(cnt + 1, sizeof(uint32_t));
-    np->blob = malloc(nf.data_len - 4 - offs_bytes + 1);
+    np->off = calloc((size_t)cnt + 1, sizeof(uint32_t));
+    np->blob = malloc(blob_len + 1);
     if (!np->off || !np->blob) {
         name_pool_close(np);
         nmbin_close(&nf);
@@ -43,12 +53,27 @@ int name_pool_open(NamePool *np, const char *names_path)
     }
     for (uint32_t i = 0; i <= cnt; i++)
         np->off[i] = sk_get_u32(d + 4 + (size_t)i * 4);
-    memcpy(np->blob, d + 4 + offs_bytes, nf.data_len - 4 - offs_bytes);
-    np->blob[nf.data_len - 4 - offs_bytes] = '\0';
+    memcpy(np->blob, d + 4 + offs_bytes, blob_len);
+    np->blob[blob_len] = '\0';
+
+    /* off[0]=0、off[cnt]=blob_len、逐项单调且不越过 blob 末尾。
+     * 任何一条不满足都按损坏文件拒绝，绝不把坏 offset 留给渲染/导航。 */
+    if (np->off[0] != 0 || np->off[cnt] != blob_len ||
+        np->blob[blob_len - 1] != '\0')
+        goto bad;
+    for (uint32_t i = 1; i <= cnt; i++) {
+        if (np->off[i] < np->off[i - 1] || np->off[i] > blob_len)
+            goto bad;
+    }
 
     nmbin_close(&nf);
     np->ready = 1;
     return 0;
+
+bad:
+    name_pool_close(np);
+    nmbin_close(&nf);
+    return -1;
 }
 
 void name_pool_close(NamePool *np)

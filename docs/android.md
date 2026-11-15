@@ -469,11 +469,14 @@ gzip level 9、`mtime=0`、不写原文件名 ⇒ 每次生成逐字节相同，
   "versionCode": 2,
   "versionName": "0.3-android",
   "apkUrl": "/app/skedaddle-0.3-android.apk",
+  "sha256": "<apk 全文件 sha256，强烈建议必填>",
   "notes": "新增 XX、修复 YY"
 }
 ```
 
 > 发新版时把 `versionCode` 递增（当前 `app/build.gradle` 是 1），否则设备不会判定为“可更新”。
+> 清单带 `sha256` 时客户端会先校验整包再安装；老服务端不带该字段时仍兼容，但会记录“未校验”，
+> 只依赖 Android 安装器的签名校验。
 
 ### 11.3 如何自托管
 

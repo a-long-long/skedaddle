@@ -214,13 +214,17 @@ int rev_load(const char *dir, const NMBinFile *nodes, const NMBinFile *edges,
     char path[4096];
     if (rev_path(dir, path, sizeof(path)) != 0) return -1;
 
+    if (!rv || !dir || !nodes || !edges) return -1;
     size_t flen = 0;
     uint8_t *base = sk_mmap_file(path, &flen);   /* 平台层：mmap / 文件映射 */
     if (!base) return -1;
 
     uint64_t n  = nodes->hdr.rec_count;
     uint64_t ne = edges->hdr.rec_count;
-    size_t need_min = REV_HDR + ((size_t)n + 1) * 4u;
+    if (n > (uint64_t)(SIZE_MAX / 4u) - 1u) { sk_munmap(base, flen); return -1; }
+    size_t start_bytes = ((size_t)n + 1) * 4u;
+    if (start_bytes > SIZE_MAX - REV_HDR) { sk_munmap(base, flen); return -1; }
+    size_t need_min = REV_HDR + start_bytes;
     if (flen < need_min) { sk_munmap(base, flen); return -1; }
 
     RevHdr h;
@@ -233,16 +237,31 @@ int rev_load(const char *dir, const NMBinFile *nodes, const NMBinFile *edges,
         sk_munmap(base, flen);
         return -1;
     }
-    size_t body = ((size_t)n + 1) * 4u + (size_t)h.list_count * 4u;
+    /* list_count 也来自文件：先按剩余文件空间反推上限，避免 body 乘法溢出。 */
+    if (h.list_count > (uint64_t)((SIZE_MAX - REV_HDR - start_bytes) / 4u)) {
+        sk_munmap(base, flen);
+        return -1;
+    }
+    size_t body = start_bytes + (size_t)h.list_count * 4u;
     if (REV_HDR + body != flen) {
         sk_munmap(base, flen);
         return -1;
     }
     uint32_t *start = (uint32_t *)(void *)(base + REV_HDR);
-    /* 自洽：尾哨兵必须等于 list_count，否则这份文件是坏的 */
+    /* 尾哨兵 + 全表单调性：只验尾哨兵时，正文某个 start 被改大仍会让
+     * expand_dir 读 rv->list[start[nd]..start[nd+1]) 越界。O(n) 校验很便宜。 */
     if ((uint64_t)start[n] != h.list_count) {
         sk_munmap(base, flen);
         return -1;
+    }
+    uint64_t prev = 0;
+    for (uint64_t i = 0; i <= n; i++) {
+        uint64_t cur = start[i];
+        if (cur < prev || cur > h.list_count) {
+            sk_munmap(base, flen);
+            return -1;
+        }
+        prev = cur;
     }
     /* 正文校验和：默认不跑（太贵，见 rev_fnv1a 的注释），只在严格模式下跑 */
     if (rev_strict() && rev_fnv1a(base + REV_HDR, body) != h.body_sum) {

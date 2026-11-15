@@ -2,6 +2,8 @@
 
 纯 C 实现的**离线地图渲染与导航**程序。
 
+> 规模快照（2026-11-15）：`src/` 129 个 C/C++ 文件、42,617 行（含 vendored `stb_truetype.h` 5,080 行）；`tools/` 50 个文件、12,909 行。
+
 自写 OSM PBF 解码器 → 编译成自有的 `.nmbin` 产物 → `mmap` 懒加载 → 自写像素光栅化渲染 +
 双向加权 A\* 路由。**零第三方地图/导航库**：前端用 Qt，地名库用 SQLite3，PBF 解压用 zlib。
 
@@ -61,6 +63,7 @@
 - **Qt5 或 Qt6**（前端 UI 与控件）
 - **SQLite3**（地名库 `places.db`）
 - **zlib**（PBF blob 解压）
+- **SDL2**（可选：仅 `skedaddle_blend_equiv` / `skedaddle_clip_equiv` 两个等价性对照工具；核心与 Qt 前端不依赖）
 - **protobuf-c** + **protoc-c**（**仅构建期**：把 `proto/*.proto` 编成 C 代码；
   `src/pbf/` 的解码逻辑是手写的，生成产物不入库）
 - CMake ≥ 3.13、支持 C11 的编译器
