@@ -20,6 +20,8 @@
 #include <QMessageBox>
 #include <QDir>
 #include <QIcon>
+#include <QNetworkProxyFactory>
+#include <QNetworkProxy>
 
 #include <cstdio>
 #include <cstring>
@@ -79,6 +81,8 @@ int main(int argc, char **argv)
     int grid = 0;                     /* --grid：开局打开坐标网叠加层 */
     int grid_subdiv = 0;               /* --grid-subdiv：开局开启网格细分刻度线 */
     int ui_test = 0;                  /* --ui-test：跑无头 UI 自检后退出 */
+    const char *dl_test = NULL;       /* --dl-test=<叶子>：无头真实下载自检后退出 */
+    const char *proxy = NULL;         /* --proxy=host:port：下载走指定 HTTP 代理 */
     int shot_search = 0;              /* --shot-search：截图前先展开搜索框 */
     int shot_track = 0;               /* --shot-track：截图前先展开轨迹/收藏面板 */
     int shot_nomap = 0;               /* --shot-nomap：截图前跑无图区弹窗+预选下载自检 */
@@ -146,6 +150,8 @@ int main(int argc, char **argv)
             }
         }
         else if (strcmp(argv[i], "--ui-test") == 0) ui_test = 1;
+        else if (strncmp(argv[i], "--dl-test=", 10) == 0) dl_test = argv[i] + 10;
+        else if (strncmp(argv[i], "--proxy=", 8) == 0) proxy = argv[i] + 8;
         else if (strcmp(argv[i], "--shot-search") == 0) shot_search = 1;
         else if (strcmp(argv[i], "--shot-track") == 0) shot_track = 1;
         else if (strcmp(argv[i], "--shot-nomap") == 0) shot_nomap = 1;
@@ -210,6 +216,26 @@ int main(int argc, char **argv)
 
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("跑路了"));
+    /* 下载走系统代理（2026-11-13）：Qt 默认**不读**系统代理设置，直连
+     * Geofabrik 在墙内会超时挂死——之前"下载得到 0 字节 pbf"正是这个原因。
+     * 代理选择顺序（2026-11-15）：--proxy=<host:port> / 环境变量
+     * SKEDADDLE_PROXY 显式指定（本机注册表被看门狗进程反复改回死端口，
+     * 系统设置不可靠）> 系统 Internet 设置。显式值用 HTTP CONNECT，
+     * 本地代理客户端（Clash Verge 7897 等）都支持。 */
+    if (!proxy) proxy = getenv("SKEDADDLE_PROXY");
+    if (proxy && *proxy) {
+        const QString ps = QString::fromLocal8Bit(proxy);
+        const int colon = ps.lastIndexOf(':');
+        if (colon > 0) {
+            QNetworkProxy p(QNetworkProxy::HttpProxy,
+                            ps.left(colon), ps.mid(colon + 1).toInt());
+            QNetworkProxy::setApplicationProxy(p);
+            printf("proxy        %s（HTTP CONNECT，--proxy/SKEDADDLE_PROXY）\n",
+                   ps.toUtf8().constData());
+        }
+    } else {
+        QNetworkProxyFactory::setUseSystemConfiguration(true);
+    }
     /* 应用图标（嵌入为 Qt 资源 :/app_icon.png，见 src/ui_qt/resources.qrc）。
      * 挂在 QApplication 上即对所有顶层窗口/任务栏生效。 */
     app.setWindowIcon(QIcon(QStringLiteral(":/app_icon.png")));
@@ -411,6 +437,17 @@ int main(int argc, char **argv)
     fflush(stdout);
     MainWindow win(&a);
     fflush(stdout);
+
+    if (dl_test) {
+        /* 无头下载自检：真实网络下载 + 转换全链路（--dl-test=<geofabrik 叶子>）。
+         * 网络依赖 ⇒ 不进默认 regress；窗口需 show 出来（DownloadDialog 挂在主窗）。 */
+        win.resize(w, h);
+        win.show();
+        QApplication::processEvents();
+        int rc = win.runDownloadSelfTest(QString::fromLocal8Bit(dl_test));
+        app_shutdown(&a);
+        return rc;
+    }
 
     if (ui_test) {
         /* 无头 UI 自检：断言"搜索按钮 → 点击 → 输入框出现 → Esc 收起"

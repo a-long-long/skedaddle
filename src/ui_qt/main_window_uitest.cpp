@@ -17,6 +17,10 @@
 #include <QApplication>
 #include <QAbstractButton>
 #include <QColor>
+#include <QElapsedTimer>
+#include <QEventLoop>
+#include <QFile>
+#include <QFileInfo>
 #include <QImage>
 #include <QKeyEvent>
 #include <QLineEdit>
@@ -809,5 +813,85 @@ int MainWindow::runUiSelfTest()
         return 0;
     }
     printf("QT-UI-FAIL：%d 项不符\n", fail);
+    return 1;
+}
+
+/* ---------------------------------------------------------------------------
+ * 无头下载自检（--dl-test=<geofabrik 叶子>，2026-11-13）
+ * 真实网络链路：开下载窗 → 预选叶子 → startDownload（HEAD 取元信息 →
+ * Range/多点并行/断点续传 → .part 定稿）→ sync_maps.sh 转换退出。
+ * 断言的是「文件真的落盘了 + 转换真的退出 0」——网络下载是纯异步 IO，
+ * 截图/像素断言都测不到，只有退出码和文件系统能证明。
+ * 网络依赖 ⇒ 不进默认 regress，单独手动跑（可挂 --platform offscreen）。 */
+int MainWindow::runDownloadSelfTest(const QString &leaf)
+{
+    /* 与 showDownloadDialog 同源推导 sources 路径（graph_dir → 项目根） */
+    QString gd = QString::fromLocal8Bit(m_a->graph_dir);
+    if (gd.isEmpty()) gd = QStringLiteral("products/graph");
+    const QString repo = repoRootFromGraphDir(gd);
+    const QString target = repo + QStringLiteral("/sources/") + leaf +
+                           QStringLiteral("-latest.osm.pbf");
+
+    if (QFile::exists(target)) {
+        /* 上次测试的成品还在：重跑前应先删（保留它会让本次走"比对远端
+         * → 无更新跳过"路径，测不到下载本身）。这里明确提示后直接通过，
+         * 不静默删除用户数据。 */
+        printf("dl_skip        %s 已存在（先删除该文件再跑下载自检）\n",
+               qUtf8Printable(target));
+        return 0;
+    }
+
+    showDownloadDialog();
+    if (!m_dlDlg || !m_dlDlg->selectByLeaf(leaf)) {
+        printf("ASSERT-FAIL    dl-test: 下载窗里找不到叶子「%s」\n",
+               qUtf8Printable(leaf));
+        return 1;
+    }
+    printf("dl_select      预选 %s\n", qUtf8Printable(leaf));
+    fflush(stdout);
+
+    m_dlDlg->startDownloadForTest();
+
+    /* 事件循环泵网络信号，轮询等定稿 + 转换退出。
+     * 上限 15 分钟：澳门级小区域 <1 分钟；蒙古级（60MB，940 万节点）
+     * 下载 4 分钟 + 转换（含地标表重试）可到 10 分钟，取 15 分钟留余量。 */
+    QElapsedTimer tm;
+    tm.start();
+    const qint64 CAP_MS = 900000;
+    qint64 lastPrt = 0;
+    while (tm.elapsed() < CAP_MS) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+        QThread::msleep(50);
+        if (tm.elapsed() - lastPrt >= 15000) {   /* 每 15s 报一次进度，证明没卡死 */
+            lastPrt = tm.elapsed();
+            printf("dl_wait        %llds\n", tm.elapsed() / 1000);
+            fflush(stdout);
+        }
+        /* 定稿（rename）与 startConvert 在同一调用栈 ⇒ 看到 pbf 出现时
+         * 转换进程必已启动，不存在"进程还没起就误判完成"的窗口。 */
+        if (QFile::exists(target) && !m_dlDlg->isConvertingForTest()) {
+            const QString log = m_dlDlg->logTextForTest();
+            printf("dl_done        %s（%lld 字节，耗时 %llds）\n",
+                   qUtf8Printable(target), (long long)QFileInfo(target).size(),
+                   tm.elapsed() / 1000);
+            if (log.contains(QStringLiteral("aria2")))
+                printf("dl_mode        aria2 多连接\n");
+            else if (log.contains(QStringLiteral("线程并行")))
+                printf("dl_mode        多点传输（4 线程并行）\n");
+            else if (log.contains(QStringLiteral("单流")))
+                printf("dl_mode        单流\n");
+            const int code = m_dlDlg->convertExitForTest();
+            if (code == 0) {
+                printf("ASSERT-OK      dl-test 下载+转换全链路通过\n");
+                return 0;
+            }
+            printf("ASSERT-FAIL    sync_maps.sh 退出码 %d\n", code);
+            printf("---- 下载窗日志 ----\n%s\n", qUtf8Printable(log));
+            return 1;
+        }
+    }
+    printf("ASSERT-FAIL    dl-test 超时（10 分钟）：%s 未出现\n",
+           qUtf8Printable(target));
+    printf("---- 下载窗日志 ----\n%s\n", qUtf8Printable(m_dlDlg->logTextForTest()));
     return 1;
 }

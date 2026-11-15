@@ -21,7 +21,12 @@ srtm_cache/
 
 # ===== 原始 OSM 数据：446 MB，从上游下载获得，不入库 =====
 # 保留的是"从哪下载"的信息，不是数据本身。
-sources/
+# ★ 目录本身必须存在：repoRootFromGraphDir()（src/ui_qt/qt_trc.h）以
+#   "含 sources/ 与 scripts/" 为仓库根锚点，DownloadDialog 也往这里写
+#   *.osm.pbf。全新克隆若没有它，--ui-test 的下载树判据会假 FAIL
+#   （2026-11-13 从零重建时踩到）。故只忽略内容、保留 .gitkeep 占位。
+sources/*
+!sources/.gitkeep
 
 # ===== Release 发布包：二进制产物（exe+DLL+字体），由 scripts/build_release.sh 生成，不入库 =====
 dist/

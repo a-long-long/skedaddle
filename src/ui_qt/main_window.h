@@ -120,17 +120,21 @@ public:
      * 导入的 GPX 会先进 store（--gpx 在 main 里先跑），所以面板里就是有内容的。 */
     void openTrackPanelForShot();
 
-    /* 无图区弹窗 + 预选下载（--shot-nomap 用）：不问"有没有弹窗"这种靠眼睛的
-     * 问题，而是把三件事变成返回值：
+    /* 无图区 → 直开下载窗 + 预选下载（--shot-nomap 用）：不问"窗有没有开、
+     * 选没选中"这种靠眼睛的问题，而是把两件事变成返回值：
      *   ① 反查结果里有没有"该下哪一块"（dl_name/dl_label）；
-     *   ② 弹窗文案里有没有出现反查到的省/市/区（防两处文案漂移）；
-     *   ③ DownloadDialog::selectByLeaf 能不能真的命中那个叶子并选中它。
-     * 返回 0 = 全对；非 0 = 有位号失败（调用方直接用退出码）。 */
+     *   ② DownloadDialog::selectByLeaf 能不能真的命中那个叶子并选中它。
+     * 返回 0 = 全对；非 0 = 有失败（调用方直接用退出码）。
+     * （2026-11-13：中间的"需要下载地图"说明弹窗已去除，改为一打开
+     *   DownloadDialog 就预选——原第②条弹窗文案断言随之删除。） */
     int runNoMapPromptForShot();
 
-    /* 无图区弹窗的文案（--shot-nomap 断言用）：抽成函数才能检查"弹窗里到底写了
-     * 什么"，而不是靠截图肉眼确认。 */
-    QString nomapPromptTextForTest() const;
+    /* 无头下载自检（--dl-test=<geofabrik 叶子>，2026-11-13）：
+     * 开下载窗 → 预选叶子 → 真实下载（HEAD/Range/多点/续传全链路）
+     * → 等 .part 定稿为 sources/<叶子>-latest.osm.pbf → 等 sync_maps.sh 转换
+     * 退出。0 = 全链路通过；非 0 = 失败（日志打回 stderr 方便定位）。
+     * 网络依赖 ⇒ 不进默认 regress。实现在 main_window_uitest.cpp。 */
+    int runDownloadSelfTest(const QString &leaf);
 
     /* 几何读取器（UI 自检 / 截图用）：浮层贴对了地方没有，只能问几何。
      * 曾因 layoutOverlays 里用 isVisible() 判断面板显隐，导致 --shot-track
@@ -182,7 +186,7 @@ private:
 
     /* ---- 下载地图（菜单「下载地图…」+ 浏览到区域外自动提示）---- */
     void showDownloadDialog();           /* 打开下载对话框（全球 Geofabrik 列表） */
-    void promptDownloadOutside();        /* 浏览到已下载区域外时弹出的提示框 */
+    void promptDownloadOutside();        /* 浏览到已下载区域外：直接开下载窗并预选 */
     void onMapsDownloaded(const QString &name);  /* 下载+转换完成后重载图集 */
 
     App          *m_a;

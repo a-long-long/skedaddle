@@ -56,6 +56,30 @@ public:
     void setOnFinished(std::function<void(const QString &name)> cb)
     { m_onFinished = std::move(cb); }
 
+    /* ---- 无头下载自检（--dl-test=<叶子> 用，2026-11-13）----
+     * 真实网络链路无法用离屏像素断言，只能从外部读状态：触发下载、
+     * 读日志文本（判定"多点/单流"）、读转换进程状态与退出码。
+     * 网络依赖 ⇒ 不进默认 regress，单独手动跑。 */
+    void startDownloadForTest() { startDownload(); }
+    QString logTextForTest() const;      /* 实现在 cpp（QTextEdit 仅前向声明） */
+    bool   isConvertingForTest() const   /* sync_maps.sh 还在跑 */
+    { return m_proc && m_proc->state() != QProcess::NotRunning; }
+    int    convertExitForTest() const { return m_proc ? m_proc->exitCode() : -1; }
+
+    /* ---- aria2 下载引擎（2026-11-15）----
+     * aria2c.exe 存在时优先用它：4 连接分块 + 控制文件（<target>.aria2）
+     * 断点续传 + 内置自动重试，比内置 Qt 段实现更抗弱网。
+     * 缺失或 SKEDADDLE_NO_ARIA2=1 时回退 Qt 段实现（两条路径互不干扰：
+     * aria2 写正式文件名 + .aria2 控制文件；Qt 路径写 .part + .part.meta）。 */
+    QString findAria2() const;
+    bool   useAria2() const;
+    void   downloadNow();                /* 按可用性选 aria2 或 Qt 段路径 */
+    void   startAria2();
+    void   onAria2Output();
+    void   onAria2Finished(int code, QProcess::ExitStatus st);
+    QString aria2ProxyArg() const;
+    int    m_lastAriaPct = -1;           /* aria2 进度去抖（只刷变化的百分比） */
+
 private:
     /* 判定某 geofabrik 路径（叶子）是否已下载：检查 products/graph/<名> 目录
      * 或 sources/<名>-latest.osm.pbf 是否存在。枝（path 空）恒返回 false。 */
@@ -67,11 +91,43 @@ private:
 
     void onSelChanged();
     void startDownload();
-    void beginDownload();                       /* 真正开始下载（跳过查存/HEAD 之后） */
-    void onHeadFinished(QNetworkReply *r);      /* 比对远端新鲜度后决定是否询问更新 */
-    void onReplyFinished(QNetworkReply *r);
-    void onDownloadProgress(qint64 got, qint64 total);
-    void onReadyRead();
+    /* ---- 断点续传 + 多点传输（2026-11-13）----
+     * 所有段写同一个 <target>.part；段布局与进度存 <target>.part.meta（JSON）。
+     * 约定：Seg.start 是段在文件里的**绝对偏移**，got 是段内已写字节数，
+     * 请求区间恒为 bytes=(start+got)-(end)（end<0 表示"到文件尾"），
+     * 进度 = Σ got，完成判定 = got == end-start+1（end<0 时由 reply 结束定）。
+     * 多点：HEAD 拿到 Content-Length 且 ≥32MB 时拆 4 段并行；任何一段收到
+     * 200（服务器不认 Range / 文件已变）⇒ 整体丢弃 .part 重来（自动降级单流）。
+     * 续传：Range + If-Range（Last-Modified）——远端文件换过就不续，重头下。 */
+    struct Seg {
+        qint64 start = 0, end = 0, got = 0;
+        QNetworkReply *reply = nullptr;
+        bool checked = false;   /* 响应头已校验（206/200 分流只做一次） */
+        bool failed = false;
+    };
+    void onHeadFinished(QNetworkReply *r);      /* 本地已有 pbf：远端新鲜度比对 */
+    void headForDownload();                     /* 为"开始/续传"取远端元信息 */
+    void onHeadForDl(QNetworkReply *r);
+    void tryResume(qint64 total, const QString &lm, const QString &etag);
+    void startFresh(qint64 total, const QString &lm, const QString &etag,
+                    bool allowSplit = true);
+    void startSegs(const QVector<Seg> &segs, qint64 total,
+                   const QString &lm, const QString &etag, bool resume);
+    void onSegData(int idx);                    /* readyRead：seek+write 本段 */
+    void onSegFinished(int idx);
+    void onAllSegsDone();                       /* 全段完成：校验+定稿 → 转换 */
+    void abortSegs();                           /* 中止全部段请求（保留 .part） */
+    void scheduleRetry(const QString &why);     /* 自动续传重试（最多 3 次） */
+    void restartAsFresh(qint64 total, const QString &lm, const QString &etag);
+    void updateProgress();
+    qint64 sumGot() const;
+    void saveMeta();
+    bool loadMeta(QVector<Seg> *segs, qint64 *total,
+                  QString *lm, QString *etag) const;
+    void clearPart();                           /* 删 .part 与 .part.meta */
+    void startConvert();                        /* 下载定稿后触发 sync_maps.sh */
+    void setBusy(bool b);
+    void logLine(const QString &s);
     void copyUrl();
     void onConvertFinished(int code, QProcess::ExitStatus st);
     void onConvertOutput();
@@ -95,13 +151,20 @@ private:
     QPushButton   *m_close = nullptr;
 
     QNetworkAccessManager *m_nam   = nullptr;
-    QNetworkReply         *m_reply = nullptr;
-    QFile                 *m_file  = nullptr;
-    QProcess              *m_proc  = nullptr;
+    QVector<Seg>  m_segs;                  /* 并行下载段（多点传输） */
+    QFile        *m_part  = nullptr;       /* <target>.part，全段共写 */
+    QProcess     *m_proc  = nullptr;
 
     QString m_sources;     /* sources/ 目录 */
     QString m_repo;        /* 项目根 */
     QString m_target;      /* 下载目标文件（sources/<name>-latest.osm.pbf） */
     QString m_dlName;      /* 当前下载的省/地区名（回调用） */
+    QString m_dlUrl;       /* 当前下载 URL（跨重试/多段共用同一份；m_url 是输入框） */
+    qint64  m_total = 0;           /* 远端全文件大小；0 = 未知 */
+    bool    m_totalKnown = false;
+    QString m_lm, m_etag;          /* 远端新鲜度（If-Range / meta 校验） */
+    int     m_retries = 0;         /* 自动续传重试计数 */
+    qint64  m_lastMetaMs = 0;      /* 上次落盘 meta 的时刻（节流） */
+    bool    m_noRange = false;     /* 本会话已确认服务器不认 Range ⇒ 后续全单流 */
     std::function<void(const QString &name)> m_onFinished;  /* 下载+转换完成回调 */
 };

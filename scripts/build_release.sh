@@ -53,10 +53,21 @@ fi
 echo "=== 部署到 $DIST ==="
 rm -rf "$DIST"
 mkdir -p "$DIST"
-cp "$BUILD/skedaddle.exe" "$DIST/"
+# 发布包吃 GUI 子系统版 skedaddlegui.exe（双击不弹终端，2026-11-13）；
+# 包内仍叫 skedaddle.exe（start.bat 不用改）。没有孪生体时退回门禁控制台版。
+if [ -f "$BUILD/skedaddlegui.exe" ]; then
+    cp "$BUILD/skedaddlegui.exe" "$DIST/skedaddle.exe"
+else
+    cp "$BUILD/skedaddle.exe" "$DIST/"
+fi
 cp -r "$ROOT/fonts" "$DIST/fonts"
 # language pack: POST_BUILD copies lang/ next to the exe; runtime loads it there.
 if [ -d "$BUILD/lang" ]; then cp -r "$BUILD/lang" "$DIST/lang"; fi
+# aria2 下载引擎随包（findAria2 优先找 exe 同目录，2026-11-15）：
+# 没有 aria2 时下载自动回退内置 Qt 段实现，缺它不影响可用性。
+if [ -f "$ROOT/tools/aria2/aria2c.exe" ]; then
+    cp "$ROOT/tools/aria2/aria2c.exe" "$DIST/"
+fi
 
 # ---- 3) Qt 依赖收集 ----------------------------------------------------
 echo "=== windeployqt --release ==="

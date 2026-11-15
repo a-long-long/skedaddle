@@ -24,9 +24,29 @@
 #include <QMessageBox>
 #include <QProcess>
 #include <QUrl>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QNetworkProxy>
+#include <QRegularExpression>
+#include <QStandardPaths>
+#include <QTimer>
 #include <QApplication>
 #include <QClipboard>
 #include "i18n/i18n.h"
+
+/* 断点续传 + 多点传输的档位（2026-11-13）：
+ *   并行段数 4、单文件 ≥32MB 才拆段、自动续传重试 ≤3 次、meta 落盘节流 3s。 */
+static const int      SK_DL_SEGMENTS   = 4;
+static const qint64   SK_DL_MIN_SPLIT  = 32LL * 1024 * 1024;
+static const int      SK_DL_MAX_RETRY  = 3;
+static const int      SK_DL_META_MS    = 3000;
+static const int      SK_DL_TIMEOUT_MS = 30000;   /* 30s 无传输活动 = 断线 */
+
+/* .part / .part.meta 的路径约定：一切续传状态都挂在目标文件名上。
+ * .part 保存已传字节，.meta 保存段布局（JSON，原子写）。 */
+static QString partPathOf(const QString &target) { return target + QStringLiteral(".part"); }
+static QString metaPathOf(const QString &target) { return target + QStringLiteral(".part.meta"); }
 
 /* 以中文为 key 取翻译（默认中文原样返回）。 */
 static QString trd(const char *zh) { return QString::fromUtf8(i18n_tr(zh)); }
@@ -459,7 +479,8 @@ void DownloadDialog::onSelChanged()
     }
     m_url->setText(currentUrl());
     m_info->setText(QString::fromUtf8(i18n_tr("将下载：%1\n保存到：%2/%3-latest.osm.pbf"
-                    "\n（若本地已存在，会先比对远端；有更新则询问是否更新）")).arg(currentName()).arg(m_sources).arg(currentName()));
+                    "\n（4 线程并行 + 断点续传：中断后自动重试；再次点击「下载并转换」从断点继续"
+                    "\n若本地已存在，会先比对远端；有更新则询问是否更新）")).arg(currentName()).arg(m_sources).arg(currentName()));
     m_dl->setEnabled(true);
     m_copy->setEnabled(true);
 }
@@ -478,49 +499,564 @@ void DownloadDialog::startDownload()
     QString path = currentPath();
     if (path.isEmpty()) return;
 
-    m_dlName = currentName();
-    m_target = m_sources + "/" + m_dlName + "-latest.osm.pbf";
+    m_dlName   = currentName();
+    m_target   = m_sources + "/" + m_dlName + "-latest.osm.pbf";
+    m_dlUrl    = currentUrl();
+    m_retries  = 0;
+    m_noRange  = false;              /* 服务器 Range 支持情况按会话重探 */
+    abortSegs();                     /* 上一次未完的请求作废（.part 保留） */
 
-    /* 先查本地：pbf 已存在且非空 → 比对远端是否有更新，再决定是否下载。
-     * 与 SRTM 的"缺失才下载"一致；存在时不再盲目覆盖，有更新才询问用户。 */
+    /* 本地已有完整 pbf → 比对远端是否有更新，有更新才询问（口径同旧版）。
+     * 注意 .part 残片不算"已存在"——regionDownloaded 只认最终文件名。 */
     if (QFile::exists(m_target) && QFileInfo(m_target).size() > 0) {
-        m_dl->setEnabled(false); m_copy->setEnabled(false);
-        m_log->append(QString::fromUtf8(i18n_tr("本地已存在 %1。正在比对远端是否有更新…")).arg(m_target));
-        QNetworkRequest req(currentUrl());
-#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
-        req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::NoLessSafeRedirectPolicy);
-#endif
+        setBusy(true);
+        logLine(trd("本地已存在 %1。正在比对远端是否有更新…").arg(m_target));
+        QNetworkRequest req(m_dlUrl);
+        req.setTransferTimeout(SK_DL_TIMEOUT_MS);
         QNetworkReply *r = m_nam->head(req);
         connect(r, &QNetworkReply::finished, this, [this, r]() { onHeadFinished(r); });
         return;
     }
 
-    beginDownload();
+    downloadNow();
 }
 
-void DownloadDialog::beginDownload()
+/* ---------------- aria2 下载引擎（2026-11-15）----------------
+ * aria2c.exe 就位时是首选下载引擎：它的 4 连接分块 + .aria2 控制文件续传
+ * + 内置重试，抗弱网能力远胜内置 Qt 段实现（后者保留给没有 aria2 的机器）。
+ * 查找顺序：SKEDADDLE_ARIA2 显式指定 > exe 同目录（发布包随带）>
+ * 仓库 tools/aria2/ > PATH。 */
+
+static QString findAria2Impl()
 {
-    m_log->append(QString::fromUtf8(i18n_tr("开始下载：%1\n  → %2")).arg(currentUrl(), m_target));
+    const QByteArray env = qgetenv("SKEDADDLE_ARIA2");
+    if (!env.isEmpty()) {
+        const QString p = QString::fromLocal8Bit(env);
+        if (QFile::exists(p)) return p;
+    }
+    const QString appDir = QCoreApplication::applicationDirPath();
+    for (const QString &c : {
+             appDir + QStringLiteral("/aria2c.exe"),              /* 发布包随带 */
+             QDir::cleanPath(appDir + QStringLiteral("/../tools/aria2/aria2c.exe")),
+         })
+        if (QFile::exists(c)) return c;
+    return QStandardPaths::findExecutable(QStringLiteral("aria2c"));
+}
 
-    m_dl->setEnabled(false); m_copy->setEnabled(false);
-    m_prog->setValue(0);
+QString DownloadDialog::findAria2() const { return findAria2Impl(); }
 
+bool DownloadDialog::useAria2() const
+{
+    return qgetenv("SKEDADDLE_NO_ARIA2").isEmpty() && !findAria2().isEmpty();
+}
+
+void DownloadDialog::downloadNow()
+{
+    if (useAria2()) { startAria2(); return; }
+    headForDownload();
+}
+
+/* aria2 不会读 Windows 系统代理，应用层设置的代理（--proxy /
+ * SKEDADDLE_PROXY）必须显式传给它的 --all-proxy。 */
+QString DownloadDialog::aria2ProxyArg() const
+{
+    const QNetworkProxy p = QNetworkProxy::applicationProxy();
+    if (p.type() == QNetworkProxy::HttpProxy && !p.hostName().isEmpty())
+        return QStringLiteral("http://%1:%2").arg(p.hostName()).arg(p.port());
+    const QByteArray env = qgetenv("SKEDADDLE_PROXY");
+    if (!env.isEmpty())
+        return QStringLiteral("http://") + QString::fromLocal8Bit(env);
+    return QString();
+}
+
+void DownloadDialog::startAria2()
+{
+    const QString exe = findAria2();
+    clearPart();                     /* Qt 路径的残片与 aria2 布局不兼容，清掉 */
     QDir().mkpath(m_sources);
-    m_file = new QFile(m_target, this);
-    if (!m_file->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        m_log->append(QString::fromUtf8(i18n_tr("无法创建目标文件：%1")).arg(m_target));
-        m_dl->setEnabled(true); m_copy->setEnabled(true);
+    setBusy(true);
+    m_prog->setRange(0, 100);
+    m_prog->setValue(0);
+    m_lastAriaPct = -1;
+
+    QStringList args;
+    args << QStringLiteral("--continue=true")        /* 控制文件续传 */
+         << QStringLiteral("--allow-overwrite=true")  /* 本地已有完整文件时强制覆盖（更新场景） */
+         << QStringLiteral("--max-connection-per-server=4")
+         << QStringLiteral("--split=4")
+         << QStringLiteral("--min-split-size=8M")
+         << QStringLiteral("--file-allocation=none")  /* 预分配会让大文件假占盘 */
+         << QStringLiteral("--max-tries=5")
+         << QStringLiteral("--retry-wait=3")
+         << QStringLiteral("--console-log-level=warn")
+         << QStringLiteral("--summary-interval=2")
+         << QStringLiteral("--download-result=hide")
+         << QStringLiteral("--dir=%1").arg(QDir::toNativeSeparators(m_sources))
+         << QStringLiteral("--out=%1").arg(QFileInfo(m_target).fileName());
+    const QString proxy = aria2ProxyArg();
+    if (!proxy.isEmpty())
+        args << QStringLiteral("--all-proxy=%1").arg(proxy);
+    args << m_dlUrl;
+
+    m_proc = new QProcess(this);
+    connect(m_proc, &QProcess::readyReadStandardOutput, this, &DownloadDialog::onAria2Output);
+    connect(m_proc, &QProcess::readyReadStandardError, this, [this]() {
+        if (m_proc) m_log->append(QString::fromLocal8Bit(m_proc->readAllStandardError()));
+    });
+    connect(m_proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, &DownloadDialog::onAria2Finished);
+    logLine(trd("使用 aria2 多连接下载：%1").arg(m_target));
+    m_proc->start(exe, args);
+}
+
+/* aria2 的进度行形如 [#8f3a12 12MiB/59MiB(20%) CN:4 DL:2.3MiB ETA:24s]，
+ * 每 2s 一条 → 只解析百分比刷进度条，不灌日志。 */
+void DownloadDialog::onAria2Output()
+{
+    if (!m_proc) return;
+    const QString out = QString::fromLocal8Bit(m_proc->readAllStandardOutput());
+    static const QRegularExpression re(QStringLiteral("\\((\\d+)%\\)"));
+    auto it = re.globalMatch(out);
+    while (it.hasNext()) {
+        const int pct = it.next().captured(1).toInt();
+        if (pct != m_lastAriaPct) {
+            m_lastAriaPct = pct;
+            m_prog->setValue(pct);
+        }
+    }
+}
+
+void DownloadDialog::onAria2Finished(int code, QProcess::ExitStatus st)
+{
+    if (m_proc) { m_proc->deleteLater(); m_proc = nullptr; }
+    if (st == QProcess::CrashExit || code != 0) {
+        logLine(trd("aria2 下载中断（exit %1）。进度已保留，再次点击「下载并转换」从断点继续。").arg(code));
+        setBusy(false);
+        return;
+    }
+    /* aria2 成功时会自己删掉控制文件；还在 = 任务没跑完 */
+    if (QFile::exists(m_target + QStringLiteral(".aria2"))) {
+        logLine(trd("aria2 退出但控制文件仍在，视为未完成。"));
+        setBusy(false);
+        return;
+    }
+    const qint64 sz = QFileInfo(m_target).size();
+    if (sz <= 0) {
+        logLine(trd("aria2 完成但目标文件为空。"));
+        setBusy(false);
+        return;
+    }
+    m_prog->setValue(100);
+    logLine(trd("下载完成（%1 字节），开始转换…").arg(sz));
+    startConvert();
+}
+
+/* ---------------- 断点续传 + 多点传输（2026-11-13）----------------
+ * 文件布局：<target>.part 是唯一落盘处，段进度存 <target>.part.meta。
+ * .part 里的字节按段偏移写（seek+write），事件循环天然串行化各段的写。
+ * 续传判定链：meta 的 url 必须一致；total/Last-Modified 与远端对不上
+ * 就丢弃残片重头下；If-Range 让服务器帮忙把"文件已变"拦成 200。 */
+
+void DownloadDialog::setBusy(bool b) { m_dl->setEnabled(!b); m_copy->setEnabled(!b); }
+void DownloadDialog::logLine(const QString &s) { m_log->append(s); }
+QString DownloadDialog::logTextForTest() const { return m_log->toPlainText(); }
+
+qint64 DownloadDialog::sumGot() const
+{
+    qint64 t = 0;
+    for (const Seg &s : m_segs) t += s.got;
+    return t;
+}
+
+void DownloadDialog::updateProgress()
+{
+    if (!m_totalKnown || m_total <= 0) {
+        m_prog->setRange(0, 0);              /* 总大小未知：忙碌指示 */
+        return;
+    }
+    m_prog->setRange(0, 100);
+    m_prog->setValue((int)qBound<qint64>(qint64(0), sumGot() * 100 / m_total, qint64(100)));
+}
+
+/* 为"开始下载/续传"取远端元信息。HEAD 失败不致命：
+ * 没 .part → 退化成普通单流 GET（旧行为）；有 .part → 按 meta 盲续，
+ * If-Range 兜底（远端变了会收到 200，届时自动重头下）。 */
+void DownloadDialog::headForDownload()
+{
+    setBusy(true);
+    QNetworkRequest req(m_dlUrl);
+    req.setTransferTimeout(SK_DL_TIMEOUT_MS);
+    QNetworkReply *r = m_nam->head(req);
+    connect(r, &QNetworkReply::finished, this, [this, r]() { onHeadForDl(r); });
+}
+
+void DownloadDialog::onHeadForDl(QNetworkReply *r)
+{
+    if (r->error() == QNetworkReply::NoError) {
+        const qint64 total = r->header(QNetworkRequest::ContentLengthHeader).toLongLong();
+        /* lm/etag 必须存**原始头**：header() 返回的 QDateTime 转 ISO 格式，
+         * 服务器不认它作 If-Range 值（要求 HTTP-date 或 ETag）⇒ 续传会被
+         * 判"文件已变"而白白重头下（2026-11-15 蒙古实测踩到）。 */
+        const QString lm   = QString::fromUtf8(r->rawHeader("Last-Modified"));
+        const QString etag = QString::fromUtf8(r->rawHeader("ETag"));
+        r->deleteLater();
+        tryResume(total, lm, etag);
+        return;
+    }
+    const bool hasPart = QFileInfo(partPathOf(m_target)).size() > 0;
+    logLine(trd("探测远端失败（%1）：%2").arg(r->errorString(),
+            hasPart ? trd("按本地进度续传") : trd("退化为普通单流下载")));
+    r->deleteLater();
+    tryResume(-1, QString(), QString());
+}
+
+/* 续传或新开。total<=0 / lm 空 = 远端元信息未知（HEAD 失败），用 meta 里的值。 */
+void DownloadDialog::tryResume(qint64 total, const QString &lm, const QString &etag)
+{
+    const QString part   = partPathOf(m_target);
+    const qint64 partSz  = QFileInfo(part).size();
+
+    QVector<Seg> segs; qint64 mt = 0; QString mlm, met;
+    const bool haveMeta = loadMeta(&segs, &mt, &mlm, &met);
+
+    if (partSz <= 0) {                        /* 没有可续的东西 → 全新下载 */
+        clearPart();
+        startFresh(total, lm, etag);
         return;
     }
 
-    QNetworkRequest req(currentUrl());   /* Qt6 默认跟随重定向，无需额外属性 */
-    m_reply = m_nam->get(req);
-    connect(m_reply, &QNetworkReply::downloadProgress,
-            this, &DownloadDialog::onDownloadProgress);
-    connect(m_reply, &QIODevice::readyRead, this, &DownloadDialog::onReadyRead);
-    connect(m_reply, &QNetworkReply::finished, this,
-            [this]() { onReplyFinished(m_reply); });
+    if (haveMeta) {
+        /* meta 与远端对不上（文件换过 / 残片比远端还大）→ 残片作废重下 */
+        if ((total > 0 && mt > 0 && total != mt) ||
+            (!lm.isEmpty() && !mlm.isEmpty() && lm != mlm) ||
+            (total > 0 && partSz > total)) {
+            logLine(trd("远端文件已更新，本地残片过期，重新下载。"));
+            clearPart();
+            startFresh(total, lm, etag);
+            return;
+        }
+        if (total > 0) mt = total;
+        if (!lm.isEmpty())   mlm = lm;
+        if (!etag.isEmpty()) met = etag;
+        logLine(trd("发现未完成的下载（已传 %1 字节），断点续传…").arg(partSz));
+        startSegs(segs, mt, mlm, met, true);
+        return;
+    }
+
+    /* 无 meta：单段隐式续传 [0, end]，got=partSz —— 等价于把已有字节记成
+     * 第 0 段进度，请求区间自动从 partSz 开始。 */
+    if (total > 0 && partSz > total) {
+        clearPart();
+        startFresh(total, lm, etag);
+        return;
+    }
+    Seg s;
+    s.start = 0;
+    s.end   = total > 0 ? total - 1 : -1;
+    s.got   = partSz;
+    logLine(trd("发现未完成的下载（已传 %1 字节），断点续传…").arg(partSz));
+    startSegs(QVector<Seg>{s}, total, lm, etag, true);
+}
+
+void DownloadDialog::startFresh(qint64 total, const QString &lm, const QString &etag,
+                                bool allowSplit)
+{
+    clearPart();
+    m_total = total; m_totalKnown = total > 0;
+    m_lm = lm; m_etag = etag;
+
+    QVector<Seg> segs;
+    if (allowSplit && !m_noRange && m_totalKnown && m_total >= SK_DL_MIN_SPLIT) {
+        /* 多点传输：均分 4 段并行。尾段吃掉余数；服务器不支持 Range 时
+         * m_noRange 已在降级路径置位，直接走单流。 */
+        const qint64 segSz = m_total / SK_DL_SEGMENTS;
+        for (int i = 0; i < SK_DL_SEGMENTS; i++) {
+            Seg s;
+            s.start = (qint64)i * segSz;
+            s.end   = (i == SK_DL_SEGMENTS - 1) ? m_total - 1
+                                                : (i + 1) * segSz - 1;
+            segs.append(s);
+        }
+        logLine(trd("开始下载：%1（%2 线程并行，共 %3 字节）")
+                    .arg(m_dlUrl).arg(SK_DL_SEGMENTS).arg(m_total));
+    } else {
+        Seg s;
+        s.start = 0;
+        s.end   = m_totalKnown ? m_total - 1 : -1;
+        segs.append(s);
+        logLine(trd("开始下载：%1（单流，共 %2）")
+                    .arg(m_dlUrl).arg(m_totalKnown ? QString::number(m_total)
+                                                   : trd("大小未知")));
+    }
+    startSegs(segs, m_total, m_lm, m_etag, false);
+}
+
+void DownloadDialog::startSegs(const QVector<Seg> &segs, qint64 total,
+                               const QString &lm, const QString &etag, bool resume)
+{
+    m_segs = segs;
+    m_total = total; m_totalKnown = total > 0;
+    m_lm = lm; m_etag = etag;
+
+    QDir().mkpath(m_sources);
+    m_part = new QFile(partPathOf(m_target), this);
+    /* 不加 Truncate：已有字节必须保住，写入位置由每段的 start+got 决定 */
+    if (!m_part->open(QIODevice::WriteOnly)) {
+        logLine(trd("无法创建目标文件：%1").arg(m_part->fileName()));
+        delete m_part; m_part = nullptr;
+        setBusy(false);
+        return;
+    }
+
+    for (int i = 0; i < m_segs.size(); i++) {
+        Seg &s = m_segs[i];
+        QNetworkRequest req(m_dlUrl);
+        /* 30s 无传输活动即报错 → seg 失败 → 自动续传重试。没有这条，
+         * 直连超时的挂起请求永远不返回错误，重试机制就永远不会触发。 */
+        req.setTransferTimeout(SK_DL_TIMEOUT_MS);
+        if (s.end >= 0 || resume) {
+            const qint64 from = s.start + s.got;
+            req.setRawHeader("Range",
+                             s.end >= 0
+                                 ? QString("bytes=%1-%2").arg(from).arg(s.end).toUtf8()
+                                 : QString("bytes=%1-").arg(from).toUtf8());
+        }
+        /* If-Range：只有远端仍是当初那个文件（Last-Modified 未变）才续；
+         * 变了服务器会回 200 全量，onSegData 据此整体重来。 */
+        if (resume && !m_lm.isEmpty())
+            req.setRawHeader("If-Range", m_lm.toUtf8());
+        QNetworkReply *r = m_nam->get(req);
+        s.reply = r;
+        connect(r, &QIODevice::readyRead, this, [this, i]() { onSegData(i); });
+        connect(r, &QNetworkReply::finished, this, [this, i]() { onSegFinished(i); });
+    }
+    saveMeta();
+    updateProgress();
+}
+
+void DownloadDialog::onSegData(int idx)
+{
+    if (idx < 0 || idx >= m_segs.size()) return;
+    Seg &s = m_segs[idx];
+    QNetworkReply *r = s.reply;
+    if (!r) return;
+
+    if (!s.checked) {
+        s.checked = true;
+        const int code = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (code == 416) {
+            /* Range 越界 = 这一段早已传完（meta 落盘落后于实际写入的正常情形）；
+             * 但若段没满还 416，说明 meta 与文件错位，按失败走续传修正。 */
+            if (!(s.end >= 0 && s.got >= s.end - s.start + 1)) s.failed = true;
+            r->abort();
+            return;
+        }
+        if (code == 206) {
+            /* Content-Range 的总长必须与已知 total 一致，否则远端文件换了 */
+            const QByteArray cr = r->rawHeader("Content-Range");   /* "bytes X-Y/T" */
+            const int slash = cr.lastIndexOf('/');
+            if (slash >= 0) {
+                const qint64 ct = cr.mid(slash + 1).trimmed().toLongLong();
+                if (ct > 0 && m_totalKnown && ct != m_total) {
+                    restartAsFresh(ct, QString::fromUtf8(r->rawHeader("Last-Modified")),
+                                   QString::fromUtf8(r->rawHeader("ETag")));
+                    return;
+                }
+                if (ct > 0 && !m_totalKnown) { m_total = ct; m_totalKnown = true; }
+            }
+            m_noRange = false;
+        } else if (code == 200) {
+            /* 200 = 服务器不认 Range（或 If-Range 判定文件已变）。只有
+             * "单段 + 从头" 可直接接受；其余丢弃残片、降级单流重来。 */
+            if (s.start == 0 && s.got == 0 && m_segs.size() == 1) {
+                const qint64 ct = r->header(QNetworkRequest::ContentLengthHeader).toLongLong();
+                if (ct > 0 && !m_totalKnown) { m_total = ct; m_totalKnown = true; }
+            } else {
+                restartAsFresh(r->header(QNetworkRequest::ContentLengthHeader).toLongLong(),
+                               QString::fromUtf8(r->rawHeader("Last-Modified")),
+                               QString::fromUtf8(r->rawHeader("ETag")));
+                return;
+            }
+        }
+    }
+
+    const QByteArray data = r->readAll();
+    if (!data.isEmpty()) {
+        if (!m_part->seek(s.start + s.got) || m_part->write(data) != data.size()) {
+            logLine(trd("写入文件失败（磁盘满或权限？）：%1").arg(m_part->fileName()));
+            s.failed = true;
+            abortSegs(); saveMeta();
+            scheduleRetry(trd("写入失败"));
+            return;
+        }
+        s.got += data.size();
+    }
+    updateProgress();
+    if (QDateTime::currentMSecsSinceEpoch() - m_lastMetaMs >= SK_DL_META_MS)
+        saveMeta();
+}
+
+void DownloadDialog::onSegFinished(int idx)
+{
+    if (idx < 0 || idx >= m_segs.size()) return;
+    Seg &s = m_segs[idx];
+    QNetworkReply *r = s.reply;
+    if (!r) return;
+    s.reply = nullptr;
+
+    /* finished 前可能还有尾巴没读完（readyRead 不保证最后一次触发） */
+    const QByteArray tail = r->readAll();
+    if (!tail.isEmpty() && !s.failed && m_part &&
+        m_part->seek(s.start + s.got) && m_part->write(tail) == tail.size())
+        s.got += tail.size();
+
+    const QNetworkReply::NetworkError err = r->error();
+    const bool canceled = (err == QNetworkReply::OperationCanceledError);
+    if (!canceled && err != QNetworkReply::NoError) s.failed = true;
+    r->deleteLater();
+
+    bool allDone = true, anyFail = false;
+    for (const Seg &x : m_segs) {
+        if (x.reply) { allDone = false; break; }
+        if (x.failed) anyFail = true;
+    }
+    if (!allDone) return;
+
+    saveMeta();
+    const bool allComplete = !anyFail;
+    if (allComplete) { onAllSegsDone(); return; }
+    abortSegs();
+    scheduleRetry(err == QNetworkReply::NoError ? trd("段未完成")
+                                                : r->errorString());
+}
+
+void DownloadDialog::onAllSegsDone()
+{
+    if (m_part) m_part->close();
+    const qint64 sz = m_part ? m_part->size() : 0;
+    if (m_totalKnown && sz != m_total) {
+        logLine(trd("文件校验不符（本地 %1 字节，远端 %2），续传修正…")
+                    .arg(sz).arg(m_total));
+        delete m_part; m_part = nullptr;
+        saveMeta();
+        scheduleRetry(trd("文件大小校验不符"));
+        return;
+    }
+    delete m_part; m_part = nullptr;
+    QFile::remove(metaPathOf(m_target));
+    if (QFile::exists(m_target) && !QFile::remove(m_target)) {
+        logLine(trd("无法替换旧文件：%1").arg(m_target));
+        setBusy(false);
+        return;
+    }
+    if (!QFile::rename(partPathOf(m_target), m_target)) {
+        logLine(trd("落盘失败：%1 → %2").arg(partPathOf(m_target), m_target));
+        setBusy(false);
+        return;
+    }
+    logLine(trd("下载完成（%1 字节），开始转换…").arg(m_target));
+    startConvert();
+}
+
+/* 中止全部段请求并关闭 .part 句柄（**保留** .part 与 meta 供续传）。
+ * 注意先把 reply 置空再 abort：abort 会同步触发 finished →
+ * onSegFinished，reply 为空时那段逻辑直接短路。 */
+void DownloadDialog::abortSegs()
+{
+    for (int i = 0; i < m_segs.size(); i++) {
+        QNetworkReply *r = m_segs[i].reply;
+        m_segs[i].reply = nullptr;
+        if (r) { r->abort(); r->deleteLater(); }
+    }
+    m_segs.clear();
+    if (m_part) { m_part->close(); delete m_part; m_part = nullptr; }
+}
+
+void DownloadDialog::scheduleRetry(const QString &why)
+{
+    if (m_retries >= SK_DL_MAX_RETRY) {
+        logLine(trd("多次重试仍失败（%1），已保留已下载部分。"
+                    "再次点击「下载并转换」将从断点续传。").arg(why));
+        setBusy(false);
+        return;
+    }
+    m_retries++;
+    logLine(trd("下载中断（%1），2 秒后自动续传（第 %2/%3 次）…")
+                .arg(why).arg(m_retries).arg(SK_DL_MAX_RETRY));
+    QTimer::singleShot(2000, this, [this]() { abortSegs(); headForDownload(); });
+}
+
+/* 服务器不认 Range / 远端文件已变：丢弃残片，降级单流重下。 */
+void DownloadDialog::restartAsFresh(qint64 total, const QString &lm, const QString &etag)
+{
+    logLine(trd("服务器不支持多点续传（或文件已更新），改为单流重新下载。"));
+    m_noRange = true;
+    abortSegs();
+    startFresh(total, lm, etag, /*allowSplit=*/false);
+}
+
+void DownloadDialog::saveMeta()
+{
+    m_lastMetaMs = QDateTime::currentMSecsSinceEpoch();
+    if (m_segs.isEmpty()) return;
+    QJsonObject o;
+    o.insert(QStringLiteral("url"), m_dlUrl);
+    o.insert(QStringLiteral("total"), (double)m_total);
+    o.insert(QStringLiteral("last_modified"), m_lm);
+    o.insert(QStringLiteral("etag"), m_etag);
+    QJsonArray arr;
+    for (const Seg &s : m_segs) {
+        QJsonObject so;
+        so.insert(QStringLiteral("start"), (double)s.start);
+        so.insert(QStringLiteral("end"), (double)s.end);
+        so.insert(QStringLiteral("got"), (double)s.got);
+        arr.append(so);
+    }
+    o.insert(QStringLiteral("segs"), arr);
+    const QString meta = metaPathOf(m_target);
+    const QString tmp  = meta + QStringLiteral(".tmp");
+    QFile f(tmp);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+        f.write(QJsonDocument(o).toJson(QJsonDocument::Compact)) < 0)
+        return;                              /* 落盘失败只损失一个续传点 */
+    f.close();
+    QFile::remove(meta);
+    QFile::rename(tmp, meta);
+}
+
+bool DownloadDialog::loadMeta(QVector<Seg> *segs, qint64 *total,
+                              QString *lm, QString *etag) const
+{
+    QFile f(metaPathOf(m_target));
+    if (!f.open(QIODevice::ReadOnly)) return false;
+    const QJsonDocument d = QJsonDocument::fromJson(f.readAll());
+    if (!d.isObject()) return false;
+    const QJsonObject o = d.object();
+    if (o.value(QStringLiteral("url")).toString() != m_dlUrl) return false;  /* 换了目标不续 */
+    const QJsonArray arr = o.value(QStringLiteral("segs")).toArray();
+    if (arr.isEmpty()) return false;
+    segs->clear();
+    for (const QJsonValue &v : arr) {
+        const QJsonObject so = v.toObject();
+        Seg s;
+        s.start = (qint64)so.value(QStringLiteral("start")).toDouble();
+        s.end   = (qint64)so.value(QStringLiteral("end")).toDouble();
+        s.got   = (qint64)so.value(QStringLiteral("got")).toDouble();
+        if (s.end >= 0 && (s.got < 0 || s.start + s.got > s.end + 1))
+            return false;                    /* meta 损坏：当没有 */
+        segs->append(s);
+    }
+    *total = (qint64)o.value(QStringLiteral("total")).toDouble();
+    *lm    = o.value(QStringLiteral("last_modified")).toString();
+    *etag  = o.value(QStringLiteral("etag")).toString();
+    return true;
+}
+
+void DownloadDialog::clearPart()
+{
+    abortSegs();
+    QFile::remove(partPathOf(m_target));
+    QFile::remove(metaPathOf(m_target));
 }
 
 /* 本地已有 pbf 时，先发 HEAD 比对远端新鲜度：
@@ -563,45 +1099,69 @@ void DownloadDialog::onHeadFinished(QNetworkReply *r)
         QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
     if (ret == QMessageBox::Yes) {
         m_log->append(QString::fromUtf8(i18n_tr("用户选择更新，开始下载…")));
-        beginDownload();
+        downloadNow();
     } else {
         m_log->append(QString::fromUtf8(i18n_tr("用户选择保留本地文件，跳过下载。")));
+        setBusy(false);
     }
 }
 
-void DownloadDialog::onReadyRead()
+/* 下载定稿后触发转换：sync_maps.sh 会扫整个 sources/ 把新 PBF 转成可加载的
+ * 路网。异步跑（转换一个省可能几分钟），完成后通知主窗口重载图集。 */
+/* Windows 盘符路径 → MSYS POSIX 路径：e:/x/y → /e/x/y。
+ * bash 对 "e:/x" 形式的**参数**不识别（会当相对路径，报 No such file），
+ * 环境变量里的反斜杠路径还会被当转义符——传给 bash 的一切路径都得转换
+ * （2026-11-15 排查转换 exit 127 时定位到）。 */
+static QString toPosixPath(const QString &win)
 {
-    if (m_file && m_reply) m_file->write(m_reply->readAll());
+    if (win.size() >= 2 && win[1] == ':')
+        return QStringLiteral("/") + win[0].toLower() + win.mid(2);
+    return win;
 }
 
-void DownloadDialog::onDownloadProgress(qint64 got, qint64 total)
+/* 找一个**真 bash**（MSYS2/Git Bash，2026-11-15）：
+ * CreateProcess 对 "bash" 的解析顺序是 System32 排在 PATH **前面**，而
+ * System32 里的 bash.exe 是 WSL 启动器——WSL 根文件系统里没有 /e/，
+ * sync_maps.sh 必报 No such file（exit 127）。所以不能裸调 "bash"，
+ * 必须按绝对路径命中 MSYS2/Git 的 bash。SKEDADDLE_BASH 可显式指定。 */
+static QString findBash()
 {
-    if (total > 0) m_prog->setValue((int)(got * 100 / total));
+    if (const char *env = qgetenv("SKEDADDLE_BASH"))
+        if (*env) return QString::fromLocal8Bit(env);
+    for (const QString &c : {
+             QStringLiteral("D:/msys64/usr/bin/bash.exe"),
+             QStringLiteral("C:/msys64/usr/bin/bash.exe"),
+             QStringLiteral("C:/Program Files/Git/bin/bash.exe"),
+             QStringLiteral("C:/Program Files/Git/usr/bin/bash.exe"),
+         })
+        if (QFile::exists(c)) return c;
+    return QStringLiteral("bash");   /* 兜底：交给 PATH（警告质量，可能命中 WSL） */
 }
 
-void DownloadDialog::onReplyFinished(QNetworkReply *r)
+void DownloadDialog::startConvert()
 {
-    if (m_file) { m_file->close(); delete m_file; m_file = nullptr; }
-
-    if (r->error() != QNetworkReply::NoError) {
-        m_log->append(QString::fromUtf8(i18n_tr("下载失败：%1")).arg(r->errorString()));
-        m_dl->setEnabled(true); m_copy->setEnabled(true);
-        r->deleteLater(); m_reply = nullptr;
-        return;
-    }
-    m_log->append(QString::fromUtf8(i18n_tr("下载完成（%1 字节），开始转换…")).arg(m_target));
-    r->deleteLater(); m_reply = nullptr;
-
-    /* 下载完即触发转换：sync_maps.sh 会扫整个 sources/ 把新 PBF 转成可加载的路网。
-     * 异步跑（转换一个省可能几分钟），完成后 downloadFinished 通知主窗口重载。 */
     m_proc = new QProcess(this);
     connect(m_proc, &QProcess::readyReadStandardOutput, this, &DownloadDialog::onConvertOutput);
+    /* stderr 也要接：sync_maps.sh 的失败原因（缺命令/缺工具）全走 stderr，
+     * 不接的话日志只剩一个干巴巴的退出码（2026-11-15 排查 127 时踩到）。 */
+    connect(m_proc, &QProcess::readyReadStandardError, this, [this]() {
+        if (m_proc) m_log->append(QString::fromLocal8Bit(m_proc->readAllStandardError()));
+    });
     connect(m_proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, &DownloadDialog::onConvertFinished);
     m_proc->setWorkingDirectory(m_repo);
-    m_proc->start(QStringLiteral("bash"),
-                 QStringList() << (m_repo + "/scripts/sync_maps.sh"));
-    m_log->append(QString::fromUtf8(i18n_tr("运行 sync_maps.sh（转换 + 建地名库 + 地标表）…")));
+    /* 把 exe 所在目录告诉 sync_maps.sh（SKEDADDLE_BIN）：构建树可能叫
+     * build_rel 等非标准名，脚本靠它找到转换工具（2026-11-15）。 */
+    const QString appDir = QCoreApplication::applicationDirPath();
+    if (QFile::exists(appDir + QStringLiteral("/skedaddle_graph_extract.exe"))
+        || QFile::exists(appDir + QStringLiteral("/skedaddle_graph_extract"))) {
+        QProcessEnvironment pe = QProcessEnvironment::systemEnvironment();
+        pe.insert(QStringLiteral("SKEDADDLE_BIN"), toPosixPath(appDir));
+        m_proc->setProcessEnvironment(pe);
+    }
+    m_proc->start(findBash(),
+                 QStringList() << toPosixPath(m_repo + "/scripts/sync_maps.sh"));
+    logLine(trd("运行 sync_maps.sh（转换 + 建地名库 + 地标表）…"));
 }
 
 void DownloadDialog::onConvertOutput()

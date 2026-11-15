@@ -26,6 +26,7 @@ static const HwEnt kHighway[] = {
     { "tertiary_link",   RC_TERTIARY,     1,  40 },
     { "unclassified",    RC_UNCLASSIFIED, 1,  40 },
     { "residential",     RC_RESIDENTIAL,  1,  30 },
+    { "residentail",     RC_RESIDENTIAL,  1,  30 },  /* OSM 拼写错误，蒙古数据踩到（同 secundary）*/
     { "living_street",   RC_LIVING,       1,  10 },
     { "service",         RC_SERVICE,      1,  20 },
     { "road",            RC_OTHER,        1,  30 },   /* 未分类但可通行 */

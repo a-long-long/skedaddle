@@ -19,7 +19,13 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="$ROOT/build"
+# 构建目录：SKEDADDLE_BIN 显式指定（GUI 里下载完自动转换时由程序传入
+# exe 所在目录，兼容 build_rel 这类非标准名）> build > build_rel。
+BIN="${SKEDADDLE_BIN:-$ROOT/build}"
+if ! [ -x "$BIN/skedaddle_graph_extract" ] && ! [ -x "$BIN/skedaddle_graph_extract.exe" ] \
+   && [ -x "$ROOT/build_rel/skedaddle_graph_extract.exe" ]; then
+    BIN="$ROOT/build_rel"
+fi
 SRC_DIR="$ROOT/sources"
 OUT_ROOT="$ROOT/products/graph"
 
@@ -348,7 +354,25 @@ else
                     "$(( $(date +%s) - t0 ))" \
                     "$(sqlite3 "$PLACES_DB" 'select count(*) from place' 2>/dev/null)" "$PLACES_DB"
             else
-                printf '[FAIL ] %-12s 新库无法就位\n' "places"; n_fail=$((n_fail+1))
+                # 2026-11-15：程序开着时（GUI 里点下载必然如此）地名库句柄被
+                # 运行中的 skedaddle 占着，mv 报 Device or resource busy——
+                # 这不是构建问题，重试几次；仍占用就保留旧库、降级为 WARN。
+                # （地名库不再 FAIL 整个转换：路网/地标表照常交付。）
+                p_ok=0
+                for _ in 1 2 3; do
+                    sleep 2
+                    if mv -f "$ptmp" "$PLACES_DB" && mv -f "$pmtmp" "$PLACES_META"; then
+                        p_ok=1; break
+                    fi
+                done
+                if [ "$p_ok" = 1 ]; then
+                    printf '[ OK  ] %-12s %s 秒，place %s 条 → %s（重试后就位）\n' "places" \
+                        "$(( $(date +%s) - t0 ))" \
+                        "$(sqlite3 "$PLACES_DB" 'select count(*) from place' 2>/dev/null)" "$PLACES_DB"
+                else
+                    printf '[WARN ] %-12s 地名库被运行中的程序占用，保留旧库；关闭程序后重跑 sync_maps.sh 即可入库新地名\n' "places"
+                    rm -f "$ptmp" "$pmtmp" "$ptmp.log"
+                fi
             fi
             rm -f "$ptmp.log" "$pmtmp"
         else
