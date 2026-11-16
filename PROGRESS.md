@@ -1099,3 +1099,112 @@ CLI 端到端：`--datum=xa80 --datum-grid=demo.txt`（北 +100 / 东 +200）⇒
     `DISP-RUNTIME-OK`（证明问题 3 新 check 对正常装载零影响，42×81 网格零丢失）。
 - 改动文件（5 个，均未提交）：`src/map/binfmt.c`、`src/map/mapset.c`、
   `src/settings/settings.c`、`src/utils/plat.c`、`tools/nmbin_verify.c`。
+
+## 十六、2026-11-16 算路快照 / 显示层防漏 / Android 提交原子性与字节数
+
+> 四组改动一并入库（`968861c`，29 文件 +1643/−215），另含同日先落地的 Qt 下载窗三态
+> 与 autobuild 图集根 sanity。判据全部做了「改回旧写法必失败」的对照。
+
+### 16.1 算路请求快照化（`src/ui/window.{h,c}`、`src/route/route.c`）
+
+- **根因**：算路 5 秒级，期间 UI 线程照样能加点、删点、改偏好，而 worker 直接读
+  `App.pick_a / via[] / pref_*` ⇒ 标准 torn read。最坏的是途经点：worker 先读
+  `n_via`、再按它遍历 `via[]`，两步之间用户删了一个点，就按新的 `n_via` 读旧数组
+  （读到已被搬走的元素，坐标错位）。
+- **修复**：请求改成 `NavReq` **完整快照**（起终点 / 途经点 / 偏好 / 出行方式），
+  在提交时由主线程一次做好，worker 只吃快照。`Router` 的惰性创建与偏好下发全部
+  收进算路线程（`nav_router_configure`），主线程连 `router_set_prefs` 都不许调；
+  唯一例外是 UI 线程同步算路入口（`app_nav_plan_sync` / `app_gpx_snap`），先
+  `nav_router_acquire_sync` 等 worker 空闲再动 Router。途经点各段里程由
+  `NavResult.via_seg_km` 搬回主线程——worker 不写 `App` 的任何字段。
+
+### 16.2 PBF 显示层三处「成功结果没人 free」
+
+一省显示层是三块手 `malloc` 缓冲（`lines` / `areas` / `polyrefs`，`mapped=0`），
+既不在 mmap 里、也不归 `nmbin_close` 管：少一处 `free` 只是「内存慢慢涨」，进程照跑、
+渲染正确、别的断言全绿。三处漏点都在「结果没有归属」的出口上：
+
+| 出口 | 旧代码 | 实测泄漏 |
+|---|---|---|
+| `dmap_worker` 让出（`dmap_quit` 在解码途中置位） | `if (!ok) pbfmap_free(&m)` —— **条件写反** | mongolia 每次退出 **44.8 MB** |
+| `mapset_free` | 只 `destroy` 锁，不看 `job_result` | worker 已解完、主线程没轮到 publish 就退出 |
+| `src_close`（`mapset_free` 用） | 只 `nmbin_close` + `memset`，**完全不碰 `s->dmap`** | macau **1.1 MB**／一省几十 MB |
+
+- **修复**：让「谁 malloc 谁记账」——`pbfmap.c` 加一本按 `data_len` 配平的字节账
+  （`memfile_finish` 加、`pbfmap_free` 减，`__atomic` 因为跨 worker/主线程），
+  导出 `pbfmap_live_bytes()`；出口一律**无条件** `pbfmap_free`（幂等，零值/半成品都安全），
+  并由 `src_close` 先 `pbfmap_free(&s->dmap)` 再 `memset`（清掉同指针副本，避免悬垂）。
+- **判据**（`dmap_selftest` 判据 6，两种退出姿势）：① 解码完成后退出（命中 `src_close`）、
+  ② 解码途中退出（命中 worker 让出），断言回到基线。旧行为实测报
+  `退出后多出 1.1 MB / 44.8 MB 解码缓冲没释放`、`DMAP-FAIL` rc=1。
+- 两个坑：判据 5 收尾**不能**把视口挪回省（会再派发一次解码，污染判据 6 基线，
+  实测凭空多 1.1 MB）；`leak_case` 必须用**增量**（`after == base`）而非绝对值。
+
+### 16.3 Android 增量更新：提交不再「先删后改」
+
+- **根因**：四处提交点（`ChunkUpdater` 的数据文件与块表、`ChunkDelta.apply` 的
+  `.new`、`verifyAndCommit` 的整包）都写成 `dest.delete()` → `tmp.renameTo(dest)`。
+  两步之间进程被杀（低内存 LMK / 用户「强行停止」/ OTA 重启），目录里只剩 `xxx.new`
+  而没有正式的 `xxx`——**地图省整个消失**，而 `chunks.json` 还是旧的，下次更新按旧块表
+  去 patch 一个不存在的文件，只能回落整包重下。
+- **修复**：新增 `AtomicCommit.commit(tmp, dest)` —— 先查 `tmp.isFile()`（临时文件没了
+  就不许动 dest）→ `fsync` 文件 → `Files.move(REPLACE_EXISTING, ATOMIC_MOVE)`
+  （Unix 上即 `rename(2)`，一次原子替换）→ `fsync` 目录。顺序约束只有一条：
+  **数据文件先、块表最后**（块表一更新就等于宣称数据都是新版）；启动时
+  `cleanStaleTemps` 清掉残留的 `.new` / `.new.part` / `chunks.json.new`。
+- **判据**（`java_gate.sh` 四条）：`COMMIT-INJECT-CAUGHT`（半包缺失 ⇒ 必须抛异常且旧文件
+  逐字节不变）、`COMMIT-ATOMIC-OK`、`COMMIT-RECOVER-OK`（块表提交失败留下「数据新版 +
+  块表旧版」，二次运行必须自行收敛）、`COMMIT-PATH-OK`（源码出现 `File.renameTo` 即失败
+  的结构判据）。把 `verifyAndCommit` 改回旧写法实测：`ASSERT-FAIL 临时文件缺失时旧文件
+  必须原样保留`。
+
+### 16.4 Android 下载器：补「实收字节数」校验
+
+- **根因**：原来只有整包 sha256 一道闸，而**哈希可以缺席**——老服务端清单没有 `sha256`
+  时返回 `verified=false` 却照样落盘。连接中途被掐得到的截断 zip 被当成「装好了」：
+  解包到一半才报错，或装出一个缺文件的省。哈希管内容对不对，**管不了有没有收全**。
+- **修复**：三道闸 + 失败一律删半包：① `read <= 0`（空包）；② `part.length() != read`；
+  ③ `read != expect`，`expect` **优先取清单 `size`**（与 sha256 同源；服务端 chunked
+  不发 `Content-Length` 时它是唯一判据），没给才退回 `getContentLengthLong()`。
+  `read` 提到 `try` 外；传输中途抛异常（服务端谎报长度 ⇒ premature EOF）原来会跳过所有
+  清理，现在 `catch (IOException | RuntimeException)` 统一删 `.part`。`DownloadActivity`
+  的 `Row` 补 `size` 字段并传下去（否则第 ③ 闸在界面上等于没接）。
+- **判据**（`SIZE-INJECT-CAUGHT`，3 负 1 正）：清单声明 7500 实收 5000 / 200+0 字节 /
+  服务端声明 7500 实发 5000，均须抛异常且不落盘、不留 `.part`；**同一份 5000 字节、
+  清单如实声明 5000 必须放行**（防「一律拒绝」混过）。把三道闸改 `if (false && …)`
+  实测：`ASSERT-FAIL 实收 5000 != 清单 7500 必须抛 IOException`。
+
+### 16.5 附带：Qt 下载窗三态、autobuild 图集根 sanity
+
+- 下载树从「已下载/未下载」两态改为 `RegionState { Ready, PbfOnly, Absent }` 三态
+  （`✓地图已就绪` / `⤓源文件已下载·待转换` / `·未下载`）；点「下载并转换」时
+  就绪直接提示无需转换、`PbfOnly` 跳过下载直接转换；自检钩子 `leafStateForTest()`
+  让 `--ui-test` 能断言树标注。`i18n.c` / `lang/en.xml` 同步补齐文案。
+- `autobuild` 新增 `looks_like_broken_prov_in_atlas()`：省产物目录整个消失后
+  `--graph=products/graph/tianjin` 会被误判成图集根，把 macau/mongolia 顺序抽进
+  `tianjin/`，真图集从此少 7 个省、area_lod/route 判据全挂（假 FAIL 掩盖真丢数据）。
+
+### 16.6 验收（本机实跑）
+
+- 编译：`build_rel` 全量零错误，`skedaddlegui.exe` 重链接后 6.55 MB。
+- `scripts/java_gate.sh`（JDK 17.0.2）：**13 个标记全绿** —— `JAVA-COMPILE-OK`（9 源文件）、
+  `ACTIVITY-WIRE-OK`、`COMMIT-PATH-OK`、`MANIFEST-OK`、`MANIFEST-INJECT-CAUGHT`、
+  `SIZE-INJECT-CAUGHT`、`DELTA-OK`、`DELTA-ZERO-OK`、`DELTA-INJECT-CAUGHT`、
+  `COMMIT-INJECT-CAUGHT`、`COMMIT-ATOMIC-OK`、`COMMIT-RECOVER-OK`、`M2-JAVA-OK`。
+- `skedaddle_dmap_selftest`：两条泄漏判据均 0.0 MB；旧行为 `DMAP-FAIL` rc=1。
+- `skedaddle --ui-test --no-autobuild`：**128 项 OK / `QT-UI-OK`**；
+  `--shot-offscreen` `ASSERT-OK`；`route_cli --via` `ROUTE-OK`；`navsim` `NAVSIM-OK`。
+- `python scripts/regen_tutorial_blocks.py --check` 绿（`regress.sh` 改动已灌进 11 课）。
+- `regress.sh` 新增 5 项记账（`java_commit_path` / `java_commit_neg` / `java_commit_atomic`
+  / `java_commit_recover` / `java_size_neg`）；**全量未实跑**，新总数待数据齐全的主机
+  实跑后按实际输出记账。
+
+### 16.7 未闭环
+
+- 全量 `regress.sh` 未跑（本机缺 7 省数据，FAIL 非回归）。
+- **Android 真机仍未验证**：下载 → 校验 → 解包/重组链路只有主机夹具。
+- `Downloader.extractZip` 的整包解包仍是原地逐文件覆写（非增量路径，崩溃留半个省目录，
+  下次整包重下会覆盖）。
+- `UpdateChecker` 的 APK 下载没有清单 `size`（`AppUpdate` 无该字段），只有
+  `Content-Length` 一道兜底。
+- `DownloadActivity` 的 `.skversion` 仍是普通覆写（截断只会读成「未知」，不破坏数据）。

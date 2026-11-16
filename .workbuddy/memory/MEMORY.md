@@ -48,3 +48,10 @@
 - ★★★ **判据只测北京看不出这个 bug**：北京/天津 `ncols==nrows`（22/22、20/20）永远 0 丢失；`regress.sh:312` 只测北京。8 省全量走 `scripts/check_disp_coverage.py`（主机侧，副机缺 7 省数据 ⇒ 不进 regress）。改 `graph_build.c` 必须 `sync_maps.sh --force` 重抽 8 省才生效（产物不进 git）；`area_lod_z9` 的 `areas_drawn` 是活资产，重抽后重贴（117212→117218，+6）。
 - ★★ **NMBIN 产物零回归对拍要剥掉 512B 头/字段表只比记录区**：全文件哈希会因 `flags` bit0 + O2 `sha256(payload)` 全变（旧产物 10-27 生成、无摘要），与逻辑改动无关。北京 810 个 tile 记录区 + `disp.idx` 全量相同即证明像素基线不用重建。
 - ★★ 回源核验能推翻「格式级变更」的初判：先读**下游所有消费者**再定修复范围，别凭摘要里的根因描述动手。
+
+## 2026-11-16 新增（落盘原子性 / 字节数 / 显示层记账 / 算路快照）
+- ★★★ **落盘提交一律 `rename(2)`**：`AtomicCommit.commit(tmp,dest)` = 查 `tmp.isFile()` → `fsync` 文件 → `Files.move(REPLACE_EXISTING, ATOMIC_MOVE)` → `fsync` 目录。旧写法 `delete(dest)`+`renameTo` 两步之间被杀就是「正式文件没了而块表仍旧」（Android 上一省地图整个消失）。顺序约束只有一条：**数据文件先、块表最后**。`java_gate.sh` 的 `COMMIT-PATH-OK` 扫源码，出现 `File.renameTo` 即失败（扫时要跳注释行，否则被自己贴的旧代码片段误伤）。
+- ★★ **哈希管内容、字节数管收全**：`Downloader.downloadVerified` 三道闸（`read>0` / `part.length()==read` / `read==expect`，`expect` **优先清单 `size`** 再退回 `getContentLengthLong()`）+ 中途异常删 `.part`。清单缺 `sha256` 的老服务端路径以前会静默落截断包（解包才炸）。
+- ★★ **手 malloc 的显示层要自己记账**：PBF 解码的 `lines/areas/polyrefs` 不在 mmap、不归 `nmbin_close` ⇒ 少一处 free 只是「内存慢慢涨」。`pbfmap_live_bytes()`（按 `data_len` 配平、`__atomic`）让判据能写成 `== 0`；`src_close` / `mapset_free(job_result)` / `dmap_worker` 让出口都必须**无条件** `pbfmap_free`（幂等）。
+- ★★ **算路参数必须快照**：worker 直接读 `App.via[]/pref_*` 就是 torn read（最典型 `n_via` 与 `via[]` 不同步）；`NavReq` 在提交时一次做好，Router 归 worker，主线程只走 `nav_router_acquire_sync` 例外口。
+- ★ 判据工程小结：结构判据扫源码要跳过注释；`HttpExchange.close()` 不声明受检异常（`catch(IOException)` 不可达 = 编译错）；`Files.move` 撞非空目录抛 `DirectoryNotEmptyException`（可当"让块表写入失败"的注入手段）；泄漏判据一律用**增量** `after == base`，别用绝对值。
