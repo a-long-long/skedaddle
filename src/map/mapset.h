@@ -45,6 +45,11 @@ typedef struct {
     PbfMap    dmap;                     /* 从 PBF 解码出的显示层（内存缓冲） */
     uint64_t  dmap_used;                /* LRU 时间戳（越大越新） */
     int       dmap_inflight;  /* 后台解码进行中：src_unload 不得卸 nodes 映射 */
+    int       unload_pending; /* 视口已离开但解码在途：src_unload 被推迟，解码结束
+                               * 后由 mapset_publish_display 补卸（2026-11-16）。
+                               * ★ 只有它被置 1 时 loaded 才允许与"文件还没关"共存：
+                               *   loaded=1 表示"文件确实还映射着"，与 dmap_inflight
+                               *   无关；旧代码在这里把 loaded 置 0 才引出重复 mmap。 */
     int       dmap_failed;    /* 该省 PBF 解码失败：重载前不再重试 */
     int       dmap_progress;  /* 0..100，后台解码实时进度（dmap_inflight/排队期间有效） */
     NMBinFile tiles, edgelist;          /* 空间索引（可选） */
@@ -91,6 +96,10 @@ typedef struct {
     char    pbf_dir[4096];
     int     dmap_lru_cap;  /* 同时驻留几个省的解码结果（默认 3） */
     uint64_t dmap_clock;   /* LRU 时钟（单调递增） */
+    /* 最近一次 set_view 的**展开后**视口（e7，已含 50% 边距）。
+     * 用途：publish 时判断"解码期间视口是不是已经离开该省"，好兑现
+     * src_unload 被推迟的那次卸载（2026-11-16）。0 表示还没设过视口。 */
+    int32_t view_last[4];
 
     /* ---- 后台解码线程（避免同步解码阻塞渲染 0.6~4.4s）----
      * 单一 worker 串行解码；主线程每帧 publish 已完成的结果、并 dispatch 新任务。

@@ -129,7 +129,11 @@ Router *router_create(const MapSet *ms, const RouteOpts *opt)
 
 /* 面板改完路线偏好后同步到已建好的 Router（不必重建 30MB 状态表）。
  * ★ 只改 opt 的三个偏好字段：heur_w / lm 表 / 状态表都保持原样，
- *   下一次 nav_request 起生效（Router 不在算路中时调用，无竞态）。 */
+ *   下一次算路起生效。
+ * ★ 2026-11-16 起**调用方约定**：Router 由算路执行体独占，这两个 setter
+ *   只许在算路线程内、或已确认算路线程空闲时调用（见 window.c
+ *   nav_router_configure / nav_router_acquire_sync）。主线程在 A* 飞行中
+ *   改 opt 是数据竞争（权重中途换公式）。 */
 void router_set_prefs(Router *r, int pref_toll, int pref_ferry, int pref_unpaved)
 {
     if (!r) return;

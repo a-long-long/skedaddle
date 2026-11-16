@@ -43,6 +43,7 @@
   <item><zh>逐个设置</zh><en>Per layer</en></item>
   <item><zh>重置全部</zh><en>Reset all</en></item>
   <item><zh>关闭</zh><en>Close</en></item>
+  <item><zh>按住拖动窗口（双击最大化 / 还原）</zh><en>Drag to move (double-click to maximize/restore)</en></item>
   <item><zh>菜单(&amp;M)</zh><en>Menu(&amp;M)</en></item>
   <item><zh>搜索地点</zh><en>Search place</en></item>
   <item><zh>清除路线</zh><en>Clear route</en></item>
@@ -134,20 +135,12 @@
   <item><zh>（还没有途经点：面板开着时点地图即可添加；也可先设好起点和终点）</zh><en>(No via points yet: click the map with the panel open to add; or set start and end first)</en></item>
   <item><zh>全程约 %1 km</zh><en>Total ~ %1 km</en></item>
   <item><zh>下载地图（全球可下载区域 · Geofabrik）</zh><en>Download map (Geofabrik extracts)</en></item>
-  <item><zh>可下载区域（✓已下载 ·未下载）</zh><en>Downloadable regions (✓ downloaded · pending)</en></item>
+  <item><zh>可下载区域（✓已就绪 ⤓待转换 ·未下载）</zh><en>Downloadable regions (✓ ready ⤓ needs convert · pending)</en></item>
   <item><zh>选择左侧一个地区，查看下载链接并下载。</zh><en>Pick a region on the left to see its link and download.</en></item>
   <item><zh>下载并转换</zh><en>Download &amp; convert</en></item>
   <item><zh>复制下载链接</zh><en>Copy link</en></item>
   <item><zh>同时生成 SRTM 等高线</zh><en>Also generate SRTM contours</en></item>
   <item><zh>请选择最末级地区（带下载链接的）查看详情。</zh><en>Select a leaf region (the one with a download link) for details.</en></item>
-  <item>
-    <zh>将下载：%1
-保存到：%2/%3-latest.osm.pbf
-（若本地已存在，会先比对远端；有更新则询问是否更新）</zh>
-    <en>Will download: %1
-Saved to: %2/%3-latest.osm.pbf
-(If it already exists locally, the remote is compared first; if newer, you'll be asked to update)</en>
-  </item>
   <item><zh>发现更新</zh><en>Update available</en></item>
   <item>
     <zh>本地已有 %1，远端存在更新版本。是否下载更新？
@@ -160,8 +153,23 @@ Saved to: %2/%3-latest.osm.pbf
   <item><zh>GPX 轨迹</zh><en>GPX tracks</en></item>
   <item><zh>所有文件</zh><en>All files</en></item>
   <item><zh>导出全部为 GPX</zh><en>Export all as GPX</en></item>
-  <item><zh>  ✓已下载</zh><en>  ✓ downloaded</en></item>
+  <item><zh>  ✓地图已就绪</zh><en>  ✓ map ready</en></item>
+  <item><zh>  ⤓源文件已下载·待转换</zh><en>  ⤓ source downloaded · needs convert</en></item>
   <item><zh>  ·未下载</zh><en>  · pending</en></item>
+  <item><zh>本地地图已就绪，无需重复转换。</zh><en>Local map is already ready; no need to convert again.</en></item>
+  <item><zh>本地有源文件但地图未就绪，直接进入转换…</zh><en>Source file exists but the map is not ready; converting now…</en></item>
+  <item>
+    <zh>
+（本地地图已就绪；点「下载并转换」会先比对远端，有更新才重下）</zh>
+    <en>
+(Local map is ready; \"Download &amp; convert\" compares with the remote first and only re-downloads if newer)</en>
+  </item>
+  <item>
+    <zh>
+（本地已有源文件、尚未转换；点「下载并转换」将直接转换，无需重新下载）</zh>
+    <en>
+(Source file exists but is not converted yet; \"Download &amp; convert\" converts it directly without re-downloading)</en>
+  </item>
   <item><zh>  (%1/%2)</zh><en>  (%1/%2 downloaded)</en></item>
   <item><zh>本地已存在 %1。正在比对远端是否有更新…</zh><en>Already exists locally: %1. Comparing with remote for updates…</en></item>
   <item>
@@ -411,6 +419,4 @@ Recent:</en>
   </item>
   <item><zh>无法比对远端（%1）。为稳妥起见保留本地文件，跳过下载。</zh><en>Cannot compare with remote (%1). Keeping local file to be safe, skipping download.</en></item>
   <item><zh>（还没有途经点：面板开着时点地图添加；也可先设好起点和终点）</zh><en>(No via points yet: click the map with the panel open to add; or set start and end first)</en></item>
-  <!-- 无边框窗口顶部透明拖动带 -->
-  <item><zh>按住拖动窗口（双击最大化 / 还原）</zh><en>Drag to move (double-click to maximize/restore)</en></item>
 </translations>

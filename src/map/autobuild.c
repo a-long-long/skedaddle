@@ -859,6 +859,42 @@ static int cmp_str(const void *a, const void *b)
     return strcmp(*(const char *const *)a, *(const char *const *)b);
 }
 
+/* 图集根 sanity（2026-11-16）：graph_dir 不是单省（无 manifest/nodes.bin，
+ * sources/ 也没有同名 pbf）时会按图集根处理。但若它的**父目录**里已有别的
+ * 成品省目录，它必然是"被清空/损坏的单省目录"，绝不是图集根——此时把
+ * sources/ 里的 pbf 逐个抽进来只会污染图集。
+ *
+ * 实测踩坑（regress r_* shot）：省产物目录整个消失后，--graph=products/graph/tianjin
+ * 被误判成图集根，macau/mongolia 被顺序抽进 tianjin/ 里，真图集从此少 7 个省、
+ * area_lod/route 判据全挂（假 FAIL 掩盖真丢数据）。 */
+static int looks_like_broken_prov_in_atlas(const char *graph_dir)
+{
+    char parent[4096], p[4096];
+    snprintf(parent, sizeof(parent), "%s", graph_dir);
+    char *slash = (char *)sk_last_sep(parent);
+    if (!slash || slash == parent) return 0;   /* 无父目录（盘根/相对单段）：保持原行为 */
+    *slash = '\0';
+
+    const char *self = sk_base_name(graph_dir);
+    SkDir *d = sk_dir_open(parent);
+    if (!d) return 0;
+    const char *de;
+    int found = 0;
+    while (!found && (de = sk_dir_next(d)) != NULL) {
+        if (de[0] == '.') continue;
+        if (strcmp(de, self) == 0) continue;               /* 自己不算邻居 */
+        if (strstr(de, ".tmp.") || strstr(de, ".old.")) continue;
+        if (!name_ok(de)) continue;
+        if (sk_path_join(p, sizeof(p), parent, de) != 0) continue;
+        if (!sk_is_dir(p)) continue;
+        if (sk_path_join(p, sizeof(p), p, "manifest.txt") == 0 &&
+            sk_file_exists(p))
+            found = 1;                                     /* 邻居是成品省 ⇒ 真图集 */
+    }
+    sk_dir_close(d);
+    return found;
+}
+
 int autobuild_repair(const char *graph_dir, const AutoBuildOpt *opt,
                      AutoBuildStat *st_out)
 {
@@ -882,6 +918,16 @@ int autobuild_repair(const char *graph_dir, const AutoBuildOpt *opt,
 
     char single_name[256] = "";
     int single = is_single_prov(graph_dir, src_dir, single_name, sizeof(single_name));
+
+    /* 修复 2026-11-16 的图集根误判：见 looks_like_broken_prov_in_atlas 注释。 */
+    if (!single && looks_like_broken_prov_in_atlas(graph_dir)) {
+        fprintf(stderr, "[自动重建] %s 不是图集根：它嵌在一个真图集里且自身无 manifest——"
+                        "按被清空/损坏的单省处理，不把 sources/ 的 pbf 抽进来污染图集。"
+                        "恢复方法：放回 %s.osm.pbf 后重跑，或用 --graph=图集根。\n",
+                sk_base_name(graph_dir), sk_base_name(graph_dir));
+        st.nosrc++;
+        goto done;
+    }
 
     /* 省目录的父目录（= 图集根）。单省模式下产物放 graph_dir 本身，
        它的父目录才是放锁文件的地方。 */

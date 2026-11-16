@@ -212,14 +212,16 @@ static const TrPair TR[] = {
 
     /* 下载地图对话框（download_dialog.cpp） */
     { "下载地图（全球可下载区域 · Geofabrik）", "Download map (Geofabrik extracts)" },
-    { "可下载区域（✓已下载 ·未下载）", "Downloadable regions (✓ downloaded · pending)" },
+    { "可下载区域（✓已就绪 ⤓待转换 ·未下载）", "Downloadable regions (✓ ready ⤓ needs convert · pending)" },
     { "选择左侧一个地区，查看下载链接并下载。", "Pick a region on the left to see its link and download." },
     { "下载并转换", "Download & convert" },
     { "复制下载链接", "Copy link" },
     { "同时生成 SRTM 等高线", "Also generate SRTM contours" },
     { "请选择最末级地区（带下载链接的）查看详情。", "Select a leaf region (the one with a download link) for details." },
-    { "将下载：%1\n保存到：%2/%3-latest.osm.pbf\n（若本地已存在，会先比对远端；有更新则询问是否更新）",
-      "Will download: %1\nSaved to: %2/%3-latest.osm.pbf\n(If it already exists locally, the remote is compared first; if newer, you'll be asked to update)" },
+    { "将下载：%1\n保存到：%2/%3-latest.osm.pbf\n（4 线程并行 + 断点续传：中断后自动重试；再次点击「下载并转换」从断点继续"
+      "\n若本地已存在，会先比对远端；有更新则询问是否更新）",
+      "Will download: %1\nSaved to: %2/%3-latest.osm.pbf\n(4 parallel connections + resume: retries after interruption; clicking \"Download & convert\" resumes"
+      "\nIf it already exists locally, the remote is compared first; if newer, you'll be asked to update)" },
     { "发现更新", "Update available" },
     { "本地已有 %1，远端存在更新版本。是否下载更新？\n（选择\"否\"将保留本地文件。）",
       "A newer version of %1 exists on the server. Download the update?\n(Choosing \"No\" keeps the local file.)" },
@@ -231,9 +233,17 @@ static const TrPair TR[] = {
     { "所有文件", "All files" },
     { "导出全部为 GPX", "Export all as GPX" },
 
-    /* 下载地图对话框：状态 / 进度提示 */
-    { "  ✓已下载", "  ✓ downloaded" },
+    /* 下载地图对话框：状态 / 进度提示（2026-11-16 三态：就绪 / 待转换 / 未下载） */
+    { "  ✓地图已就绪", "  ✓ map ready" },
+    { "  ⤓源文件已下载·待转换", "  ⤓ source downloaded · needs convert" },
     { "  ·未下载", "  · pending" },
+    { "本地地图已就绪，无需重复转换。", "Local map is already ready; no need to convert again." },
+    { "本地有源文件但地图未就绪，直接进入转换…",
+      "Source file exists but the map is not ready; converting now…" },
+    { "\n（本地地图已就绪；点「下载并转换」会先比对远端，有更新才重下）",
+      "\n(Local map is ready; \"Download & convert\" compares with the remote first and only re-downloads if newer)" },
+    { "\n（本地已有源文件、尚未转换；点「下载并转换」将直接转换，无需重新下载）",
+      "\n(Source file exists but is not converted yet; \"Download & convert\" converts it directly without re-downloading)" },
     { "  (%1/%2)", "  (%1/%2 downloaded)" },
     { "本地已存在 %1。正在比对远端是否有更新…",
       "Already exists locally: %1. Comparing with remote for updates…" },

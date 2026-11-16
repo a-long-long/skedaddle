@@ -39,6 +39,19 @@
 /* 小工具                                                               */
 /* ------------------------------------------------------------------ */
 
+/* 泄漏监视（判据用）：当前"已 malloc 但还没被 pbfmap_free 收回"的字节数。
+ * ★ 为什么需要它：解码产物是三块手 malloc 缓冲（一省几十 MB），既不在 mmap
+ *   里也不归 nmbin_close 管——漏掉一处 free 只是"内存慢慢涨"，进程照跑、
+ *   断言全绿。有了这个计数器，判据就能写成 `== 0` 的硬条件。
+ * 读写跨线程（worker 解码 / 主线程收割与释放），故用 GCC 的 __atomic 内建。
+ * 只在工具里读，不参与任何生产决策。 */
+static long long g_live_bytes;
+
+long long pbfmap_live_bytes(void)
+{
+    return __atomic_load_n(&g_live_bytes, __ATOMIC_RELAXED);
+}
+
 typedef struct { char *p; size_t n, cap, esz; } Buf;
 
 static int buf_reserve(Buf *b, size_t add)
@@ -124,6 +137,9 @@ static int memfile_finish(NMBinFile *f, const Buf *b, uint64_t nrec)
     f->data_len = bytes;
     f->mapped = 0;         /* malloc 持有，不是 mmap */
     f->mapped_len = 0;
+    /* 泄漏记账（判据用）：谁 malloc 谁记账，pbfmap_free 按 data_len 等额冲账。
+     * 与"成功/失败"无关 ⇒ 解码中途失败（内部自己 pbfmap_free）也严格配平。 */
+    __atomic_add_fetch(&g_live_bytes, (long long)bytes, __ATOMIC_RELAXED);
     return 0;
 }
 
@@ -411,6 +427,10 @@ done:
 void pbfmap_free(PbfMap *m)
 {
     if (!m) return;
+    /* 与 memfile_finish 的记账配平（见那里的注释）。必须在 memset 前算。 */
+    __atomic_sub_fetch(&g_live_bytes,
+                       (long long)(m->areas.data_len + m->lines.data_len +
+                                   m->polyrefs.data_len), __ATOMIC_RELAXED);
     free(m->areas.data);
     free(m->lines.data);
     free(m->polyrefs.data);

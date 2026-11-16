@@ -378,9 +378,18 @@ setShowFlags / shutdown`。对照 `src/ui_qt/main_window.cpp:996-1200` 的菜单
 }
 ```
 
-- `url` 可为相对（`serverBase` 拼接）或完整 http(s)；`version` 仅判断“可更新”；`size` 仅展示。
+- `url` 可为相对（`serverBase` 拼接）或完整 http(s)；`version` 仅判断“可更新”；
+  `size` 既展示、也**当字节数判据**用（见下条，2026-11-16 起）。
 - `sha256`：**zip 整包**的全文件 SHA-256（不是某个 `.bin`、也不是 O2 记录区摘要）。
   下载完由 `Downloader.downloadVerified()` 边下边算，不符即抛异常、**删掉 `.part` 半包并拒绝安装**。
+- ★ **只比哈希是不够的**（2026-11-16 修）：缺 `sha256` 的老服务端路径下 `verified=false`，
+  连接中途被掐得到的截断 zip 照样落盘，等到解包/加载才炸。现在三道字节数闸：
+  ① 空包（0 字节）一律拒；② 实收 == 落盘长度；③ 实收 == 期望，**期望优先取清单 `size`**
+  （与 sha256 同源，服务端 chunked 不发 `Content-Length` 时它是唯一判据），没给才退回
+  `Content-Length`（`getContentLengthLong()`）。传输中途抛异常（服务端谎报长度 → premature
+  EOF）同样删半包。三者与哈希是"与"关系：哈希管内容对不对，字节数管**有没有收全**。
+  主机判据 `SIZE-INJECT-CAUGHT`（截断 / 空包各一条负向 + 一条"如实声明必须放行"的正向，
+  防"一律拒绝"混过）。
 - 三个哈希口径不要串台：`sha256`（清单，zip 包）、`chunks.json` 里的 `sha256`（单个数据文件全文件）、
   `nmbin_digest` / `record_sha256`（NMBIN 头里的 O2 记录区摘要）。
 - `chunksUrl` 指向该省的 `chunks.json`；`chunkSize` 缺省 4096。
@@ -434,6 +443,11 @@ gzip level 9、`mtime=0`、不写原文件名 ⇒ 每次生成逐字节相同，
 
 - 判据（主机 `scripts/java_gate.sh` 实测）：改 1 块只发 1 个 `Range: bytes=4096-8191`、
   传 4096 B；全等传 0 块 / 0 B；重组时写错一块被整包 sha256 抓到，旧图与旧块表原样保留。
+  提交侧另有四条（2026-11-16）：`COMMIT-INJECT-CAUGHT`（半包缺失时旧文件逐字节
+  不变——把 `verifyAndCommit` 改回 delete+rename 必挂）、`COMMIT-ATOMIC-OK`
+  （一次替换、可覆盖已存在目标、无临时残留）、`COMMIT-RECOVER-OK`（块表提交失败
+  留下的中间态能被二次运行收敛）、`COMMIT-PATH-OK`（源码里出现 `File.renameTo`
+  就失败的结构判据）。
 - ★ 块表体积不是零：M2 当时估 8 省合计约 **71 MB**；副机北京单省实测
   **5.95 MB / 86108 块**。「改 1 块只传 4 KiB」说的是**数据块**，首次拉清单仍要
   几 MB ⇒ 服务端必须开 gzip + HTTP 缓存（ETag / 304）。P2-A 已把伴生
@@ -446,9 +460,16 @@ gzip level 9、`mtime=0`、不写原文件名 ⇒ 每次生成逐字节相同，
   +2.46 MiB 需 **967 个变化块**才回本（二进制索引 387 块），而 M2 典型场景
   是「改 1 块 / 全等 0 块」⇒ 小更新净亏，暂不实施。数字由
   `scripts/chunk_table_size.py --report` 与 `scripts/container_probe.py` 复现。
-- ★ 提交阶段是**逐文件 rename**、不是目录级原子切换：万一提交中途 IO 失败，
-  本地块表仍是旧的，下次差分会因整包 sha256 不符而抛错并回落整包，
-  **不会静默加载混合版本**；远端删掉的文件不在本地清理（只留残余，不影响加载）。
+- ★ 提交阶段是**逐文件原子替换**（`AtomicCommit.commit` = `rename(2)`），不是目录级
+  原子切换，但**每一块都不再有"文件不存在"的瞬间**：旧代码是先 `dest.delete()`
+  再 `tmp.renameTo(dest)`，两步之间进程被杀就让正式文件整个消失、只剩 `.new`
+  （2026-11-16 修）。顺序上**块表最后提交**，所以任何更早的中断只会留下
+  「数据已是新版 + 块表仍旧」——块表旧时 `plan()` 会多取几个块，`apply()` 拼出来
+  仍是远端内容且整包 sha256 校验通过，下次运行自然收敛（`COMMIT-RECOVER-OK`）。
+  反过来的组合（块表说新、文件是旧）被这条顺序直接排除。另：rename 前先
+  `fsync` 文件、后 `fsync` 目录，否则掉电可能留下「装好了但内容为空」的文件。
+  远端删掉的文件不在本地清理（只留残余，不影响加载）；上次被杀留下的
+  `.new` / `.new.part` / `chunks.json.new` 由 `cleanStaleTemps` 进来先清掉。
 - ★ 边界：主机夹具用 JDK 17 + `org.json` / `android.util.Log` 测试替身编译，
   `DownloadActivity` 依赖 androidx 不在主机编译范围（只做接线静态检查）；
   **Android 真机下载 / 安装 / 差分链路未验证**。

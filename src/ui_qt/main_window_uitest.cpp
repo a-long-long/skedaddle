@@ -17,6 +17,7 @@
 #include <QApplication>
 #include <QAbstractButton>
 #include <QColor>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
@@ -28,6 +29,7 @@
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QStringList>
+#include <QTemporaryDir>
 #include <QThread>
 #include <QToolBar>
 #include <cmath>
@@ -545,6 +547,43 @@ int MainWindow::runUiSelfTest()
         m_a->need_redraw = 1;
     }
 
+    /* ⑫c 途经点**快照**链路（2026-11-16，北京内部三点，必然有路网）。
+     *    ⑫b 的坐标跨到（本机缺失的）天津省，路由本就跑不出来，只能"有条件跳过"，
+     *    于是"worker 到底算的是不是提交时的 via 快照"一直没被钉住。这里补一条
+     *    一定算得出来的：
+     *    ① nav_request 的快照里 n_via 与 UI 的 via[] 一致；
+     *    ② 路线确实穿过该途经点——若快照漏了 via（或 worker 又回去读 UI 的
+     *       via[] 读到空），路线就退化成两点直连，最近距离 2km+，必挂。
+     *    这条同时是 app_shutdown/NavReq 重构的回归锚点：判据会失败，不是"没崩就算过"。 */
+    {
+        app_nav_clear(m_a);
+        /* 起终点都取 lon=116.40（正南北一条线），途经点放到 4km 外的东侧——
+         * ★ 必须**明显偏离直连**：若把 via 放在两点连线上，即使快照漏了 via、
+         *   路线退化成直连，距离判据也照样 <800m，"会失败的测试"就成了摆设。 */
+        app_nav_click(m_a, 39.90, 116.40);      /* 起点：北京市中心 */
+        app_nav_click(m_a, 39.95, 116.40);      /* 终点：正北 */
+        app_nav_add_via(m_a, 39.925, 116.45);   /* 途经点：东侧 4km，偏离直连线 */
+        check(m_a->req.n_via == 1, "途经点快照：nav_request 带上了 via 个数");
+        double best = 1e12;
+        for (int tries = 0; tries < 600; tries++) {   /* 最多 30 秒 */
+            app_nav_poll(m_a);
+            if (m_a->have_rr && m_a->rr.n > 1) {
+                best = 1e12;
+                for (uint32_t i = 0; i + 1 < m_a->rr.n; i++) {
+                    double d = pointSegM(m_a->via[0].lat, m_a->via[0].lon,
+                                         m_a->rr.lat_e7[i] / 1e7, m_a->rr.lon_e7[i] / 1e7,
+                                         m_a->rr.lat_e7[i + 1] / 1e7, m_a->rr.lon_e7[i + 1] / 1e7);
+                    if (d < best) best = d;
+                }
+                if (best < 800.0) break;         /* 抓到了"经过途经点"那趟 */
+            }
+            QThread::msleep(50);
+        }
+        check(best < 800.0, "途经点快照：路线确实经过该点（不是两点直连）");
+        app_nav_clear(m_a);
+        m_a->need_redraw = 1;
+    }
+
     /* ⑬ 坐标网按钮：左键在 关 → 各坐标系 → 关 之间循环（循环态含"关"）。
      *    右键菜单可精确选坐标系 + 开关网格。网格类型（经纬网/方里格）与坐标系已解耦。
      *    逐状态验：左键第 1 下 关→开（基准不变）；之后每次推进 datum；完整循环
@@ -709,6 +748,41 @@ int MainWindow::runUiSelfTest()
         /* 路径对不上的叶子不应误命中：用本机确实没有的省份名 */
         check(dlg.selectByLeaf(QStringLiteral("atlantis")) == false,
               "下载树：不存在的叶子 selectByLeaf 返回 false");
+    }
+
+    /* ⑯b 三态判定的负向对照（2026-11-16 修"源 pbf 存在＝已就绪"）：
+     *    临时 repo 里造三种叶子——
+     *      pbfonly/ 只有 sources/pbfonly-latest.osm.pbf（下了原料没转换）
+     *      empty/   只有空的 products/graph/empty 目录（空壳，早期 bug 会误报就绪）
+     *      ready/   products/graph/ready/manifest.txt（extractor 成功收尾的标记）
+     *    期望 1 / 0 / 2。用假 repo 而不是真 products/，测试不碰真实数据。 */
+    {
+        QTemporaryDir tmp;
+        if (tmp.isValid()) {
+            const QString tr = tmp.path();
+            QDir().mkpath(tr + "/sources");
+            QDir().mkpath(tr + "/products/graph/empty");
+            QDir().mkpath(tr + "/products/graph/ready");
+            QFile pbf(tr + "/sources/pbfonly-latest.osm.pbf");
+            const bool pbfOk = pbf.open(QIODevice::WriteOnly);
+            if (pbfOk) { pbf.write("x", 1); pbf.close(); }
+            QFile man(tr + "/products/graph/ready/manifest.txt");
+            const bool manOk = man.open(QIODevice::WriteOnly);
+            if (manOk) { man.write("x", 1); man.close(); }
+            DownloadDialog d2(tr + "/sources", tr, this);
+            check(d2.leafStateForTest(QStringLiteral("pbfonly")) == 1,
+                  "下载树：只有源 pbf 判为待转换（不得报已就绪）");
+            check(d2.leafStateForTest(QStringLiteral("empty")) == 0,
+                  "下载树：空壳省目录不算已下载");
+            check(d2.leafStateForTest(QStringLiteral("ready")) == 2,
+                  "下载树：manifest 齐全判为已就绪");
+            check(d2.leafStateForTest(QStringLiteral("nothing")) == 0,
+                  "下载树：什么都没有判为未下载");
+            check(d2.isLeafDownloaded(QStringLiteral("pbfonly")) == false,
+                  "下载树：待转换不算已下载（isLeafDownloaded 只认就绪）");
+        } else {
+            check(false, "下载树：临时目录创建失败");
+        }
     }
 
     /* ⑰ 卫星天顶图按钮：可勾选、点击切换 MapCanvas 浮层 + 持久化。

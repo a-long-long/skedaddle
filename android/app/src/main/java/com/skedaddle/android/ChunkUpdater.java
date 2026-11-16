@@ -20,6 +20,9 @@ import java.util.Map;
  *
  * <p>★ 任何一步失败都删掉 .new 半包、保留旧图不动，由调用方回落整包下载。
  * ★ 本地没有 chunks.json、远端新增文件、服务端不支持 206：都直接回落，不硬撑。
+ * ★ 提交阶段全是 {@link AtomicCommit#commit}（rename(2) 原子替换），按「数据文件
+ *   先、块表最后」的顺序落地：进程在任何一刻被杀，目录里都只有「旧的一套」或
+ *   「部分新的数据 + 旧块表」，不会有「文件缺失」或「块表谎报数据已更新」。
  */
 public final class ChunkUpdater {
 
@@ -57,6 +60,10 @@ public final class ChunkUpdater {
             throw new IOException("本地无 chunks.json ⇒ 回落整包下载");
         }
         Manifests.ChunkTable local = Manifests.parseChunks(readAll(localTable));
+        /* 先清上次被杀留下的临时文件：.new / .new.part / chunks.json.new 从不
+         * 会被自动接管，攒着白占几百 MB；而且一个残留的旧 .new 很容易在
+         * 排障时被当成"新版本已经下好了"（2026-11-16）。 */
+        cleanStaleTemps(remote);
 
         int slash = chunksUrl.lastIndexOf('/');
         String base = (slash >= 0) ? chunksUrl.substring(0, slash + 1) : "";
@@ -93,30 +100,41 @@ public final class ChunkUpdater {
             }
 
             // 提交阶段：只有全部文件重组 + 整包哈希都通过才会走到这里。
+            // 每块都走同一条原子替换：旧代码是先 delete(cur) 再 renameTo(cur)，
+            // 两步之间被杀就只剩 .new、正式文件消失，而块表还是旧的 ⇒ 下次更新
+            // 按旧块表去 patch 一个不存在的文件（2026-11-16 修）。
             for (Map.Entry<File, File> en : staged.entrySet()) {
-                File cur = en.getKey();
-                File tmp = en.getValue();
-                if (cur.exists() && !cur.delete()) {
-                    throw new IOException("无法替换 " + cur);
-                }
-                if (!tmp.renameTo(cur)) {
-                    throw new IOException("rename failed: " + cur);
-                }
+                AtomicCommit.commit(en.getValue(), en.getKey());
             }
             File tableTmp = new File(localDir, "chunks.json.new");
             writeAll(tableTmp, remoteJson);
-            if (localTable.exists() && !localTable.delete()) {
-                throw new IOException("无法替换块表");
-            }
-            if (!tableTmp.renameTo(localTable)) {
-                throw new IOException("rename failed: " + localTable);
-            }
+            /* 块表**最后**提交，这是整套提交里唯一的顺序约束：它一旦更新就等于
+             * 宣称「数据文件都是远端版本了」。任何更早的中断只会留下「数据新 +
+             * 块表旧」——块表旧时 plan() 会多取几个块，但 apply() 拼出来的仍是
+             * 远端内容且整包 sha256 校验通过，下次运行自然收敛（见 M2JavaTest
+             * 的 COMMIT-RECOVER-OK）。反过来先提交块表，就会留下「块表说新、
+             * 文件是旧」的组合，那才是真正的谎报。 */
+            AtomicCommit.commit(tableTmp, localTable);
             r.verified = true;
             return r;
         } catch (IOException | RuntimeException e) {
-            for (File tmp : staged.values()) tmp.delete();
-            new File(localDir, "chunks.json.new").delete();
+            for (File tmp : staged.values()) AtomicCommit.discard(tmp);
+            AtomicCommit.discard(new File(localDir, "chunks.json.new"));
             throw e;
+        }
+    }
+
+    /**
+     * 清掉上次中断留下的临时文件。只碰本类自己命名的三样（{@code <name>.new}、
+     * {@code <name>.new.part}、{@code chunks.json.new}），绝不碰正式文件——
+     * 万一命名规则漂了，最坏也只是漏删，不会删到数据。
+     */
+    private void cleanStaleTemps(Manifests.ChunkTable remote) {
+        AtomicCommit.discard(new File(localDir, "chunks.json.new"));
+        for (String name : remote.files.keySet()) {
+            if (name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || name.contains("..")) continue;
+            AtomicCommit.discard(new File(localDir, name + ".new"));
+            AtomicCommit.discard(new File(localDir, name + ".new.part"));
         }
     }
 

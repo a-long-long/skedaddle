@@ -34,9 +34,10 @@
 | `cpp/CMakeLists.txt` | 复用仓库 `src/` 全部核心源码：`skedaddle_core STATIC` → `skedaddle SHARED` | `CMakeLists.txt:114-127` |
 | `src/utils/plat.c` | Android 目录注入 + TTS/exe/temp/config/font 平台分支 | `plat.c:1205-1244`（详见第 15 课 3.5） |
 | `java/.../Prefs.java` | `SharedPreferences` 配置中枢：服务器地址 / 自动更新开关 / 每日检查时间戳 / 三个显示开关统一存取 | `Prefs.java:13-75`（键名 16-21） |
-| `java/.../Downloader.java` | HTTP 下载（M2 起带整包 sha256 校验）+ zip 解包（地图包与 APK 共用） | `Downloader.java:22,36,45,100` |
+| `java/.../Downloader.java` | HTTP 下载（M2 起带整包 sha256 校验，2026-11-16 再加实收字节数校验）+ zip 解包（地图包与 APK 共用） | `Downloader.java:22,36,45,62,149` |
 | `java/.../Manifests.java` | 解析省图 / App 清单（M2 起含 `sha256`、`chunksUrl`、`chunks.json`） | `Manifests.java:21,24,45,89,126` |
-| `java/.../ChunkDelta.java` + `ChunkUpdater.java` | 4 KiB 块差分：plan / HTTP Range / 按偏移重组 / 整包哈希提交 | `ChunkDelta.java:25,91,107,168`；`ChunkUpdater.java:24,48` |
+| `java/.../ChunkDelta.java` + `ChunkUpdater.java` | 4 KiB 块差分：plan / HTTP Range / 按偏移重组 / 整包哈希提交 | `ChunkDelta.java:25,91,107,164`；`ChunkUpdater.java:27,51` |
+| `java/.../AtomicCommit.java` | 落盘提交的唯一入口：`rename(2)` 原子替换 + 先 fsync 数据、后 fsync 目录 | `AtomicCommit.java:46,55` |
 | `java/.../DownloadActivity.java` | 地图增量更新：`.skversion` 比对、哈希校验、差分优先回落整包、本地 zip 安装 | `DownloadActivity.java:42,49,181,197,299` |
 | `scripts/gen_chunks.py` + `scripts/java_gate.sh` | 块表生成/离线校验 + 主机 Java 编译与夹具门禁 | 见 `docs/android.md` §11.1.1–11.1.2 |
 | `java/.../UpdateChecker.java` + `SettingsActivity.java` | App OTA：比 `versionCode` → 下 APK → `FileProvider` 调系统安装器 | `UpdateChecker.java:33,43,52`；`SettingsActivity.java:25,76` |
@@ -216,6 +217,92 @@ Android 工程里没有任何 `src/` 的拷贝。编成单个 STATIC 再链进 S
 `Range` → 重组后整包 sha256 通过才提交，失败保留旧图并回落整包。判据由
 `scripts/java_gate.sh` 在主机用 JDK 17 实跑（改 1 块只传 4096 B、全等传 0 B、
 写错一块被拒）；★ 真机下载链路仍未验证，格式细节见 `docs/android.md` §11.1。
+
+**M2 补记二（2026-11-16）：提交不是原子的 —— 四处「先删后改」**
+
+差分算得再准，最后落盘那两步仍可能把用户的地图拆了。四处提交点原来都是同一个
+写法（`ChunkUpdater` 的数据文件与块表、`ChunkDelta.apply` 的 `.new` 与
+`verifyAndCommit` 的整包）：
+
+```java
+if (dest.exists() && !dest.delete()) throw new IOException("无法覆盖 " + dest);
+if (!tmp.renameTo(dest))             throw new IOException("rename failed: " + dest);
+```
+
+两步之间进程被杀（Android 上很常见：低内存 LMK、用户「强行停止」、OTA 重启），
+目录里就只剩 `xxx.new` 而没有正式的 `xxx`——**地图省整个消失**，而 `chunks.json`
+还是旧的，下次更新按旧块表去 patch 一个不存在的文件，只能回落整包重下。
+
+关键认识：这个窗口**不可能靠"小心点"消除**，它由两次系统调用之间的任意时刻决定；
+而 POSIX 的 `rename(2)` 本身就能覆盖已存在的目标且原子——目录项要么指旧 inode、
+要么指新 inode，没有"没有"这个中间态。所以"先删"这步纯属自找。
+
+| 位置 | 修法 |
+|---|---|
+| `AtomicCommit.commit(tmp, dest)` | **先查 `tmp.isFile()`**（临时文件没了就不许动 dest）→ `syncFile(tmp)` → `Files.move(REPLACE_EXISTING, ATOMIC_MOVE)` → `syncDir(parent)` |
+| `ChunkDelta.apply` / `verifyAndCommit` | 尾部两步合并成一次 `AtomicCommit.commit` |
+| `ChunkUpdater.update` | 数据文件逐个原子替换，**块表最后**提交（它一更新就等于宣称数据都是新版了） |
+| `ChunkUpdater.cleanStaleTemps` | 进来先清上次被杀留下的 `.new` / `.new.part` / `chunks.json.new`（从不被接管，白占几百 MB） |
+
+两个容易漏的细节：**先 fsync 再 rename**（rename 只改目录项，数据还在页缓存里，
+掉电可能得到"新文件名 + 空内容"，长度/哈希对不上但文件"装好了"），以及
+**rename 后 fsync 目录**（否则目录项本身可能回退）。后者拿不到目录句柄就跳过——
+原子性由 rename 保证，fsync 只补掉电后的持久性。
+
+**判据（`scripts/java_gate.sh`，都会失败）**：
+
+1. `COMMIT-INJECT-CAUGHT`：`dest` 有旧内容、`.part` 故意不存在 ⇒ 必须抛 IOException
+   且**旧文件逐字节不变**。把 `verifyAndCommit` 改回旧的 delete+rename 立刻挂
+   （`AssertionError: 临时文件缺失时旧文件必须原样保留`）——这条钉的是"提交前不删旧"。
+2. `COMMIT-ATOMIC-OK`：一次替换整块内容、能覆盖已存在的目标、不留临时文件。
+3. `COMMIT-RECOVER-OK`：故意让块表写入失败（`chunks.json.new` 做成非空目录）⇒
+   留下"数据已是新版 + 块表还是旧版"的中间态，二次运行必须自行收敛、不回落整包。
+   这就是"块表最后提交"这条顺序约束的理由。
+4. `COMMIT-PATH-OK`（结构判据）：源码里出现 `File.renameTo` 就失败——"先删后改"
+   一旦回来，前三条还能"碰巧通过"，只有这条会立刻响。
+
+注意 Android 侧 `java.nio.file` 自 **API 26** 起可用，正好是本模块的 `minSdk`；
+再低的系统就得绕 `android.system.Os.rename`，那时 `ATOMIC_MOVE` 这条捷径不可用。
+另：`.skversion` 仍是普通覆写（截断只会让版本读成"未知"，不破坏数据），不属于本条。
+
+**M2 补记三（2026-11-16）：下载器只比哈希、不比字节数**
+
+`downloadVerified` 原来只有一道闸：整包 sha256 与清单一致才落盘。问题是**哈希可以
+缺席**——老服务端清单没有 `sha256`，这条路径返回 `verified=false` 然后照样
+`commit(part, dest)`。于是连接中途被掐（移动网切换、代理超时、服务端
+`Content-Length` 与实际不符）得到的截断 zip 会被当成"装好了"：解包到一半才报错，
+或者装出一个缺文件的省。哈希管的是"内容对不对"，**管不了"有没有收全"**——这两件事
+在协议上就是两个判据，缺一个都不是校验。
+
+修法是三道字节数闸（全部不过就删 `.part`、绝不落盘）：
+
+| 闸 | 判据 | 抓什么 |
+|---|---|---|
+| ① | `read <= 0` | 200 + 空体：最像"成功"的失败 |
+| ② | `actual != read`（`part.length()` vs 实收） | 以后谁把 `FileOutputStream` 换成 `BufferedOutputStream` 又忘了 flush |
+| ③ | `expect >= 0 && read != expect` | 截断下载。`expect` **优先取清单 `size`**（与 sha256 同源；服务端 chunked 不发 `Content-Length` 时它是唯一判据），没给才退回 `getContentLengthLong()` |
+
+配套两处细节：`read` 必须提到 `try` 外（原来它是 `try` 块里的局部变量，外面根本
+看不到）；传输中途抛的异常（服务端谎报长度 ⇒ 客户端 premature EOF）原来会**跳过所有
+清理**直接冒出，`.part` 半包留在缓存目录里——现在用 `catch (IOException | RuntimeException)`
+统一删半包再抛。`DownloadActivity` 也要把清单 `size` 传下去，否则第 ③ 闸在界面上
+等于没接。
+
+**判据（`SIZE-INJECT-CAUGHT`，会失败）**：三条负向 + 一条正向对照——
+
+| 场景 | 期望 |
+|---|---|
+| 清单声明 7500、服务端如实给 5000 | 抛 IOException / 不落盘 / 不留 `.part` |
+| 200 + 0 字节 | 同上（旧代码会落一个 0 字节 zip） |
+| 服务端声明 7500、只发 5000 就断 | 同上（客户端可能自己抛 premature EOF） |
+| **同一份 5000 字节、清单如实声明 5000** | **必须放行**（`verified=false`） |
+
+最后一条是判据的"防作弊"：少了它，"一律拒绝"也能让前三条全绿。把三道闸临时改成
+`if (false && ...)` 实测第一行就挂：
+
+```
+ASSERT-FAIL  实收 5000 != 清单 7500 必须抛 IOException        rc=1
+```
 两者还共用 `Prefs`（`server_base` / `auto_update` / `last_update_check` 等键，见 `Prefs.java:16-21`）：服务器地址留空就不发网络请求，勾选自动更新才每日最多查一次——配置集中在一处，新增开关不必散落到各 `Activity`。
 判据用的是**纯十进制整数版本号**，不是时间戳也不是文件大小——与第 11 课「布尔判据用
 展开数/里程/像素，时间只兜底」同一条纪律。发新版必须递增 `versionCode`，否则设备永远

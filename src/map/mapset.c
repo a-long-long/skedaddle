@@ -46,6 +46,11 @@ static void src_close(MapSrc *s)
     nmbin_close(&s->nodes);
     nmbin_close(&s->edges);
     if (s->has_restr) nmbin_close(&s->restrictions);
+    /* ★ 2026-11-16 修泄漏：PBF 解码出来的显示层是 hand-malloc 缓冲（mapped=0），
+     * nmbin_close 只管 mmap、下面的 memset 也不 free ⇒ 退出时整省显示层漏掉。
+     * 顺序要紧：先 pbfmap_free（frees + 零化 s->dmap），再 memset 把
+     * s->lines/areas/polyrefs 里那几个**同指针的副本**一并清 0，避免悬垂。 */
+    if (s->dmap_from_pbf) pbfmap_free(&s->dmap);
     if (s->has_contours) {
         nmbin_close(&s->contours);
         nmbin_close(&s->contour_polyrefs);
@@ -317,8 +322,13 @@ static int tiles_index_ok(const NMBinFile *t)
  * 重载走这个，身份不变；首次打开由 src_open 先置身份再调它。 */
 static int src_open_files(MapSrc *s)
 {
-    s->dmap_inflight = 0;   /* 重载 = 重新尝试解码（清掉失败标记） */
-    s->dmap_failed   = 0;
+    /* ★ 在途解码 ⇒ worker 正在读 s->nodes：绝不能在这里换映射，也不能拆 pin。
+       正常路径走不到这（loaded=1 时调用方不会重开），这是防"绕过 loaded 直调"。
+       真重开时 dmap_inflight 本来就是 0，所以这里不再无条件清零它——旧代码的
+       `dmap_inflight = 0` 会悄悄拆掉 src_unload 依赖的 pin（2026-11-16）。 */
+    if (s->dmap_inflight) return 0;
+    s->dmap_failed    = 0;   /* 重载 = 重新尝试解码（清掉失败标记） */
+    s->unload_pending = 0;
     char p[4096];
     char err[256];
 
@@ -461,10 +471,24 @@ static int src_open(MapSrc *s, const char *dir, const char *name)
 
 /* 卸载：关文件 + 释放缓存，但保留身份（name/dir/bbox/dup_of/loaded）。
  * 与 src_close（整体释放，mapset_free 用）不同，这里省份槽位继续存在，
- * 只是文件不再 mmap——下次 set_view 命中视口时 src_open_files 重新打开。 */
-static void src_unload(MapSrc *s)
+ * 只是文件不再 mmap——下次 set_view 命中视口时 src_open_files 重新打开。
+ *
+ * 返回 1 = 真的卸了；0 = **推迟**（后台解码正在读 nodes，不能 unmap）。
+ *
+ * ★ 2026-11-16 修：以前返回 void，调用方（mapset_set_view）不管结果一律
+ *   `s->loaded = 0`。于是"解码在途 + 视口离开"时 loaded 与真实状态相反：文件
+ *   还映射着，却报"已卸载"。接下去视口一回来就 `src_open_files()` 再开一遍——
+ *   nmbin_open 在已打开的映射上重开（旧映射泄漏），并且 src_open_files 里的
+ *   `dmap_inflight = 0` 顺手把 pin 拆了；此后任意一次 src_unload 就会在 worker
+ *   仍在读 nodes 时 munmap ⇒ 真 UAF。返回值就是契约：调用方只能按它改 loaded。 */
+static int src_unload(MapSrc *s)
 {
-    if (s->dmap_inflight) return;   /* 后台解码中：保留 nodes 映射，待解码完再卸 */
+    if (s->dmap_inflight) {
+        /* 后台解码中：保留 nodes 映射，解码结束（publish）后补卸。 */
+        s->unload_pending = 1;
+        return 0;
+    }
+    s->unload_pending = 0;
     nmbin_close(&s->nodes);
     nmbin_close(&s->edges);
     if (s->has_restr) nmbin_close(&s->restrictions);
@@ -509,6 +533,7 @@ static void src_unload(MapSrc *s)
     s->line_bbox = NULL;
     s->contour_bbox = NULL;
     /* name/dir/bbox/dup_of 保留 */
+    return 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -806,15 +831,24 @@ void mapset_set_view(MapSet *ms, const int32_t vb[4])
     int32_t m  = (vb[2] - vb[0]) / 2;
     int32_t mn = (vb[3] - vb[1]) / 2;
     int32_t eb[4] = { vb[0] - m, vb[1] - mn, vb[2] + m, vb[3] + mn };
+    /* 记下展开视口：publish 在下一帧顶部要看"这省还在不在视口"来决定是否
+     * 兑现推迟的卸载（放在循环之前，本帧的 dispatch/LRU 也用得到）。 */
+    memcpy(ms->view_last, eb, sizeof(ms->view_last));
 
     for (int i = 0; i < ms->n; i++) {
         MapSrc *s = &ms->srcs[i];
         int ov = bbox_overlap(s->bbox, eb);
         if (ov && !s->loaded) {
             s->loaded = (src_open_files(s) == 0);
-        } else if (!ov && s->loaded) {
-            src_unload(s);
-            s->loaded = 0;
+        } else if (ov) {
+            /* 视口回来了：取消上一帧记下的"待卸"（那时欠的是别人的账）。 */
+            s->unload_pending = 0;
+        } else if (s->loaded && !s->unload_pending) {
+            /* ★ 只有真的卸掉了才改 loaded（2026-11-16）：解码在途时 src_unload
+             *   返回 0，loaded 必须保持 1——文件确实还映射着，谎报 0 会让下一次
+             *   视口进省重复 mmap 并拆掉 worker 依赖的 pin。推迟的账由
+             *   mapset_publish_display 在解码结束时结算。 */
+            if (src_unload(s)) s->loaded = 0;
         }
         /* PBF 显示层：视口进省 ⇒ 后台线程异步解码（见 dmap_worker）。
          * 不再在主线程同步解码（旧逻辑会阻塞渲染 0.6~4.4s）。解码完成前
@@ -992,6 +1026,17 @@ static void mapset_publish_display(MapSet *ms)
     } else {
         s->dmap_failed = 1;   /* 解码失败：不再重试，等重载（src_open_files 清标记） */
     }
+
+    /* 结算推迟的卸载：解码期间视口离开了这省，src_unload 当时不敢 unmap
+       （worker 正在读 nodes），只记了 unload_pending。现在解码结束、pin 已解除，
+       补做这次卸载——否则该省的文件会一直映射到下次视口回来（假 loaded=0 时期
+       更糟：直接重复 mmap）。
+       用 ms->view_last 判断"还在不在视口"：publish 跑在 set_view 顶部，这里的
+       view_last 是上一帧的展开视口。若这帧其实又滚回来了，最坏是多一次
+       unload→下帧 src_open_files 重开，状态仍然一致（不会悬垂）。 */
+    if (s->unload_pending && !bbox_overlap(s->bbox, ms->view_last)) {
+        if (src_unload(s)) s->loaded = 0;
+    }
 }
 
 /* 派发一省去后台解码：仅当没有任务在途 / 待发布 / 已失败 / 已就绪时才派发。
@@ -1064,8 +1109,18 @@ static void dmap_worker(void *arg)
         }
 
         sk_mutex_lock(ms->dmap_mtx);
-        if (ms->dmap_quit) {            /* 让出：放弃半成品，不发布 */
-            if (!ok) pbfmap_free(&m);
+        if (ms->dmap_quit) {            /* 让出：放弃这次结果，不发布 */
+            /* ★ 2026-11-16 修泄漏：原来写的是 `if (!ok) pbfmap_free(&m)`，
+             *   条件反了——失败的半成品被释放（本来也没多少），而**成功的**
+             *   产物（一省显示层：lines/areas/polyrefs 三块 hand-malloc，
+             *   实测十几 MB 到几十 MB）反而没人管：它没进 job_result
+             *   （马上退出，主线程不会再 publish），也没挂到任何 src 上
+             *   （src_close 只清挂上去的），于是整块丢掉。
+             *   场景很常见：用户看某省刚"解码中…"，直接关窗 ⇒ mapset_free
+             *   置 quit ⇒ 解码恰好完成 ⇒ 每次退出漏一省的量。
+             *   pbfmap_free 幂等（零值/半成品都安全），无条件调用即可。 */
+            pbfmap_free(&m);
+            ms->job_prov = -1;          /* 任务槽一并归还，别留个悬空的省下标 */
             sk_mutex_unlock(ms->dmap_mtx);
             break;
         }
@@ -1090,6 +1145,10 @@ void mapset_free(MapSet *ms)
             sk_sleep_ms(5);
     }
     if (ms->dmap_mtx) {
+        /* ★ 2026-11-16 修泄漏：worker 可能已经解完并放进 job_result，但主线程
+         * 还没轮到 publish（set_view 没再被调用就退出）——这份产物同样没人管。
+         * 锁已可安全获取（worker 已 stopped），直接按所有者释放。 */
+        pbfmap_free(&ms->job_result);
         sk_mutex_destroy(ms->dmap_mtx);
         ms->dmap_mtx = NULL;
     }

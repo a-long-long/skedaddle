@@ -154,14 +154,10 @@ public final class ChunkDelta {
             throw new IOException("重组后整包 sha256 不符（写错块/篡改）：期望 "
                     + expectedSha256 + "，实得 " + got);
         }
-        if (out.exists() && !out.delete()) {
-            part.delete();
-            throw new IOException("无法覆盖 " + out);
-        }
-        if (!part.renameTo(out)) {
-            part.delete();
-            throw new IOException("rename failed: " + out);
-        }
+        /* 一次性原子替换（rename(2)）：中途被杀只会看到「旧的 out」或「新的 out」，
+         * 绝不会出现 out 缺失。旧代码先 delete(out) 再 rename，两步之间被杀就只剩
+         * .new.part 半包，而块表还是旧的（2026-11-16 修）。 */
+        AtomicCommit.commit(part, out);
     }
 
     /** O4：下载完成后校验并落盘。expected 为空 = 老服务端「未校验」，行为与旧版一致。 */
@@ -174,14 +170,10 @@ public final class ChunkDelta {
             throw new IOException("sha256 不符：期望 " + expectedSha256
                     + "，实得 " + computedSha256);
         }
-        if (dest.exists() && !dest.delete()) {
-            part.delete();
-            throw new IOException("无法覆盖 " + dest);
-        }
-        if (!part.renameTo(dest)) {
-            part.delete();
-            throw new IOException("rename failed: " + dest);
-        }
+        /* 原子替换（见 AtomicCommit）：失败时 dest 保持原样，调用方才能
+         * 「保留旧图回落整包」。旧代码这里先 delete(dest)——半包缺失/rename
+         * 失败时旧文件已经没了（2026-11-16 修）。 */
+        AtomicCommit.commit(part, dest);
         return verified;
     }
 

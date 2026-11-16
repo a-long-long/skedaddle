@@ -144,7 +144,8 @@ public class DownloadActivity extends AppCompatActivity {
                 Row r = new Row();
                 r.id = e.id; r.name = e.name; r.remoteVersion = e.version;
                 r.url = e.url; r.localVersion = localV;
-                r.sha256 = e.sha256; r.chunksUrl = e.chunksUrl; r.chunkSize = e.chunkSize;
+                r.sha256 = e.sha256; r.size = e.size;
+                r.chunksUrl = e.chunksUrl; r.chunkSize = e.chunkSize;
                 mRows.add(r);
             }
             // 内置省里没有出现在远程的（服务器没配或拉失败）
@@ -226,7 +227,9 @@ public class DownloadActivity extends AppCompatActivity {
                     }
                 }
                 // M2 / O4：整包下载后先验 sha256 再解包；清单没哈希时与老服务端行为一致。
-                boolean verified = new Downloader().downloadVerified(url, zip, r.sha256,
+                // ★ r.size 一并传下去：下载器要用它核对"实收字节数"（清单没哈希的
+                //   老服务端上，这是唯一能抓住截断下载的判据，2026-11-16）。
+                boolean verified = new Downloader().downloadVerified(url, zip, r.sha256, r.size,
                         (read, total, done) -> mUi.post(() -> {
                             if (total > 0) {
                                 int pct = (int) (read * 100 / total);
@@ -361,6 +364,7 @@ public class DownloadActivity extends AppCompatActivity {
         long remoteVersion; // 0=无远程
         long localVersion;  // 0=未装, -1=已装未知
         String sha256 = "";      // M2 / O4 整包哈希
+        long size;               // 清单声明的字节数（0=未给）：下载器按它核对实收字节数
         String chunksUrl = "";   // M2 / O5 块表 URL
         long chunkSize = 4096;
     }

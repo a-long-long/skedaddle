@@ -54,4 +54,9 @@ int  pbfmap_decode(const char *pbf_path, const NMBinFile *nodes_index,
 /* 释放 out 持有的内存缓冲（可重复调用）。 */
 void pbfmap_free(PbfMap *m);
 
+/* 泄漏监视（判据用）：当前已解码、尚未 pbfmap_free 的缓冲字节数。
+ * 正常状态应恒为 0；解码产物全部被接管（src.dmap）后由 src_close /
+ * src_unload / LRU 淘汰释放，中途放弃的结果则由放弃方释放。 */
+long long pbfmap_live_bytes(void);
+
 #endif

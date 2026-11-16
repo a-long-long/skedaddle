@@ -1552,8 +1552,29 @@ void maneuver_text(const Maneuver *m, char *buf, size_t n)
 - **`rev.bin` 全表单调性**：尾哨兵只证明最后一项；`rev_load()` 现在还要求
   `start[0] <= … <= start[n] <= list_count`，防止正文被改后 `expand_dir()` 越界读 `list`。
 
+**2026-11-16 补：`Router` 独占 + 请求快照（算路线程 vs UI 的数据竞争）**
+
+上一段只解决了"重载/退出"，没解决"算路飞行中 UI 改东西"。三处真实竞态：
+
+| 竞态 | 谁写 | 谁读（无锁） | 后果 |
+|---|---|---|---|
+| Router 偏好 | 主线程 `nav_request → nav_ensure_router → router_set_prefs/profile`（**nav_busy 时也会走**，只置 pending）；Qt 出行方式菜单还直接 `router_set_profile` | worker 的 A* 读 `r->opt.*` | 权重中途换公式：同一单前半程按驾车、后半程按骑行 |
+| 途经点 | 主线程 `app_nav_add_via/del_via/clear_via` | worker 先读 `n_via`、再遍历 `via[]` | 两步之间删一个点 ⇒ 按新 `n_via` 读旧 `via[]`，坐标错位 |
+| 逐段里程 | worker `memset(a->via_seg_km, …)` | 面板读同一数组 | 撕裂读；`app_nav_clear_via` 还与它对着 `memset` |
+
+修法（机制，不是注释）：
+
+1. **`NavReq` 快照**：`nav_request()` 在**主线程**把起终点 + `via[]` + 偏好 + 出行方式一次拷进 `App.req`（`nav_mu` 交接），worker 只吃快照。UI 之后怎么改都不影响已提交的这一单；`pending` 时新快照覆盖旧的，worker 跑完回头读。
+2. **Router 只有一个写者**：创建与 `router_set_prefs/profile` 全部收进 `nav_router_configure()`，只在 worker 内调用（Qt 菜单里的 `router_set_profile` 已删除，只写 `App.route_profile`）。
+3. **`via_seg_km` 走结果包**：worker 填 `NavResult.via_seg_km`，主线程 `app_nav_poll()` 收割时再搬进 App——`App` 的字段回归"只有 UI 线程写"。
+4. **同步入口先等空闲**：`app_nav_plan_sync()` / `app_gpx_snap()` 走 `nav_router_acquire_sync()`（`nav_wait_idle` + 配置），否则它们会和 worker 同时跑 A* 踩烂状态表。
+
+**验收口径（会失败的判据）**：`--ui-test` ⑫c 用北京内部三点起终点正南北、途经点放在东侧 4 km——若快照漏了 `via`（或 worker 又回去读 UI 的 `via[]`），路线退化成两点直连，最近距离 >4 km，判据必挂；同时钉 `App.req.n_via == 1`。注意**途经点不能放在直连线上**：那样即使漏了 `via` 距离也 <800 m，测试就成了摆设。
+
 **Rust 对照**：Rust 里对应的是让 `Router<'a>` 借 `MapSet`，或搜索持有 `Arc<MapSet>`；
 重载时借用检查会先逼你处理旧 `Router`。见 `tutorial/rust/README.md` §七。
+本条竞态在 Rust 里同样写不出来：把 `NavReq` **按值**发给算路线程（`mpsc::Sender<NavReq>`），
+`Router` 归接收线程 `&mut` 独占——借用检查不允许主线程同时持 `&mut Router` 改偏好。
 
 **验收口径**：`app_reload_maps()` 后 `router==NULL`，随后重新创建 Router 仍 `ROUTE-OK`；
 算路中把视口移出省，省保持 loaded，算路结束后才卸载。

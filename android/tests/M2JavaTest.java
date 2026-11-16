@@ -38,10 +38,14 @@ public final class M2JavaTest {
         try {
             testManifest();
             testDownloadVerify();
+            testSizeValidation();
             testDelta(false, false, "DELTA-OK 改 1 块只发 1 个 Range 请求 / 传 4096 B / 重组整包哈希一致");
             testDelta(true, false, "DELTA-ZERO-OK 全等 0 块 / 0 字节 / 0 个 Range 请求");
             testDeltaInject();
-            System.out.println("M2-JAVA-OK 清单解析 + 下载校验 + 按块差分 + 三类负向注入全通过");
+            testCommitMissingTmp();
+            testCommitReplace();
+            testCommitRecover();
+            System.out.println("M2-JAVA-OK 清单解析 + 下载校验 + 按块差分 + 三类负向注入 + 原子提交全通过");
         } catch (Throwable t) {
             System.out.println("ASSERT-FAIL " + t);
             t.printStackTrace(System.out);
@@ -197,8 +201,238 @@ public final class M2JavaTest {
     }
 
     // ------------------------------------------------------------------
+    // 下载器必须校验**实收字节数**（2026-11-16 修）。
+    //
+    // 旧代码只比 sha256：清单没给哈希的老服务端路径下 `verified=false`，截断包
+    // 照样落到 dest —— 装上才在解包/加载时炸，或者得到一个缺文件的省。
+    // 三种"字节数不对"各一条负向 + 一条"如实声明必须放行"的正向（防判据过严）。
+    // ------------------------------------------------------------------
+    private static void testSizeValidation() throws Exception {
+        byte[] full = pattern(7500, 11);
+        File dir = Files.createTempDirectory("sk_m2_size_").toFile();
+        try {
+            // ① 清单声明 7500，服务端只给了 5000（Content-Length 诚实 = 5000）：
+            //    只有"拿清单 size 核对实收"这条路抓得住它。
+            byte[] half = Arrays.copyOf(full, 5000);
+            SizeServer honest = new SizeServer(half.length, half, half.length);
+            try {
+                File dest = new File(dir, "short.zip");
+                boolean caught = false;
+                try {
+                    new Downloader().downloadVerified(honest.base + "pkg.zip", dest,
+                            "", full.length, null);
+                } catch (IOException expected) {
+                    caught = true;
+                }
+                check(caught, "实收 5000 != 清单 7500 必须抛 IOException");
+                check(!dest.exists(), "字节数不符绝不能落盘");
+                check(!new File(dir, "short.zip.part").exists(), "字节数不符必须删掉 .part 半包");
+
+                // 正向对照：同一份 5000 字节、清单如实声明 5000 ⇒ 必须放行
+                //（否则"一律拒绝"也能让上面三条通过，判据就成了摆设）
+                File okDest = new File(dir, "ok.zip");
+                boolean verified = new Downloader().downloadVerified(honest.base + "pkg.zip",
+                        okDest, "", half.length, null);
+                check(!verified, "无哈希应返回 verified=false（未校验）");
+                check(okDest.length() == half.length, "字节数如实时应正常落盘");
+                check(Arrays.equals(half, Files.readAllBytes(okDest.toPath())),
+                        "落盘内容应与服务端一致");
+            } finally {
+                honest.close();
+            }
+
+            // ② 空包：200 + 0 字节（无哈希）。旧代码会落一个 0 字节的 zip。
+            SizeServer empty = new SizeServer(-1, new byte[0], 0);
+            try {
+                File dest = new File(dir, "empty.zip");
+                boolean caught = false;
+                try {
+                    new Downloader().downloadVerified(empty.base + "pkg.zip", dest, "", -1, null);
+                } catch (IOException expected) {
+                    caught = true;
+                }
+                check(caught, "0 字节的包必须拒绝");
+                check(!dest.exists(), "0 字节的包绝不能落盘");
+                check(!new File(dir, "empty.zip.part").exists(), "0 字节的包必须删掉 .part");
+            } finally {
+                empty.close();
+            }
+
+            // ③ 服务端谎报：声明 7500、只发 5000 就断。客户端可能自己抛
+            //    "premature EOF"，也可能读到短包返回 —— 两条路都必须落到
+            //    "抛异常 + 不落盘 + 不留半包"。
+            SizeServer liar = new SizeServer(full.length, half, half.length);
+            try {
+                File dest = new File(dir, "liar.zip");
+                boolean caught = false;
+                try {
+                    new Downloader().downloadVerified(liar.base + "pkg.zip", dest, "", -1, null);
+                } catch (IOException expected) {
+                    caught = true;
+                }
+                check(caught, "声明 7500 实发 5000 必须抛 IOException");
+                check(!dest.exists(), "谎报长度的截断包绝不能落盘");
+                check(!new File(dir, "liar.zip.part").exists(), "谎报长度时必须删掉 .part");
+            } finally {
+                liar.close();
+            }
+            System.out.println("SIZE-INJECT-CAUGHT 实收字节数与清单/Content-Length 不符被拒"
+                    + "（含 0 字节空包），如实声明仍放行");
+        } finally {
+            deleteTree(dir);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 提交原子性（2026-11-16 修）：临时文件缺失时绝不能先把正式文件删掉。
+    //
+    // 旧代码的提交是两步：`dest.delete()` → `tmp.renameTo(dest)`。第二步失败
+    // （半包被清理掉了 / 目标目录不可写 / 命名漂了）时，第一步已经把旧文件删了
+    // ⇒ 目录里既没有旧文件也没有新文件。这条判据就是钉住"提交前不删旧"：
+    // 同一个调用在旧代码下必挂（dest 消失），在新代码下旧文件原样保留。
+    // ------------------------------------------------------------------
+    private static void testCommitMissingTmp() throws Exception {
+        File dir = Files.createTempDirectory("sk_m2_commit_").toFile();
+        try {
+            File dest = new File(dir, "nodes.bin");
+            byte[] old = pattern(9000, 3);
+            write(dest, old);
+            File missing = new File(dir, "nodes.bin.part");   // 故意不存在：模拟半包没了
+            boolean caught = false;
+            try {
+                ChunkDelta.verifyAndCommit(missing, dest,
+                        ChunkDelta.sha256Hex(old), ChunkDelta.sha256Hex(old));
+            } catch (IOException expected) {
+                caught = true;
+            }
+            check(caught, "临时文件缺失必须抛 IOException");
+            check(dest.isFile() && Arrays.equals(old, Files.readAllBytes(dest.toPath())),
+                    "临时文件缺失时旧文件必须原样保留（旧代码会先 delete 掉它）");
+            System.out.println("COMMIT-INJECT-CAUGHT 半包缺失被拒且旧文件逐字节未变（提交不再先删目标）");
+        } finally {
+            deleteTree(dir);
+        }
+    }
+
+    /** 正常路径：一次替换整块内容、覆盖已存在的目标、不留临时文件。 */
+    private static void testCommitReplace() throws Exception {
+        File dir = Files.createTempDirectory("sk_m2_repl_").toFile();
+        try {
+            File dest = new File(dir, "nodes.bin");
+            byte[] old = pattern(5000, 4);
+            byte[] neu = pattern(5000, 5);
+            write(dest, old);
+
+            File part = new File(dir, "nodes.bin.part");
+            write(part, neu);
+            ChunkDelta.verifyAndCommit(part, dest,
+                    ChunkDelta.sha256Hex(neu), ChunkDelta.sha256Hex(neu));
+            check(Arrays.equals(neu, Files.readAllBytes(dest.toPath())), "提交后内容应为新版本");
+            check(!part.exists(), "提交后临时文件不应残留");
+
+            // 再提交一次（目标已存在）：靠 rename 的替换语义覆盖，不需要先删
+            File part2 = new File(dir, "nodes.bin.part");
+            write(part2, old);
+            ChunkDelta.verifyAndCommit(part2, dest,
+                    ChunkDelta.sha256Hex(old), ChunkDelta.sha256Hex(old));
+            check(Arrays.equals(old, Files.readAllBytes(dest.toPath())), "二次提交应能覆盖已存在的目标");
+            check(!part2.exists(), "二次提交后临时文件同样不应残留");
+            System.out.println("COMMIT-ATOMIC-OK 临时文件一次替换正式文件 / 覆盖已存在目标 / 无临时残留");
+        } finally {
+            deleteTree(dir);
+        }
+    }
+
+    /**
+     * 提交顺序：数据文件先、块表最后。中途死在块表这一步，必须留下
+     * 「数据已是新版 + 块表还是旧版」的可自愈中间态，而不是「文件没了」或
+     * 「块表说新、文件是旧」。二次运行必须收敛（不回落整包、不报错）。
+     */
+    private static void testCommitRecover() throws Exception {
+        byte[] local = pattern(CHUNK * 3, 1);
+        byte[] remote = local.clone();
+        remote[CHUNK + 7] ^= 0x5A;
+        Server srv = new Server(remote, chunksJson(remote), false, null);
+        File dir = Files.createTempDirectory("sk_m2_rec_").toFile();
+        try {
+            write(new File(dir, FILE), local);
+            String oldTable = chunksJson(local);
+            write(new File(dir, "chunks.json"), oldTable);
+
+            /* 造一次"数据已提交、块表没提交"的中断：把 chunks.json.new 做成
+             * 非空目录 ⇒ writeAll 打不开文件 ⇒ update 在块表这一步抛异常。
+             * 顺序保证它发生在数据提交之后（否则测的就不是这件事）。 */
+            File block = new File(dir, "chunks.json.new");
+            check(block.mkdirs(), "应能建占位目录");
+            write(new File(block, "keep"), "keep");
+            boolean caught = false;
+            try {
+                new ChunkUpdater(dir, srv.base + "chunks.json", M2JavaTest::httpGet).update();
+            } catch (IOException expected) {
+                caught = true;
+            }
+            check(caught, "块表写入失败必须抛 IOException");
+            check(Arrays.equals(remote, Files.readAllBytes(new File(dir, FILE).toPath())),
+                    "中断前数据文件应已提交为远端版本");
+            check(oldTable.equals(new String(Files.readAllBytes(
+                    new File(dir, "chunks.json").toPath()), StandardCharsets.UTF_8)),
+                    "块表必须还是旧版（块表最后提交，不许抢先）");
+
+            deleteTree(block);
+            ChunkUpdater.Result r = new ChunkUpdater(dir, srv.base + "chunks.json",
+                    M2JavaTest::httpGet).update();
+            check(r.verified, "恢复运行应 verified");
+            check(Arrays.equals(remote, Files.readAllBytes(new File(dir, FILE).toPath())),
+                    "恢复后内容应为远端版本");
+            check(ChunkDelta.sha256Hex(remote).equals(ChunkDelta.sha256Hex(new File(dir, FILE))),
+                    "恢复后整包 sha256 应一致");
+            Manifests.ChunkTable now = Manifests.parseChunks(
+                    new String(Files.readAllBytes(new File(dir, "chunks.json").toPath()),
+                            StandardCharsets.UTF_8));
+            check(ChunkDelta.sha256Hex(remote).equals(now.files.get(FILE).sha256),
+                    "恢复后块表应更新为远端版本");
+            System.out.println("COMMIT-RECOVER-OK 数据先提交/块表最后提交：中断后二次运行收敛到远端");
+        } finally {
+            srv.close();
+            deleteTree(dir);
+        }
+    }
+
+    // ------------------------------------------------------------------
     // 工具
     // ------------------------------------------------------------------
+    /**
+     * 只服务一个"字节数不对"的包：declared = 声明的 Content-Length（-1 = 无体），
+     * sent = 实际写出的字节数。声明 &gt; 实发时 HttpServer 关流会报"没写满"，
+     * 客户端随即看到截断 —— 这正是判据要制造的现场。
+     */
+    private static final class SizeServer implements AutoCloseable {
+        final HttpServer hs;
+        final String base;
+
+        SizeServer(long declared, byte[] body, int sent) throws IOException {
+            hs = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            hs.createContext("/pkg.zip", ex -> {
+                try {
+                    ex.sendResponseHeaders(200, declared);
+                    OutputStream os = ex.getResponseBody();
+                    if (sent > 0) os.write(body, 0, Math.min(sent, body.length));
+                    os.flush();
+                    os.close();
+                } catch (IOException ignore) {
+                    /* 声明 > 实发：关流时"没写满"，就是要的截断 */
+                } finally {
+                    ex.close();          /* HttpExchange.close() 不抛受检异常 */
+                }
+            });
+            hs.setExecutor(null);
+            hs.start();
+            base = "http://127.0.0.1:" + hs.getAddress().getPort() + "/";
+        }
+
+        @Override public void close() { hs.stop(0); }
+    }
+
     private static final class Server implements AutoCloseable {
         final HttpServer hs;
         final List<String> ranges = new ArrayList<String>();

@@ -33,14 +33,36 @@ typedef struct {
     char   prov[64];        /* 落在哪个省 */
 } NavPick;
 
+/* 途经点上限（App.via / NavReq.via / NavResult.via_seg_km 共用）。 */
+#define MAX_VIA 31
+
+/* 一次算路请求的**完整快照**（App.req，nav_mu 保护）。
+ * ★ 为什么必须有快照（2026-11-16 修数据竞争）：算路 5 秒级，期间 UI 线程
+ *   照样能加点、删点、改偏好。若 worker 直接读 App 的 pick_a、via[]、pref_*，
+ *   就是标准的 torn read——最典型的是途经点：worker 先读 n_via、再按它遍历
+ *   via[]，两步之间用户删了一个点，worker 就按新 n_via 读旧 via[]（读到已
+ *   被搬走的元素，坐标错位）。快照在**提交时**（主线程，唯一写这些字段的线程）
+ *   一次做好，worker 只吃快照：UI 之后怎么改都不影响已提交的这一单。 */
+typedef struct {
+    NavPick a, b;                                  /* 起点 / 终点 */
+    int     n_via;                                 /* 途经点个数（0=普通两点） */
+    NavPick via[MAX_VIA];                          /* 途经点（按经过顺序） */
+    int     pref_toll, pref_ferry, pref_unpaved;   /* 路线偏好（提交时的值） */
+    int     profile;                               /* 出行方式（提交时的值） */
+} NavReq;
+
 /* 后台算路线程交给主线程的结果包。RouteResultSet 里的指针整体搬过来，
    所以搬完只 free 外壳，不 route_result_free。 */
 typedef struct {
     RouteResultSet alts;    /* 多方案（至少 1 条可行） */
-    int            err;     /* 0=成功（至少1个可行） -1=不连通 -2=超限 -3=起点/终点附近无路 */
+    int            err;     /* 0=成功（至少1个可行） -1=不连通 -2=超限
+                             * -3=起点/终点附近无路 -4=Router 建不起来 */
     double         a_snap_m, b_snap_m;
     double         a_lat, a_lon, b_lat, b_lon;
     int            a_prov, b_prov;
+    /* 各段里程（km）：worker 算完填这里，主线程收割时再搬进 App.via_seg_km。
+     * worker 绝不能直接写 App 的字段——那是 UI 线程的地盘（2026-11-16）。 */
+    double         via_seg_km[MAX_VIA + 1];
 } NavResult;
 
 /* 搜索框状态（阶段 7）。
@@ -93,14 +115,19 @@ typedef struct {
     /* ---- 导航（阶段 9）----
      * 算路放在后台线程：跨省长途 5 秒级，放主线程会把窗口卡成假死。
      * Router 只被后台线程碰（它不是线程安全的：反向索引是惰性构建的），
-     * 主线程只提交请求 + 收割结果，绝不直接调 router_*。 */
-    Router       *router;        /* 惰性创建：第一次算路才建（状态表约 30MB） */
+     * 主线程只提交请求 + 收割结果，绝不直接调 router_*。
+     * ★ 2026-11-16 起把"只闻其声"落成机制：请求参数走 NavReq 快照，Router 的
+     *   创建与偏好下发全在 worker 内做（主线程连 router_set_prefs 都不许调），
+     *   唯一的例外是 UI 线程的同步算路入口（app_nav_plan_sync / app_gpx_snap），
+     *   它们先等 worker 空闲再动 Router。 */
+    Router       *router;        /* 惰性创建（在 worker 内）：第一次算路才建（状态表约 30MB） */
     NavPick       pick_a, pick_b;/* 起点 / 终点 */
     /* ---- 途经点（阶段 6 功能：添加途经点）----
      * via[] 是在起点与终点之间、要求路线依次经过的中间点（按经过顺序排列）。
      * n_via==0 时退化为普通两点算路；>0 时后台走 router_route_via。
-     * 每段（起→via1→…→终点）的里程记录在 via_seg_km[]，给面板显示"全程/各段"用。 */
-#define MAX_VIA 31
+     * 每段（起→via1→…→终点）的里程记录在 via_seg_km[]，给面板显示"全程/各段"用。
+     * ★ 这两个数组**只归 UI 线程**：worker 读的是 NavReq 快照里的副本，
+     *   via_seg_km 由 worker 填进 NavResult 再搬回来（见 NavResult 注释）。 */
     NavPick       via[MAX_VIA];  /* 途经点 */
     int           n_via;         /* 当前途经点个数（≤ MAX_VIA） */
     double        via_seg_km[MAX_VIA + 1]; /* 各段里程（km）：0=起→via1 … 末=via_k→终 */
@@ -113,7 +140,7 @@ typedef struct {
     SkMutex      *nav_mu;
     int           nav_busy;      /* 后台在算（nav_mu 保护） */
     int           nav_pending;   /* 排队中的新请求（nav_mu 保护） */
-    NavPick       req_a, req_b;
+    NavReq        req;           /* 本次请求的完整快照（nav_mu 保护，worker 只读这里） */
     NavResult    *nav_done;      /* 后台产出，主线程收割 */
     int           nav_done_flag;
     char          nav_msg[192];  /* 面板顶行："计算中…" / "无可行路线" 等 */

@@ -81,7 +81,7 @@ DownloadDialog::DownloadDialog(const QString &sourcesDir, const QString &repoRoo
     resize(840, 580);
 
     m_tree = new QTreeWidget;
-    m_tree->setHeaderLabel(QString::fromUtf8(i18n_tr("可下载区域（✓已下载 ·未下载）")));
+    m_tree->setHeaderLabel(QString::fromUtf8(i18n_tr("可下载区域（✓已就绪 ⤓待转换 ·未下载）")));
     fillTree(m_tree->invisibleRootItem(), buildRegions());
     refreshStatus();                 /* 计算每个节点的已下载状态/子区域计数 */
     m_tree->expandToDepth(0);        /* 默认展开到洲级 */
@@ -356,15 +356,22 @@ void DownloadDialog::fillTree(QTreeWidgetItem *parent, const QVector<GeoRegion> 
     }
 }
 
-bool DownloadDialog::regionDownloaded(const QString &path) const
+DownloadDialog::RegionState DownloadDialog::regionState(const QString &path) const
 {
-    if (path.isEmpty()) return false;              /* 枝不计已下载 */
-    QString nm = path.section('/', -1);            /* asia/china/gansu → gansu */
-    /* Geofabrik 源文件名是 <leaf>-latest.osm.pbf，sync_maps 可能产出同名目录。 */
-    if (QDir(m_repo + "/products/graph/" + nm).exists()) return true;
-    if (QDir(m_repo + "/products/graph/" + nm + "-latest").exists()) return true;
-    if (QFile::exists(m_sources + "/" + nm + "-latest.osm.pbf")) return true;
-    return false;
+    if (path.isEmpty()) return RegionState::Absent;    /* 枝不参与判定 */
+    const QString nm = path.section('/', -1);          /* asia/china/gansu → gansu */
+
+    /* 产物就绪的唯一判据：manifest.txt。extract 成功收尾才写它，目录/文件名
+     * 存在都不作数（目录可能是空壳、半途失败、或被清过）。两种命名都认。 */
+    for (const QString &dir : {m_repo + "/products/graph/" + nm,
+                               m_repo + "/products/graph/" + nm + "-latest"}) {
+        if (QFile::exists(dir + "/manifest.txt"))
+            return RegionState::Ready;
+    }
+    /* 有源 pbf 但没产物 = 下了原料没转换：不是"已就绪"，是"待转换"。 */
+    if (QFile::exists(m_sources + "/" + nm + "-latest.osm.pbf"))
+        return RegionState::PbfOnly;
+    return RegionState::Absent;
 }
 
 void DownloadDialog::refreshStatus()
@@ -379,12 +386,25 @@ QPair<int,int> DownloadDialog::refreshItem(QTreeWidgetItem *it)
     QString path = it->data(0, ROLE_PATH).toString();
     QString base = it->data(0, ROLE_NAME).toString();
 
-    if (it->childCount() == 0) {                  /* 叶子：直接判定 */
-        bool dl = regionDownloaded(path);
-        it->setText(0, QString::fromUtf8(i18n_tr(base.toUtf8().constData())) + (dl ? QString::fromUtf8(i18n_tr("  ✓已下载"))
-                                  : QString::fromUtf8(i18n_tr("  ·未下载"))));
-        it->setForeground(0, QBrush(dl ? QColor(0, 128, 0) : QColor(120, 120, 120)));
-        return qMakePair(1, dl ? 1 : 0);
+    if (it->childCount() == 0) {                  /* 叶子：三态判定 */
+        QString suffix; QColor col; bool ready = false;
+        switch (regionState(path)) {
+        case RegionState::Ready:                  /* 产物齐全，真能出图 */
+            suffix = QString::fromUtf8(i18n_tr("  ✓地图已就绪"));
+            col = QColor(0, 128, 0); ready = true;
+            break;
+        case RegionState::PbfOnly:                /* 只有原料，还没转换 */
+            suffix = QString::fromUtf8(i18n_tr("  ⤓源文件已下载·待转换"));
+            col = QColor(180, 120, 0);
+            break;
+        default:
+            suffix = QString::fromUtf8(i18n_tr("  ·未下载"));
+            col = QColor(120, 120, 120);
+            break;
+        }
+        it->setText(0, QString::fromUtf8(i18n_tr(base.toUtf8().constData())) + suffix);
+        it->setForeground(0, QBrush(col));
+        return qMakePair(1, ready ? 1 : 0);
     }
 
     int total = 0, d = 0;                          /* 枝：汇总子节点 */
@@ -471,6 +491,14 @@ bool DownloadDialog::isLeafDownloaded(const QString &leaf) const
     return !p.isEmpty() && regionDownloaded(p);
 }
 
+int DownloadDialog::leafStateForTest(const QString &leaf) const
+{
+    if (leaf.isEmpty()) return 0;
+    /* 直接按叶子名查盘（与树标注同一个 regionState），不走树——树里没有的
+     * 叶子也能测（比如临时构造的假 repo）。 */
+    return (int)regionState(leaf);
+}
+
 void DownloadDialog::onSelChanged()
 {
     QString p = currentPath();
@@ -482,9 +510,22 @@ void DownloadDialog::onSelChanged()
         return;
     }
     m_url->setText(currentUrl());
+    /* 三态提示（2026-11-16）：源 pbf 在 ≠ 地图可用——明确告诉用户还差哪一步。 */
+    QString tail;
+    switch (regionState(p)) {
+    case RegionState::Ready:
+        tail = QString::fromUtf8(i18n_tr("\n（本地地图已就绪；点「下载并转换」会先比对远端，有更新才重下）"));
+        break;
+    case RegionState::PbfOnly:
+        tail = QString::fromUtf8(i18n_tr("\n（本地已有源文件、尚未转换；点「下载并转换」将直接转换，无需重新下载）"));
+        break;
+    default:
+        break;
+    }
     m_info->setText(QString::fromUtf8(i18n_tr("将下载：%1\n保存到：%2/%3-latest.osm.pbf"
                     "\n（4 线程并行 + 断点续传：中断后自动重试；再次点击「下载并转换」从断点继续"
-                    "\n若本地已存在，会先比对远端；有更新则询问是否更新）")).arg(currentName()).arg(m_sources).arg(currentName()));
+                    "\n若本地已存在，会先比对远端；有更新则询问是否更新）")).arg(currentName()).arg(m_sources).arg(currentName())
+                    + tail);
     m_dl->setEnabled(true);
     m_copy->setEnabled(true);
 }
@@ -1072,8 +1113,8 @@ void DownloadDialog::clearPart()
 }
 
 /* 本地已有 pbf 时，先发 HEAD 比对远端新鲜度：
- *   - 比对失败（无网络/无法访问）→ 稳妥起见跳过下载；
- *   - 远端无更新 → 跳过下载；
+ *   - 比对失败（无网络/无法访问）→ 稳妥起见跳过下载，但产物没就绪就补转换；
+ *   - 远端无更新 → 跳过下载；产物没就绪同样补转换（2026-11-16 修）；
  *   - 远端有更新 → 弹窗询问用户是否更新。 */
 void DownloadDialog::onHeadFinished(QNetworkReply *r)
 {
@@ -1083,6 +1124,7 @@ void DownloadDialog::onHeadFinished(QNetworkReply *r)
     if (r->error() != QNetworkReply::NoError) {
         m_log->append(QString::fromUtf8(i18n_tr("无法比对远端（%1）。为稳妥起见保留本地文件，跳过下载。"
                         "如需强制刷新，请先删除本地文件后重试。")).arg(r->errorString()));
+        convertExistingIfNeeded();
         return;
     }
 
@@ -1102,6 +1144,7 @@ void DownloadDialog::onHeadFinished(QNetworkReply *r)
 
     if (!remoteNewer) {
         m_log->append(QString::fromUtf8(i18n_tr("远端无更新（本地已是最新），跳过下载。")));
+        convertExistingIfNeeded();
         return;
     }
 
@@ -1114,8 +1157,22 @@ void DownloadDialog::onHeadFinished(QNetworkReply *r)
         downloadNow();
     } else {
         m_log->append(QString::fromUtf8(i18n_tr("用户选择保留本地文件，跳过下载。")));
-        setBusy(false);
+        convertExistingIfNeeded();       /* 保留本地文件 ≠ 地图已就绪 */
     }
+}
+
+/* 本地已有 pbf、但不需要（或无法）重新下载时：产物没就绪就直接补一次转换。
+ * ★ 2026-11-16 修：这条路径原来只记一句"跳过"就返回——源 pbf 被当成"已就绪"，
+ *   用户点了「下载并转换」却既不下也不转，地图永远是空的。 */
+void DownloadDialog::convertExistingIfNeeded()
+{
+    if (regionState(m_dlName) == RegionState::Ready) {
+        m_log->append(QString::fromUtf8(i18n_tr("本地地图已就绪，无需重复转换。")));
+        setBusy(false);
+        return;
+    }
+    m_log->append(QString::fromUtf8(i18n_tr("本地有源文件但地图未就绪，直接进入转换…")));
+    startConvert();
 }
 
 /* 下载定稿后触发转换：sync_maps.sh 会扫整个 sources/ 把新 PBF 转成可加载的
@@ -1152,6 +1209,9 @@ static QString findBash()
 
 void DownloadDialog::startConvert()
 {
+    /* 转换期间禁掉「下载/复制」：sync_maps.sh 会扫整个 sources/，重复点出
+       两个进程会互相踩产物（2026-11-16：补转换路径接进来后更容易点到）。 */
+    setBusy(true);
     m_proc = new QProcess(this);
     connect(m_proc, &QProcess::readyReadStandardOutput, this, &DownloadDialog::onConvertOutput);
     /* stderr 也要接：sync_maps.sh 的失败原因（缺命令/缺工具）全走 stderr，
@@ -1183,9 +1243,10 @@ void DownloadDialog::onConvertOutput()
 
 void DownloadDialog::onConvertFinished(int code, QProcess::ExitStatus)
 {
+    setBusy(false);                      /* 转换结束：按钮恢复可用（成功/失败都恢复） */
     if (code == 0) {
         m_log->append(QString::fromUtf8(i18n_tr("转换完成 ✓ 地图已就绪。")));
-        refreshStatus();                 /* 刚下载的省翻成「✓已下载」 */
+        refreshStatus();                 /* 刚转换的省翻成「✓地图已就绪」 */
         if (m_onFinished) m_onFinished(m_dlName);
         // 生成等高线（如果用户勾选了）
         if (m_contourCb && m_contourCb->isChecked()) {
@@ -1352,7 +1413,7 @@ void DownloadDialog::runContoursGeneration()
 void DownloadDialog::retranslateUi()
 {
     setWindowTitle(trd("下载地图（全球可下载区域 · Geofabrik）"));
-    if (m_tree) m_tree->setHeaderLabel(trd("可下载区域（✓已下载 ·未下载）"));
+    if (m_tree) m_tree->setHeaderLabel(trd("可下载区域（✓已就绪 ⤓待转换 ·未下载）"));
     if (m_info) {
         QTreeWidgetItem *sel = m_tree ? m_tree->currentItem() : nullptr;
         if (sel && !sel->data(0, ROLE_PATH).toString().isEmpty())

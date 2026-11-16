@@ -74,7 +74,12 @@ shot() {                      # shot <名字> <省目录|graph> <lat> <lon> <zoo
     # #87：离屏判据从 map_shot 迁到 skedaddle --shot-offscreen（与 map_shot 同源、
     # 审计逐字节一致的单可信源）。--shot-offscreen 在 Qt 初始化前就走纯 C 离屏通道，
     # 不建窗口、不链 SDL、不依赖显示环境（QT_QPA_PLATFORM / SDL_VIDEODRIVER 都不用）。
+    # ★ --no-autobuild（2026-11-16）：渲染判据必须**只读**——被测进程一旦拥有
+    #   重建权力，产物缺失时会"先自愈再渲染"，假 OK 掩盖真丢数据；更糟的是
+    #   单省目录被清空时会触发图集根误判（见 autobuild.c looks_like_broken_prov_in_atlas），
+    #   把 sources/ 的 pbf 抽进省目录里污染图集（实测踩到）。
     run "$name" "ASSERT-OK" "$BUILD/skedaddle" --shot-offscreen --graph="$g" \
+        --no-autobuild \
         --lat="$la" --lon="$lo" --zoom="$z" --w=1280 --h=800 \
         --out="$SHOTS/$name.bmp"
 }
@@ -309,7 +314,9 @@ run skedaddle_alts_selftest "ALTS-OK" "$BUILD/skedaddle_alts_selftest"
 # 数据链路：beijing 图含 lanes.bin，mapset 能按 (省,边) 取出合法车道串。
 run skedaddle_lane_selftest "LANE-OK" "$BUILD/skedaddle_lane_selftest" --graph="$GRAPH/beijing"
 
-# ---- PBF 显示层后台异步解码（不阻塞主线程 + 进度回调 + 解码完成）----
+# ---- PBF 显示层后台异步解码（不阻塞主线程 + 进度回调 + 解码完成
+#      + 解码在途时离省不得谎报 loaded=0、解码结束后补卸
+#      + 退出时不得泄漏已解码的成功结果：pbfmap_live_bytes() 必须回基线）----
 run skedaddle_dmap_selftest "DMAP-OK" "$BUILD/skedaddle_dmap_selftest" "$GRAPH" "$ROOT/sources"
 
 # ---- 显示层分 tile（抽取期切好，运行时按需加载；覆盖性：整省要素无丢失）----
@@ -961,8 +968,12 @@ run graph_schema_dump    "期望 schema"               "$BUILD/skedaddle_graph_c
 # M2（NMBIN-OPTIMIZATION-PLAN-2026-11-12.md §2 O3/O4/O5）：块表 + 整包哈希 + 按块差分。
 #   ★ 全部走**合成夹具**，不依赖 8 省真实产物 / 新省 PBF / Android SDK（副机也能跑）。
 #   ★ 上方的 coverage_selftest 已被 M2 扩成三条负向：缺 disp.idx、缺块表、删块条目。
-#   ★ 负向注入改的是「被检查的数据」（块表条目 / 文件字节 / 清单哈希 / HTTP 块内容），
-#     不是把判据条件改成常量。java_gate.sh 一次编译运行，下面按标记逐条记账。
+#   ★ 负向注入改的是「被检查的数据」（块表条目 / 文件字节 / 清单哈希 / HTTP 块内容
+#     / HTTP 实发字节数），不是把判据条件改成常量。java_gate.sh 一次编译运行，
+#     下面按标记逐条记账。
+#   ★ 下载侧只比 sha256 是不够的（2026-11-16）：清单没哈希的老服务端路径下，
+#     截断包 `verified=false` 照样落盘 ⇒ 另立 SIZE-INJECT-CAUGHT，按清单 size /
+#     Content-Length 核对实收字节数（含 0 字节空包）。
 # ---------------------------------------------------------------------------
 run chunks_selftest      "CHUNKS-OK"                 python3 "$ROOT/scripts/gen_chunks.py" --self-test
 run chunks_negative      "CHUNKS-INJECT-CAUGHT"      python3 "$ROOT/scripts/gen_chunks.py" --inject=all
@@ -973,11 +984,16 @@ m2_java_rc=$?
 m2_bad=$(grep -cE "ASSERT-FAIL" "$m2_java_log")
 for spec in "java_compile:JAVA-COMPILE-OK" \
             "java_wire:ACTIVITY-WIRE-OK" \
+            "java_commit_path:COMMIT-PATH-OK" \
             "java_manifest:MANIFEST-OK" \
             "java_manifest_neg:MANIFEST-INJECT-CAUGHT" \
+            "java_size_neg:SIZE-INJECT-CAUGHT" \
             "java_delta:DELTA-OK" \
             "java_delta_zero:DELTA-ZERO-OK" \
             "java_delta_neg:DELTA-INJECT-CAUGHT" \
+            "java_commit_neg:COMMIT-INJECT-CAUGHT" \
+            "java_commit_atomic:COMMIT-ATOMIC-OK" \
+            "java_commit_recover:COMMIT-RECOVER-OK" \
             "java_m2_all:M2-JAVA-OK"; do
     m2_name=${spec%%:*}; m2_want=${spec#*:}
     if [ "$m2_java_rc" = 0 ] && [ "$m2_bad" = 0 ] && grep -q -- "$m2_want" "$m2_java_log"; then

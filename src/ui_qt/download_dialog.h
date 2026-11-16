@@ -47,9 +47,13 @@ public:
      * 真正要钉的是"选中的那一行就是期望的那个"。 */
     QString currentLeafForTest() const;
 
-    /* 自检用：按叶子名查该区域是否已下载。复用与树标注（✓/·）同源的
-     * regionDownloaded 判定，避免在测试里解析树控件文本。 */
+    /* 自检用：按叶子名查该区域是否已就绪（**产物**可用，不是"下过源文件"）。
+     * 复用与树标注同源的 regionDownloaded 判定，避免在测试里解析树控件文本。 */
     bool isLeafDownloaded(const QString &leaf) const;
+
+    /* 自检用：叶子三态 0=Absent / 1=PbfOnly / 2=Ready（与树标注同源）。
+     * 单列出来是为了能钉"源 pbf 存在 ≠ 地图已就绪"这条判据（2026-11-16）。 */
+    int leafStateForTest(const QString &leaf) const;
 
     /* 下载 + 转换都成功后回调；name 为省/地区名（不含扩展名），便于提示。
      * 用回调代替 Qt 信号槽：本项目 Qt 前端刻意不用 Q_OBJECT，免去 moc 步骤。 */
@@ -81,12 +85,29 @@ public:
     int    m_lastAriaPct = -1;           /* aria2 进度去抖（只刷变化的百分比） */
 
 private:
-    /* 判定某 geofabrik 路径（叶子）是否已下载：检查 products/graph/<名> 目录
-     * 或 sources/<名>-latest.osm.pbf 是否存在。枝（path 空）恒返回 false。 */
-    bool regionDownloaded(const QString &path) const;
-    /* 刷新整棵树的状态标注（已下载/未下载 + 枝节点子区域计数）。 */
+    /* 单省地图三态。判据是 **manifest.txt**：extractor 把全部文件落盘成功后
+     * 才写它，所以只有它才能证明"能出图"。
+     * ★ 2026-11-16 修：以前"products/graph/<名> 目录存在 **或** sources 里
+     *   有 <名>-latest.osm.pbf"就算已下载，于出现两种假"已就绪"：
+     *   ① 目录被清空/半途失败（没有 manifest）——树标 ✓、点下载报"已是最新"
+     *      直接跳过，用户永远得不到地图；
+     *   ② 只有源 pbf 没转换——那只是原料，UI 却报"地图已就绪"。
+     *   现在 pbf 只算 PbfOnly，UI 明示"待转换"，点「下载并转换」会直接补转换。 */
+    enum class RegionState { Absent, PbfOnly, Ready };
+
+    /* 判定某 geofabrik 路径（叶子）的三态。枝（path 空）恒返回 Absent。 */
+    RegionState regionState(const QString &path) const;
+    /* 兼容旧调用点：只有"产物就绪"才算已下载（pbf 存在不算）。 */
+    bool regionDownloaded(const QString &path) const
+    { return regionState(path) == RegionState::Ready; }
+
+    /* 本地已有 pbf 且无需（或无法）重新下载时：产物没就绪就直接补一次转换，
+     * 而不是记一句"跳过"然后什么都不做（2026-11-16）。 */
+    void convertExistingIfNeeded();
+
+    /* 刷新整棵树的状态标注（已就绪/待转换/未下载 + 枝节点子区域计数）。 */
     void refreshStatus();
-    /* 递归刷新单个节点；返回 (叶子总数, 已下载叶子数)，供父节点汇总。 */
+    /* 递归刷新单个节点；返回 (叶子总数, 已就绪叶子数)，供父节点汇总。 */
     QPair<int,int> refreshItem(QTreeWidgetItem *it);
 
     void onSelChanged();

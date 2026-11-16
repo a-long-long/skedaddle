@@ -361,26 +361,46 @@ void app_shutdown(App *a)
     }
     /* 后台线程可能还在跑（用户点了算路又直接 Esc）。Router 不是线程安全的，
        必须等它退出再销毁：nav_busy 由 nav_mu 保护，这里自旋等一下。
-       退出路径上最多等几秒，不当成错误。 */
+       退出路径上最多等 30 秒（跨省长途 5 秒级），不当成错误。 */
+    int nav_idle = 1;
     if (a->nav_mu) {
         sk_mutex_lock(a->nav_mu);
         a->nav_stop = 1;                 /* 排队的请求不再开工 */
         sk_mutex_unlock(a->nav_mu);
-        for (int i = 0; i < 3000; i++) { /* 最多等 30 秒：跨省长途 5 秒级 */
-            sk_mutex_lock(a->nav_mu);
-            int busy = a->nav_busy;
-            sk_mutex_unlock(a->nav_mu);
-            if (!busy) break;
-            sk_sleep_ms(10);
-        }
+        nav_idle = nav_wait_idle(a, 30000);
     }
-    if (a->nav_done) { route_result_set_free(&a->nav_done->alts); free(a->nav_done); a->nav_done = NULL; }
-    if (a->have_rr) route_result_free(&a->rr);
-    if (a->have_alts) route_result_set_free(&a->ralts);
-    maneuver_free(&a->man);
-    router_destroy(a->router);
-    if (a->nav_mu) { sk_mutex_destroy(a->nav_mu); a->nav_mu = NULL; }
-    mapset_free(&a->ms);
+    /* ★ 超时（2026-11-16）：worker 可能还卡在 A* 里读 router/ms，稍后还会回来
+       锁 nav_mu、读写 nav_done。退出路径不冒险释放这几块——故意漏给进程退出
+       回收（与 app_reload_maps 的超时策略一致：宁可漏，不可悬）。释放到悬空
+       对象的后果是退出时偶发崩溃/堆破坏，而"漏 30 秒内存"在进程退出时成本为零。
+       与算路线程无关的资源照常释放。 */
+    if (!nav_idle) {
+        fprintf(stderr, "退出: 后台算路 30 秒内未结束，跳过 Router/MapSet 释放"
+                        "（进程退出回收）\n");
+    } else {
+        /* nav_done 的释放进锁内：正常路径下 nav_busy==0 已 happens-before 保证
+           worker 退了，这里对齐 worker 的临界区形状（nav_worker 的收尾处），
+           避免以后改成裸读。 */
+        if (a->nav_mu) {
+            sk_mutex_lock(a->nav_mu);
+            if (a->nav_done) {
+                route_result_set_free(&a->nav_done->alts);
+                free(a->nav_done);
+                a->nav_done = NULL;
+            }
+            a->nav_done_flag = 0;
+            a->nav_pending = 0;
+            sk_mutex_unlock(a->nav_mu);
+            sk_mutex_destroy(a->nav_mu);
+            a->nav_mu = NULL;
+        }
+        if (a->have_rr) route_result_free(&a->rr);
+        if (a->have_alts) route_result_set_free(&a->ralts);
+        maneuver_free(&a->man);
+        router_destroy(a->router);
+        a->router = NULL;
+        mapset_free(&a->ms);
+    }
     dedup_free(&a->dd);
     label_cache_free(&a->places);
     search_close(a->sdb);
@@ -563,26 +583,55 @@ static void nav_drop_route(App *a)
     a->sim_paused = 0;
 }
 
-/* Router 惰性创建：状态表一上来就 30MB，只有真要算路才建。 */
-static int nav_ensure_router(App *a)
+/* Router 惰性创建 + 偏好下发。参数一律从 NavReq 快照取，**只允许在算路
+ * 执行体里调用**（worker，或已确认 worker 空闲的 UI 同步入口）。
+ * ★ 2026-11-16 修数据竞争：原来这两步在 nav_request（主线程）里做，
+ *   而 nav_request 在 nav_busy 时也会被调用（只置 pending 不排队等）——
+ *   于是 A* 正在读 r->opt.* 的 5 秒里，主线程把 profile/偏好改了：
+ *   权重中途换公式，同一单前后半程各按一套偏好算，路线自相矛盾。
+ *   现在写端只有 worker 一个（或"确认空闲后"的同步入口），不再有并发写。 */
+static int nav_router_configure(App *a, const NavReq *rq)
 {
     /* heur_w 留 0：让 router_create 按"有没有 lm.bin"兜底（见 route.h ROUTE_HEUR_W_LM）。
        写死 1.4 会把兜底顶掉，有表时反而更贪心、路线更差。 */
     if (!a->router) {
         RouteOpts opt = { .mode_time = 1, .bidir = 1,
-                          .pref_toll = a->pref_toll, .pref_ferry = a->pref_ferry,
-                          .pref_unpaved = a->pref_unpaved,
-                          .profile = a->route_profile };
+                          .pref_toll = rq->pref_toll, .pref_ferry = rq->pref_ferry,
+                          .pref_unpaved = rq->pref_unpaved,
+                          .profile = rq->profile };
         a->router = router_create(&a->ms, &opt);
         if (!a->router) {
             fprintf(stderr, "路由初始化失败\n");
             return -1;
         }
     } else {
-        /* 设置项在面板里改完不必重建 Router（状态表 30MB）：每次算路前
-           把三个偏好 + 出行方式同步过去即可。Qt 前端直接写 App 字段也走这条。 */
-        router_set_prefs(a->router, a->pref_toll, a->pref_ferry, a->pref_unpaved);
-        router_set_profile(a->router, a->route_profile);
+        /* 设置项改完不必重建 Router（状态表 30MB）：把三个偏好 + 出行方式
+           同步过去即可。 */
+        router_set_prefs(a->router, rq->pref_toll, rq->pref_ferry, rq->pref_unpaved);
+        router_set_profile(a->router, rq->profile);
+    }
+    return 0;
+}
+
+/* UI 线程上的**同步**算路入口专用（app_nav_plan_sync / app_gpx_snap）：
+ * 先等 worker 空闲再碰 Router，然后按 App 当前偏好配置。
+ * 这两个入口本来就会让 UI 停几秒（同步 A*），多等一个在飞的算路是正确性
+ * 成本——两个执行体同时跑 A* 会踩烂 Router 的状态表。 */
+static int nav_router_acquire_sync(App *a)
+{
+    if (a->nav_mu && !nav_wait_idle(a, 30000)) {
+        snprintf(a->nav_msg, sizeof(a->nav_msg), "后台仍在算路，稍后再试");
+        return -1;
+    }
+    NavReq rq;
+    memset(&rq, 0, sizeof(rq));
+    rq.pref_toll    = a->pref_toll;
+    rq.pref_ferry   = a->pref_ferry;
+    rq.pref_unpaved = a->pref_unpaved;
+    rq.profile      = a->route_profile;
+    if (nav_router_configure(a, &rq) != 0) {
+        snprintf(a->nav_msg, sizeof(a->nav_msg), "路由初始化失败");
+        return -1;
     }
     return 0;
 }
@@ -617,28 +666,27 @@ static void nav_worker(void *ud)
     App *a = (App *)ud;
 
     for (;;) {
-        NavPick pa, pb;
+        NavReq rq;
         sk_mutex_lock(a->nav_mu);
-        pa = a->req_a;
-        pb = a->req_b;
+        rq = a->req;            /* 整包拷贝快照：此后 UI 怎么改都与本单无关 */
         a->nav_pending = 0;
         sk_mutex_unlock(a->nav_mu);
 
         NavResult *res = calloc(1, sizeof(NavResult));
         if (!res) { fprintf(stderr, "导航: 内存不足\n"); break; }
 
-        if (!a->router) {
-            res->err = -3;
-        } else if (a->n_via > 0) {
+        if (nav_router_configure(a, &rq) != 0) {
+            res->err = -4;                /* Router 建不起来（图集空/内存不足） */
+        } else if (rq.n_via > 0) {
             /* 途经点模式：端点 = 起点 + 各途经点 + 终点。router_route_via 依次串联各段，
              * 返回一条完整路线（单方案）。装入 alts.rr[0]，其余方案标记不可用，
              * 这样上层（app_nav_poll）的"多方案容器"逻辑无需改动。 */
-            int m = a->n_via + 2;
+            int m = rq.n_via + 2;
             double *la = malloc((size_t)m * sizeof(double));
             double *lo = malloc((size_t)m * sizeof(double));
-            la[0] = pa.lat; lo[0] = pa.lon;
-            for (int i = 0; i < a->n_via; i++) { la[i + 1] = a->via[i].lat; lo[i + 1] = a->via[i].lon; }
-            la[m - 1] = pb.lat; lo[m - 1] = pb.lon;
+            la[0] = rq.a.lat; lo[0] = rq.a.lon;
+            for (int i = 0; i < rq.n_via; i++) { la[i + 1] = rq.via[i].lat; lo[i + 1] = rq.via[i].lon; }
+            la[m - 1] = rq.b.lat; lo[m - 1] = rq.b.lon;
             RNode f, t; double da = 0, db = 0;
             RouteResult vr; memset(&vr, 0, sizeof(vr));
             int rc = router_route_via(a->router, la, lo, m, &vr, &f, &t, &da, &db);
@@ -655,8 +703,9 @@ static void nav_worker(void *ud)
                 }
                 /* 各段里程细节由各腿 seg_m 累加可得，但合并后的整条路线已无法直接
                  * 映射到具体腿；面板只展示全程总里程（vr.total_m），故此处不填
-                 * via_seg_km 的逐段值（保持全 0，避免展示错误数字）。 */
-                memset(a->via_seg_km, 0, sizeof(a->via_seg_km));
+                 * via_seg_km 的逐段值（保持全 0，避免展示错误数字）。
+                 * ★ 填的是**结果包里那份**，主线程收割时再覆盖 App 的（2026-11-16：
+                 *   原来直接 memset App 字段，与 UI 读面板是竞态）。 */
                 res->a_snap_m = da; res->b_snap_m = db;
                 nav_snap_info(&a->ms, f, &res->a_lat, &res->a_lon, &res->a_prov);
                 nav_snap_info(&a->ms, t, &res->b_lat, &res->b_lon, &res->b_prov);
@@ -666,7 +715,7 @@ static void nav_worker(void *ud)
             double da = 0, db = 0;
             /* ★ 用 router_route_alts 一次算出多方案（最快/最短/避收费/避非铺装），
                端点先按"最快"找到一对连通的、四个方案复用这组端点，保证可比。 */
-            int rc = router_route_alts(a->router, pa.lat, pa.lon, pb.lat, pb.lon,
+            int rc = router_route_alts(a->router, rq.a.lat, rq.a.lon, rq.b.lat, rq.b.lon,
                                        &res->alts, &f, &t, &da, &db);
             res->err = nav_err_of(rc);
             if (rc != -1) {
@@ -690,14 +739,29 @@ static void nav_worker(void *ud)
 void nav_request(App *a)
 {
     if (!a->pick_a.have || !a->pick_b.have) return;
-    if (nav_ensure_router(a) != 0) {
-        snprintf(a->nav_msg, sizeof(a->nav_msg), "路由初始化失败");
-        return;
-    }
+
+    /* ① 在**主线程**拍快照：pick_a、via[]、n_via、pref_* 只有主线程写，这里是
+     *    唯一的读点，拷贝期间的"撕裂"只可能来自它自己（不可能重入）。
+     *    锁只用来交接这包快照，不覆盖后面 5 秒的算路。 */
+    NavReq rq;
+    memset(&rq, 0, sizeof(rq));
+    rq.a = a->pick_a;
+    rq.b = a->pick_b;
+    rq.n_via = a->n_via;
+    if (rq.n_via < 0) rq.n_via = 0;
+    if (rq.n_via > MAX_VIA) rq.n_via = MAX_VIA;
+    memcpy(rq.via, a->via, sizeof(rq.via));
+    rq.pref_toll    = a->pref_toll;
+    rq.pref_ferry   = a->pref_ferry;
+    rq.pref_unpaved = a->pref_unpaved;
+    rq.profile      = a->route_profile;
+
+    /* ② Router 的创建/偏好下发不在这里做（原来在这里，正是竞态源）：
+     *    nav_busy 时这次只置 pending，worker 跑完手头那单会回头读新快照并
+     *    自己配置 Router。 */
     int start = 0;
     sk_mutex_lock(a->nav_mu);
-    a->req_a = a->pick_a;
-    a->req_b = a->pick_b;
+    a->req = rq;
     if (a->nav_busy) a->nav_pending = 1;    /* 手头这单跑完再算新的 */
     else { a->nav_busy = 1; start = 1; }
     sk_mutex_unlock(a->nav_mu);
@@ -726,7 +790,7 @@ void app_nav_poll(App *a)
 
     int was_sim = a->sim_on;            /* 偏航重算后要接着模拟 */
 
-    if (res->err != -3) {
+    if (res->err != -3 && res->err != -4) {   /* 无路网 / 路由没建起来：没有吸附可回填 */
         a->pick_a.snapped = 1;
         a->pick_a.slat = res->a_lat;  a->pick_a.slon = res->a_lon;
         a->pick_a.snap_m = res->a_snap_m;
@@ -751,7 +815,9 @@ void app_nav_poll(App *a)
         a->rr = a->ralts.rr[0];
         memset(&a->ralts.rr[0], 0, sizeof(RouteResult));
         a->have_rr = 1;
-    a->mode = 1;                         /* 有了路线 ⇒ 导航模式（顶栏页签 + 导航 chrome 显示） */
+        a->mode = 1;                     /* 有了路线 ⇒ 导航模式（顶栏页签 + 导航 chrome 显示） */
+        /* 逐段里程由 worker 填在结果包里，这里搬到 App（主线程唯一的写点）。 */
+        memcpy(a->via_seg_km, res->via_seg_km, sizeof(a->via_seg_km));
         maneuver_build(&a->rr, &a->ms, &a->man);
         nav_announce_reset(a);
         a->nav_msg[0] = '\0';               /* 面板顶行回到"全程 X 约 Y 分钟" */
@@ -772,6 +838,7 @@ void app_nav_poll(App *a)
         route_result_set_free(&res->alts);
         const char *m = res->err == -1 ? "起终点之间不连通"
                       : res->err == -2 ? "搜索规模超限（路太远）"
+                      : res->err == -4 ? "路由初始化失败（图集为空或内存不足）"
                                        : "起终点附近没有可通行的路";
         snprintf(a->nav_msg, sizeof(a->nav_msg), "%s", m);
     }
@@ -1229,7 +1296,7 @@ void app_nav_sim_tick(App *a)
    与后台线程走同一套吸附 + 结算逻辑，只是不另起线程。 */
 int app_nav_plan_sync(App *a, double alat, double alon, double blat, double blon)
 {
-    if (nav_ensure_router(a) != 0) return -1;
+    if (nav_router_acquire_sync(a) != 0) return -1;
     RNode f, t;
     NavResult res;
     memset(&res, 0, sizeof(res));
@@ -1824,10 +1891,9 @@ int app_gpx_snap(App *a, int idx)
 {
     if (!a) return -1;
     if (idx < 0 || idx >= a->gpx.n_trk) return -1;
-    if (nav_ensure_router(a) != 0) {
-        snprintf(a->nav_msg, sizeof(a->nav_msg), "路由初始化失败");
-        return -1;
-    }
+    /* 轨迹贴合也是同步算路：与后台算路共用同一个 Router，必须先等它空闲
+       （两个 A* 同时跑会踩烂状态表）；acquire 内部已写好失败原因。 */
+    if (nav_router_acquire_sync(a) != 0) return -1;
     GpxTrack *tk = &a->gpx.trk[idx];
     if (tk->n < 2) {
         snprintf(a->nav_msg, sizeof(a->nav_msg), "轨迹点太少，无法贴合");

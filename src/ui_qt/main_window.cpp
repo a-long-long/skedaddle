@@ -492,8 +492,10 @@ void MainWindow::buildMenus()
     }
     /* 出行方式（2026-11-12）：驾车 / 骑行 / 步行。
      * ★ 用 QActionGroup 管互斥，不要 setChecked 手同步 —— 那会触发 toggled
-     *   递归（本项目踩过 SIGSEGV）。切换只改 App 字段 + 同步已建的 Router，
-     *   不重建 30MB 状态表；下一次算路由 nav_ensure_router 再兜底一次。 */
+     *   递归（本项目踩过 SIGSEGV）。
+     * ★ 2026-11-16：这里**只写 App 字段**，绝不 router_set_profile。Router 归
+     *   算路线程独占，主线程改 opt 会与在飞的 A* 抢同一块内存（权重中途换公式）。
+     *   新方式随 nav_request 的快照下发，worker 自己配置。 */
     {
         QMenu *mp = mset->addMenu(trc("出行方式"));
         QActionGroup *grp = new QActionGroup(this);
@@ -508,8 +510,7 @@ void MainWindow::buildMenus()
         }
         connect(grp, &QActionGroup::triggered, this, [this](QAction *act) {
             int v = app_route_profile_clamp(act->data().toInt());
-            m_a->route_profile = v;
-            router_set_profile(m_a->router, v);   /* router 可为 NULL，内部判空 */
+            m_a->route_profile = v;               /* Router 不在这里改：见上 */
             settings_set_int(m_a->cfg, "route_profile", v);
             app_persist_settings(m_a);
             m_a->need_redraw = 1;
