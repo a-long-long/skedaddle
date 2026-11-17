@@ -44,6 +44,8 @@ docs/shots/
 *.a
 *.so
 *.d
+# Python 字节码缓存（scripts/*.py 的门禁工具生成）
+__pycache__/
 # Android Studio / NDK 构建缓存（gradle 生成，含 CMakeCache/ninja 产物）
 android/.cxx/
 android/.gradle/
