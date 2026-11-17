@@ -74,7 +74,7 @@
   改完 `_parts/` 跑 `python3 scripts/regen_mini_chain.py` 重新生成，再用 `python3 scripts/check_mini_chain.py`
   验收累加不变量（含 `--self-test` 的 5 类负向对照）。该门禁与 `check_tutorial_tracks.py` 一样未接进 `regress.sh`。
 
-## 源码演进索引（2026-11-10 / 11-11 / 11-15）
+## 源码演进索引（2026-11-10 / 11-11 / 11-15 / 11-16 / 11-17）
 
 > 讲义主线定稿于 2026-11-07。以下两批提交给 `src/` 带来的新模块，按
 > 「功能 → 真实源码 → 相关课次」列出；这些课次正文仍以 11-07 基线讲原理，
@@ -102,3 +102,17 @@
   （`cost.c` / `window.c`）、`maxspeed` mph/knots 与省 slug（`road_tags.c` / `coverage.c`）、
   Android 清单 id 白名单与 APK sha256（`Manifests.java` / `UpdateChecker.java`）。
   C 教程落点：第 3、4、9、11、15、16 课；Rust 对照见 `tutorial/rust/README.md` §七。
+- **2026-11-16 显示层防漏批次**：PBF 解码产物字节账 `pbfmap_live_bytes()` 与
+  `dmap_worker` 让出 / `mapset_free` / `src_close` 三处"没人 free"出口、
+  `src_unload` 返回值契约与 `unload_pending` 推迟卸载、算路请求 `NavReq` 快照化
+  （`window.c` / `route.c`）、Android `AtomicCommit` 原子提交与实收字节数校验
+  （`Downloader.java`）、Qt 下载窗三态 `RegionState`。
+  落点：第 3 课（两条补记）、第 9 课（Router 独占补记）、第 11 课（判据 5/6）、
+  第 16 课 §3.11、第 17 课。
+- **2026-11-17 上机复审批次**：`pbfmap_decode_ex()` 协作式中止（每 blob 检查）与
+  `mapset_free()` 的 -1 契约（超时不释放）、`dmap_quit` 改 `volatile`、
+  `src_open_files` 防御分支改回 -1、`nav_worker` 途经点 malloc 判空（`window.c`）、
+  `QNetworkRequest::setTransferTimeout` 的 Qt 5.15 版本门（`applyTransferTimeout`）、
+  `ChunkUpdater.readAll` 流式读。
+  落点：第 3 课（补记 + §5–§9 回源重贴）、第 9 课（生命周期补记）、
+  第 16 课 §3.11、第 17 课。

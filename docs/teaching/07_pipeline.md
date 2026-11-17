@@ -17,8 +17,8 @@
 
 | 关键函数 / 结构体 | 文件:行号区间 | 职责 |
 |---|---|---|
-| `paint_frame` | `window.c:1380-1650` | 一帧的 9 步编排（底图→要素→标注→覆盖层→夜间→chrome） |
-| `app_render_to_buf` | `window.c:1652-1669` | 绑定像素缓冲后调 `paint_frame`，Qt 与离屏共用唯一入口 |
+| `paint_frame` | `window.c:1469-1739` | 一帧的 9 步编排（底图→要素→标注→覆盖层→夜间→chrome） |
+| `app_render_to_buf` | `window.c:1741-1758` | 绑定像素缓冲后调 `paint_frame`，Qt 与离屏共用唯一入口 |
 | `PaintStats` | `paint.h:57-73` | 分阶段计时/计数（含 `areas_dotted` 等确定性量） |
 | `paint_route` / `RSeg` | `navdraw.c:49-123` / `navdraw.c:15` | 路线折线：白描边 + 蓝芯/(已走灰) 两遍 |
 | `paint_nav_car` / `fill_triangle` | `navdraw.c:151-181` / `navdraw.c:127-149` | 车头三角箭头（蓝芯白边），按航向旋转 |
@@ -32,7 +32,7 @@
 
 ## 三、完整实现代码
 
-### 1. `paint_frame` 的 9 步流程（`window.c:1380-1650`）
+### 1. `paint_frame` 的 9 步流程（`window.c:1469-1739`）
 
 ```c
 static void paint_frame(Raster *rs, App *a, PaintStats *st)
@@ -308,7 +308,7 @@ static void paint_frame(Raster *rs, App *a, PaintStats *st)
 }
 ```
 
-### 2. `app_render_to_buf` —— 唯一共享渲染入口（`window.c:1652-1669`）
+### 2. `app_render_to_buf` —— 唯一共享渲染入口（`window.c:1741-1758`）
 
 ```c
 int app_render_to_buf(App *a, void *px, int w, int h, size_t stride,

@@ -40,5 +40,12 @@ gcc -std=c11 -O2 -o tut main.c && ./tut
 - 对 Rust 读者：这类问题是 C 的“所有权没有类型表达”；Rust 里对应的做法是让搜索持有
   `Arc<MapSet>` 或用生命周期把 `Router<'a>` 钉在 `MapSet` 上，重载时类型系统会逼你先处理借用。
 
+**生产补记（2026-11-17）**：`mapset_free()` 本身也有生命周期坑——释放时后台解码
+线程可能还在读 `srcs[].nodes`。现在解码带协作式中止钩子（每个 blob 检查退出
+标志，毫秒级就停），`mapset_free()` 返回 `int`：超时没等到线程停就**什么都不
+释放**并返回 -1（宁可漏，不可悬），调用方保留旧图集稍后重试。Rust 对照：共享
+`Arc<MapSet>` 后想拿 `&mut` 释放就得 `try_unwrap` 等引用退场，等价于"等到
+`dmap_stopped` 才释放"。
+
 **练习**：把 `w` 在 1.0~2.0 之间多取几个值，画出"展开数 vs w"的曲线；再思考：如果 `Router` 改成
 `Router<'a> { ms: &'a MapSet }`，`app_reload_maps()` 的签名需要怎样改？

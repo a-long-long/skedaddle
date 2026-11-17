@@ -1261,4 +1261,11 @@ CLI 端到端：`--datum=xa80 --datum-grid=demo.txt`（北 +100 / 东 +200）⇒
 - `scripts/java_gate.sh`：**13 标记全绿**（`M2-JAVA-OK`）。
 - `skedaddle_disp_runtime_selftest`：`DISP-RUNTIME-OK`；
   `skedaddle_disp_tile_selftest`：`DISP-TILE-OK`（面 199709 / 线 104696 无丢失）。
-- 全量 `scripts/regress.sh`：后台复跑中（路线类用例耗时长），结果记工作日志。
+- 全量 `scripts/regress.sh`：**135 通过 / 0 失败**。
+- 讲义同步（2026-11-17）：第 3 课 §5–§9 六个逐字块回源重贴 + 泄漏/UAF 补记；
+  第 7 课 `paint_frame`/`app_render_to_buf` 两块回源重贴（含 11-16 批次遗留的
+  67 行漂移）；第 9 课 / `tutorial/09_routing` 补 `mapset_free` -1 契约补记；
+  第 16 课 §3.11 补 Qt<5.15 超时版本门；第 17 课补 `readAll` 流式读与锚点平移；
+  `index.md` 演进索引补 11-16/11-17 两条。`regen_tutorial_blocks.py` 修掉
+  `Path.read_text(newline=)` 的 Python <3.13 TypeError（本机门禁此前直接崩）。
+  `check_teaching_sync.py` / `regen --check` / `check_tutorial_tracks.py` 全绿。

@@ -21,7 +21,7 @@
 
 **自描述头**（`binfmt.h:18-81`）：`NMBIN_MAGIC = "NAVMBIN\x01"`、`NMBIN_VERSION = 3u`（注意：旧文档曾误写成 `\x2`/4u，以源码为准）。`NMBinHeader`（128 字节）与 `NMBinField`（24 字节）完整定义见第三节。
 
-**图集句柄**（`mapset.h:22-104`）：`MapSrc` 含 `nodes/edges/restrictions/lines/areas/polyrefs/tiles/edgelist/lanes/contours` 各一份 `NMBinFile`，及 `bbox[4]`、`dup_of`、`NamePool np`、`SkMutex *dmap_mtx / job_prov / job_done`（后台解码线程字段）等，完整定义见第三节。注意：`lines/areas/polyrefs` 为旧版"整省三件套"的缓冲，自 2026-11-03 起构建不再产出、也不再从此 nmbin 打开（整省 nmbin 读取路径已彻底断根，products 可整体重建）；该字段现由 disp tile 拼接或 PBF 解码的手 malloc 缓冲填充，运行时显示改由 disp tile 拼接（`mapset.c` 的 tile 加载路径）。新数据目录里整省三件套文件不存在。
+**图集句柄**（`mapset.h:22-116`）：`MapSrc` 含 `nodes/edges/restrictions/lines/areas/polyrefs/tiles/edgelist/lanes/contours` 各一份 `NMBinFile`，及 `bbox[4]`、`dup_of`、`NamePool np`、`SkMutex *dmap_mtx / job_prov / job_done`（后台解码线程字段）等，完整定义见第三节。注意：`lines/areas/polyrefs` 为旧版"整省三件套"的缓冲，自 2026-11-03 起构建不再产出、也不再从此 nmbin 打开（整省 nmbin 读取路径已彻底断根，products 可整体重建）；该字段现由 disp tile 拼接或 PBF 解码的手 malloc 缓冲填充，运行时显示改由 disp tile 拼接（`mapset.c` 的 tile 加载路径）。新数据目录里整省三件套文件不存在。
 
 ## 三、完整实现代码
 
@@ -453,7 +453,7 @@ void name_pool_close(NamePool *np)
 }
 ```
 
-### 5. `MapSrc` 全字段与 `MapSet`（`mapset.h:22-104`）
+### 5. `MapSrc` 全字段与 `MapSet`（`mapset.h:22-116`）
 
 ```c
 typedef struct {
@@ -464,17 +464,21 @@ typedef struct {
     int       has_restr;
     NMBinFile lines, areas, polyrefs;   /* 显示层三要素缓冲：disp tile 拼接或 PBF
                                          * 解码的手 malloc 缓冲（mapped=0），
-                                         * 不再从整省 nmbin 打开；整省三件套
-                                         * 的 nmbin 读取路径已断根 */
-    int       has_features;             /* 三者齐备才为 1 */
-    /* ---- 等高线（SRTM 生成，可选）---- */
+                                         * 不再从整省 nmbin 打开 */
+    int       has_features;             /* 显示层已就绪（disp tile 拼接或 PBF
+                                         * 解码完毕）才为 1 */
+    /* ---- 等高线（SRTM 生成，可选）----
+     * 三件套与 lines/areas 平级：contours.bin（记录，类 lines）+ contour_polyrefs.bin
+     * （u32 顶点下标序列）+ contour_pts.bin（独立顶点池 lat/lon e7）。
+     * 不进 OSM 导入管线，由 skedaddle_gen_contours 直接产出；与 disp tile 无关（整省一份）。 */
     NMBinFile contours, contour_polyrefs, contour_pts;
     int       has_contours;             /* 三者齐备才为 1 */
     int32_t  *contour_bbox;            /* 等高线缓存（paint_contours 懒填，nc*4 个 i32） */
-    /* ★ 显示层的"来源"：0 = 从 nmbin 打开（默认）；1 = 从 PBF 运行时解码。 */
+    /* ★ 显示层的"来源"：0 = 从 disp tile 拼接（默认）；1 = 从 PBF 运行时解码。
+     * 两种模式下 lines/areas/polyrefs 的内容**逐字节相同**（8 省实测），
+     * 所以渲染端不区分，只看 has_features。整省三件套的 nmbin 读取已断根。 */
     int       dmap_from_pbf;
-    int       pbf_display_mode;  /* 1 = 本省走 PBF 显示层（不打开 nmbin 的
-                                   * lines/areas/polyrefs） */
+    int       pbf_display_mode;  /* 1 = 本省走 PBF 显示层（默认走 disp tile 拼接） */
     PbfMap    dmap;                     /* 从 PBF 解码出的显示层（内存缓冲） */
     uint64_t  dmap_used;                /* LRU 时间戳（越大越新） */
     int       dmap_inflight;  /* 后台解码进行中：src_unload 不得卸 nodes 映射 */
@@ -487,20 +491,30 @@ typedef struct {
     int       dmap_progress;  /* 0..100，后台解码实时进度（dmap_inflight/排队期间有效） */
     NMBinFile tiles, edgelist;          /* 空间索引（可选） */
     int       has_tiles;
-    int       loaded;       /* 本省份 mmap 是否已打开；mapset_set_view 按需置 1 / 清 0。 */
+    int       loaded;       /* 本省份 mmap 是否已打开；mapset_set_view 按需置 1 / 清 0。
+                             * 卸载只关文件、保留 name/dir/bbox/dup_of，省份下标恒定 */
     int       dup_of;       /* >=0：本省数据被 srcs[dup_of] 完全包含（同一份
                              * OSM 数据被多边形裁切时的常见结果，实测
                              * 北京/天津 ⊂ 河北 100%）。路由缝合时跳过本省的
-                             * 副本——留着只会让每个路口被展开两次。 */
-    int32_t   bbox[4];      /* e7: lat0 lon0 lat1 lon1，来自 manifest； */
+                             * 副本——留着只会让每个路口被展开两次。
+                             * 渲染不受影响（那边有按 OSM id 的去重）。 */
+    int32_t   bbox[4];      /* e7: lat0 lon0 lat1 lon1，来自 manifest；
+                             * 旧目录没有 manifest 时置为全域（不做裁剪） */
     NamePool  np;           /* 该省的路名池（names.bin） */
     NMBinFile lanes;        /* 每条边的车道转向串 id（lanes.bin，可选） */
     NamePool  lnp;          /* 车道转向串池（lane_names.bin，可选） */
     int       has_lanes;    /* lanes.bin + lane_names.bin 齐备 */
     int32_t  *area_bbox;    /* 面缓存（paint_areas 懒填，na*4 个 i32） */
-    int32_t  *line_bbox;    /* 线缓存（paint_lines 懒填，nl*4 个 i32）。 */
+    int32_t  *line_bbox;    /* 线缓存（paint_lines 懒填，nl*4 个 i32）。
+                             * 线要素没有 tile 索引，缺了它每帧要白投影 10 万条线
+                             * 的全部顶点——实测占 z14 一帧的 75%。 */
 
-    /* ---- 显示层分 tile（运行时按需加载，只 mmap 视口内 tile）---- */
+    /* ---- 显示层分 tile（运行时按需加载，只 mmap 视口内 tile）----
+     * has_disp_tiles：本省有 disp.idx（抽取期已切好）。有则**不走**整省
+     * nmbin 解码（该读取路径已断根）/pbf 解码，改为按视口把相交 tile
+     * 拼接进 areas/lines/polyrefs。
+     * 拼接缓冲 dareas/dlines/dpoly 是手 malloc 的（NMBinFile.mapped=0，
+     * nmbin_close 只置空不释放），卸载时由 src_unload/close 负责 free。 */
     int       has_disp_tiles;
     int64_t   disp_tile_e7, disp_lat0, disp_lon0;  /* 网格参数（e7） */
     int       disp_ncols, disp_nrows;
@@ -513,7 +527,9 @@ typedef struct {
     MapSrc *srcs;
     int     n, cap;
     int32_t bbox[4];       /* 全体省份的并集（e7） */
-    /* ---- PBF 显示层按需解码 + LRU ---- */
+    /* ---- PBF 显示层按需解码 + LRU ----
+     * pbf_dir：各省原始 PBF 所在目录（形如 sources/，内含 <省名>.osm.pbf）。
+     * 为空则禁用 PBF 模式（显示层改由 disp tile 拼接提供）。 */
     char    pbf_dir[4096];
     int     dmap_lru_cap;  /* 同时驻留几个省的解码结果（默认 3） */
     uint64_t dmap_clock;   /* LRU 时钟（单调递增） */
@@ -522,9 +538,11 @@ typedef struct {
      * src_unload 被推迟的那次卸载（2026-11-16）。0 表示还没设过视口。 */
     int32_t view_last[4];
 
-    /* ---- 后台解码线程（避免同步解码阻塞渲染 0.6~4.4s）---- */
+    /* ---- 后台解码线程（避免同步解码阻塞渲染 0.6~4.4s）----
+     * 单一 worker 串行解码；主线程每帧 publish 已完成的结果、并 dispatch 新任务。
+     * 所有字段都受 dmap_mtx 保护（job_prov / job_done / job_*）。 */
     SkMutex  *dmap_mtx;         /* 保护下面的任务槽；NULL 则退回同步解码 */
-    int       dmap_quit;        /* 置 1 让 worker 退出 */
+    volatile int dmap_quit;     /* 置 1 让 worker 退出；解码钩子跨线程无锁读 */
     int       dmap_stopped;     /* worker 已退出（free 时等待） */
     int       dmap_worker_started;
     int       job_prov;         /* 正在解码的省下标；-1 = 空闲 */
@@ -535,21 +553,26 @@ typedef struct {
 } MapSet;
 ```
 
-### 6. `src_open_files`：加载即校验（`mapset.c:318-456`）
+### 6. `src_open_files`：加载即校验（`mapset.c:323-463`）
 
 ```c
 static int src_open_files(MapSrc *s)
 {
     /* ★ 在途解码 ⇒ worker 正在读 s->nodes：绝不能在这里换映射，也不能拆 pin。
        正常路径走不到这（loaded=1 时调用方不会重开），这是防"绕过 loaded 直调"。
-       真重开时 dmap_inflight 本来就是 0，所以这里不再无条件清零它——旧代码的
-       `dmap_inflight = 0` 会悄悄拆掉 src_unload 依赖的 pin（2026-11-16）。 */
-    if (s->dmap_inflight) return 0;
+       返回 -1（失败）而不是 0：返回 0 会让调用方把 loaded 置 1，可文件其实
+       一个都没开——那才是更深的谎报。返回 -1 则调用方保持 loaded=0，下帧重试，
+       状态永远与真实一致（2026-11-17）。真重开时 dmap_inflight 本来就是 0，
+       所以这里不再无条件清零它——旧代码的 `dmap_inflight = 0` 会悄悄拆掉
+       src_unload 依赖的 pin（2026-11-16）。 */
+    if (s->dmap_inflight) return -1;
     s->dmap_failed    = 0;   /* 重载 = 重新尝试解码（清掉失败标记） */
     s->unload_pending = 0;
     char p[4096];
     char err[256];
 
+    /* 必需文件：nodes/edges。加载即校验版本与自洽性——这是此前一直欠着的
+     * 加载端防线：此前 app_init 只看 magic，格式升级或半截文件会静默画错图。 */
     snprintf(p, sizeof(p), "%s/nodes.bin", s->dir);
     if (nmbin_open(p, &s->nodes) != 0) {
         fprintf(stderr, "图集: %s 打不开 %s，跳过\n", s->name, p);
@@ -580,56 +603,63 @@ static int src_open_files(MapSrc *s)
     }
 
     /* 显示要素来源（has_features 的填充）：
-       ★ PBF 模式：不从 nmbin 打开任何整省文件，等解码后再置 1。
-       ★ 有 disp.idx 的省：不从 nmbin 打开整省三件套，等 set_view 按视口
-         拼接 tile 后再置 1。
-       ★ 整省三件套（areas/lines/polyrefs.bin）自 2026-11-03 起不再生成，
-         也不再从此处 nmbin 打开——其整省 nmbin 读取路径已彻底断根。
-         既无 disp.idx 又非 pbf 模式的省属历史/异常产物，无显示要素。 */
+     * ★ PBF 模式（--pbf-display）：不从 nmbin 打开任何整省文件，
+     *   改由 mapset_ensure_display 从 PBF 运行时解码后再置 has_features。
+     * ★ 有显示层分 tile（disp.idx）的省：不从 nmbin 打开整省三件套，
+     *   改为 mapset_set_view 按视口只加载相交 tile 并拼接（见 src_load_disp_tiles）。
+     * ★ 整省三件套（lines/areas/polyrefs.bin）自 2026-11-03 起**不再生成**，
+     *   也不再从此处 nmbin 打开——其整省 nmbin 读取路径已彻底断根
+     *   （products 可整体重建，无需为历史/异常产物保留该分支）。
+     *   既无 disp.idx 又非 pbf 模式的省属历史/异常产物，无显示要素。 */
     if (s->pbf_display_mode) {
         s->has_features = 0;      /* 等解码后再置 1 */
     } else if (disp_open(s) == 0) {
         s->has_features = 0;      /* 等 set_view 按视口加载 tile 后再置 1 */
     } else {
         /* 无 disp.idx、非 pbf 模式：该省没有任何显示要素（整省三件套已断根，
-           不能从这里兜底）。属历史/异常产物，提示重建，但不致命。 */
+         * 不能从这里兜底）。属历史/异常产物，提示重建，但不致命。 */
         s->has_features = 0;
         fprintf(stderr, "图集: %s 无 disp.idx 且非 pbf 模式，无显示要素（需重建该省）\n", s->name);
     }
 
-    /* 等高线（SRTM 生成）可选：三件套齐备才算有。 */
+    /* 等高线（SRTM 生成）可选：三件套齐备才算有。与 features 平级，不依赖 disp tile。
+       命名按区域：<name>_contours.bin 等；回退无前缀 contours.bin（旧/测试产物）。
+       任一结构损坏（open/check 失败）都按"无等高线"降级，绝不拿坏数据渲染。 */
     s->has_contours = 1;
     char pc[4096], pp[4096], pt[4096];
     snprintf(pc, sizeof(pc), "%s/%s_contours.bin",        s->dir, s->name);
     snprintf(pp, sizeof(pp), "%s/%s_contour_polyrefs.bin", s->dir, s->name);
     snprintf(pt, sizeof(pt), "%s/%s_contour_pts.bin",      s->dir, s->name);
-    if (nmbin_open(pc, &s->contours) != 0) {
+    if (open_checked(pc, &s->contours, err, sizeof(err)) != 0) {
         snprintf(pc, sizeof(pc), "%s/contours.bin", s->dir);
-        if (nmbin_open(pc, &s->contours) != 0) s->has_contours = 0;
+        if (open_checked(pc, &s->contours, err, sizeof(err)) != 0) s->has_contours = 0;
     }
-    if (s->has_contours) {
-        if (nmbin_open(pp, &s->contour_polyrefs) != 0) {
-            snprintf(pp, sizeof(pp), "%s/contour_polyrefs.bin", s->dir);
-            if (nmbin_open(pp, &s->contour_polyrefs) != 0) s->has_contours = 0;
-        }
+    if (s->has_contours && open_checked(pp, &s->contour_polyrefs, err, sizeof(err)) != 0) {
+        snprintf(pp, sizeof(pp), "%s/contour_polyrefs.bin", s->dir);
+        if (open_checked(pp, &s->contour_polyrefs, err, sizeof(err)) != 0) s->has_contours = 0;
     }
-    if (s->has_contours) {
-        if (nmbin_open(pt, &s->contour_pts) != 0) {
-            snprintf(pt, sizeof(pt), "%s/contour_pts.bin", s->dir);
-            if (nmbin_open(pt, &s->contour_pts) != 0) s->has_contours = 0;
-        }
+    if (s->has_contours && open_checked(pt, &s->contour_pts, err, sizeof(err)) != 0) {
+        snprintf(pt, sizeof(pt), "%s/contour_pts.bin", s->dir);
+        if (open_checked(pt, &s->contour_pts, err, sizeof(err)) != 0) s->has_contours = 0;
     }
     if (s->has_contours)
         fprintf(stderr, "图集: %s 有等高线（%llu 条）\n", s->name,
                 (unsigned long long)s->contours.hdr.rec_count);
 
-    /* 空间索引可选：两者齐备才算有 */
+    /* 空间索引可选：两者齐备才算有；任一结构损坏按"无索引"降级
+     * （退化到全量扫描路径，画面照旧、只是慢），不再静默用坏索引。 */
     s->has_tiles = 1;
     snprintf(p, sizeof(p), "%s/tiles.bin", s->dir);
-    if (nmbin_open(p, &s->tiles) != 0) s->has_tiles = 0;
+    if (open_checked(p, &s->tiles, err, sizeof(err)) != 0) {
+        s->has_tiles = 0;
+    } else if (!tiles_index_ok(&s->tiles)) {
+        fprintf(stderr, "图集: %s tiles.bin 网格非法，按无索引处理\n", s->name);
+        nmbin_close(&s->tiles);
+        s->has_tiles = 0;
+    }
     if (s->has_tiles) {
         snprintf(p, sizeof(p), "%s/edgelist.bin", s->dir);
-        if (nmbin_open(p, &s->edgelist) != 0) s->has_tiles = 0;
+        if (open_checked(p, &s->edgelist, err, sizeof(err)) != 0) s->has_tiles = 0;
     }
 
     /* 路名池可选 */
@@ -655,12 +685,11 @@ static int src_open_files(MapSrc *s)
     return 0;
 
 fail:
+    /* nmbin_close / name_pool_close 对全零结构都是安全空操作，
+       逐个 close 一遍即可，不用记录哪些开过 */
     nmbin_close(&s->nodes);
     nmbin_close(&s->edges);
     nmbin_close(&s->restrictions);
-    nmbin_close(&s->lines);
-    nmbin_close(&s->areas);
-    nmbin_close(&s->polyrefs);
     nmbin_close(&s->tiles);
     nmbin_close(&s->edgelist);
     name_pool_close(&s->np);
@@ -670,7 +699,7 @@ fail:
 }
 ```
 
-### 7. `mapset_load` 全量（`mapset.c:727-800`）
+### 7. `mapset_load` 全量（`mapset.c:735-808`）
 
 ```c
 int mapset_load(MapSet *ms, const char *graph_dir)
@@ -749,7 +778,7 @@ int mapset_load(MapSet *ms, const char *graph_dir)
 }
 ```
 
-### 8. `mapset_set_view` 全量（含 LRU 淘汰，`mapset.c:821-902`）
+### 8. `mapset_set_view` 全量（含 LRU 淘汰，`mapset.c:829-910`）
 
 ```c
 void mapset_set_view(MapSet *ms, const int32_t vb[4])
@@ -779,7 +808,13 @@ void mapset_set_view(MapSet *ms, const int32_t vb[4])
              *   mapset_publish_display 在解码结束时结算。 */
             if (src_unload(s)) s->loaded = 0;
         }
-        /* PBF 显示层：视口进省 ⇒ 后台线程异步解码（见 dmap_worker）。 */
+        /* PBF 显示层：视口进省 ⇒ 后台线程异步解码（见 dmap_worker）。
+         * 不再在主线程同步解码（旧逻辑会阻塞渲染 0.6~4.4s）。解码完成前
+         * 该省 has_features=0，渲染自然跳过（空白），就绪后下一帧经 publish
+         * 挂上、立即显示——也就是"渐进式加载"，零卡顿。
+         * ★ pbf_display_mode=1 的省走这条（含原本有 disp tile 的省——PBF
+         * 显示层启用时一律由 PBF 提供显示层，不走下方 tile 同步加载；
+         * 见 823 处对 !pbf_display_mode 的互斥条件）。 */
         if (ov && ms->pbf_dir[0] && s->pbf_display_mode) {
             if (!s->dmap_from_pbf) {
                 mapset_dispatch_display(ms, i);   /* 无任务在途才派发，异步 */
@@ -789,8 +824,14 @@ void mapset_set_view(MapSet *ms, const int32_t vb[4])
         }
 
         /* 显示层分 tile：视口进省 ⇒ 按视口只加载相交 tile 并拼接进
-         * areas/lines/polyrefs（同步、仅 mmap 视口内少量 tile，轻量不卡）。 */
-        if (ov && s->has_disp_tiles) {
+         * areas/lines/polyrefs（同步、仅 mmap 视口内少量 tile，轻量不卡）。
+         * 不进省（!ov）已由 src_unload 释放拼接缓冲。失败不致命：
+         * 该省 has_features=0，本帧自然不画显示层。
+         * ★ 互斥：pbf_display_mode=1（PBF 显示层启用）时不走 tile——否则同一省
+         * 既异步解码 PBF 又同步加载 tile，双路写 s->areas/lines/has_features 会
+         * 赛跑（实测 dmap_selftest 偶发 FAIL）。--pbf-display 语义即"用 PBF 不用
+         * 预建显示层"，故 tile 路径在此被抑制。 */
+        if (ov && s->has_disp_tiles && !s->pbf_display_mode) {
             src_load_disp_tiles(s, eb);
         }
     }
@@ -824,11 +865,12 @@ void mapset_set_view(MapSet *ms, const int32_t vb[4])
 }
 ```
 
-`bbox_overlap`（`mapset.c:811-814`，四角交集判定）与 `src_unload`（`mapset.c:479-532`，关文件/释放缓存但保留身份）为 `set_view` 的支撑函数，完整代码（`src/map/mapset.c:479-532` 与 `src/map/mapset.c:811-814`）如下：
+`bbox_overlap`（`mapset.c:819-822`，四角交集判定）与 `src_unload`（`mapset.c:487-540`，关文件/释放缓存但保留身份）为 `set_view` 的支撑函数，完整代码（`src/map/mapset.c:487-540` 与 `src/map/mapset.c:819-822`）如下：
 
 ```c
 /* src_unload：关文件/释放缓存但保留身份 */
-/* 与 src_close（整体释放，mapset_free 用）不同，这里省份槽位继续存在，
+/* 卸载：关文件 + 释放缓存，但保留身份（name/dir/bbox/dup_of/loaded）。
+ * 与 src_close（整体释放，mapset_free 用）不同，这里省份槽位继续存在，
  * 只是文件不再 mmap——下次 set_view 命中视口时 src_open_files 重新打开。
  *
  * 返回 1 = 真的卸了；0 = **推迟**（后台解码正在读 nodes，不能 unmap）。
@@ -859,11 +901,6 @@ static int src_unload(MapSrc *s)
     /* ★ 显示层分 tile 的拼接缓冲也是手 malloc（mapped=0），nmbin_close 不会释放，
      * 这里先回收；普通省 has_disp_tiles=0，src_free_disp 是空操作。 */
     src_free_disp(s);
-    if (s->has_features) {
-        nmbin_close(&s->lines);
-        nmbin_close(&s->areas);
-        nmbin_close(&s->polyrefs);
-    }
     if (s->has_contours) {
         nmbin_close(&s->contours);
         nmbin_close(&s->contour_polyrefs);
@@ -936,7 +973,7 @@ static int bbox_overlap(const int32_t a[4], const int32_t b[4])
 | `mapset_set_view` | **只按返回值改 `loaded`**；`ov` 回来时清 `unload_pending`；已推迟的不重复调 |
 | `mapset_publish_display` | 解码结束（pin 解除）后，若 `unload_pending` 且视口已不在省内 ⇒ 补卸 |
 | `MapSet.view_last[4]` | 记住展开视口，publish 判断"还在不在视口"；由 `set_view` 每帧写入 |
-| `src_open_files` | 在途时直接返回 0（**不动 pin、不重开**），真重开时才清 `dmap_failed` |
+| `src_open_files` | 在途时直接返回 -1（**不动 pin、不重开**；2026-11-17：返回 0 会谎报 loaded，改回 -1 让调用方下帧重试），真重开时才清 `dmap_failed` |
 
 **判据（`dmap_selftest` 判据 5，会失败）**：解码在途时把视口挪到空海域，断言
 `loaded == 1` 且 `nodes.data != NULL`；等解码结束后再断言 `loaded == 0` 且
@@ -991,7 +1028,63 @@ DMAP-FAIL
 **增量**（`after == base`）而不是绝对值，否则任何"还没 free 的合法在途缓冲"都
 会误判。
 
-### 9. `dup_of` 检测：`detect_duplicates`（`mapset.c:642-720`）
+**补记：`mapset_free` 的等待 < 解码耗时 ⇒ 泄漏 + UAF（2026-11-17 修）**
+
+
+
+上一条补记修好了"结果没人 free"，但没修"释放时 worker 还没停"。`mapset_free` 置
+
+`dmap_quit` 后只等 10s，超时**照样**销毁锁、`src_close` 全省、`memset(ms)`——而
+
+aarch64 实机 hebei（117 MB pbf）解码 >10s：`memset` 还把 `dmap_quit` 清回 0，worker
+
+永远看不到退出标志，解完后把结果写进已释放的 `ms->job_result`（实测 **+49.2 MB**
+
+泄漏），期间 `dmap_progress_cb` 去锁已销毁的互斥量。修法是**协作式中止**，把"等
+
+整段解码跑完"压缩成"等当前 blob 收尾"：
+
+
+
+- `pbfmap.h`/`pbfmap.c` 新增 `PbfMapAbort` 钩子与 `pbfmap_decode_ex()`（旧
+
+  `pbfmap_decode` 变包装）：主扫描循环**每个 blob 前**、lines/areas 组装循环里检查
+
+  `abort_fn()`，中止时内部清干净局部缓冲返回 -1（blob 约百 KB，粒度毫秒级）。
+
+- `dmap_worker` 传 `dmap_abort_check`（读 `volatile ms->dmap_quit`）；`dmap_quit`
+
+  因此改为 `volatile`（钩子在 worker 线程无锁读）。
+
+- `mapset_free` 改返回 `int`：等到 `dmap_stopped` 才释放；万一超时**什么都不释放**
+
+  并返回 -1（宁可漏，不可悬）——调用方按契约处理：`app_reload_maps` 保留旧图集可
+
+  重试、`app_shutdown` 跳过释放（进程退出回收）、`dmap_selftest` 收尾重试直至停。
+
+
+
+顺带把 `src_open_files` 的"解码在途"防御分支由 `return 0` 改回 `return -1`：返回 0
+
+会让调用方置 `loaded=1` 而文件其实一个都没开——那才是更深的谎报；返回 -1 保持
+
+`loaded=0` 下帧重试，状态永远与真实一致。
+
+
+
+**判据（`dmap_selftest` 判据 6）**：修复前本机实测
+
+`ASSERT-FAIL  解码途中退出（dmap_worker 让出）：退出后多出 49.2 MB 解码缓冲没释放`；
+
+修复后 `本例占 18.9 MB → 退出后 0.0 MB`，`DMAP-OK`。
+
+
+
+本节 §5–§9 六个逐字块已按 2026-11-17 源码回源重贴（含 `dmap_quit` 加 `volatile`、
+
+`src_open_files` 返回 -1 两处内容性变化；其余仅行号平移）。
+
+### 9. `dup_of` 检测：`detect_duplicates`（`mapset.c:648-728`）
 
 ```c
 #define DUP_SAMPLE 1000
@@ -1015,7 +1108,10 @@ static void detect_duplicates(MapSet *ms)
                 a->bbox[2] > b->bbox[2] || a->bbox[3] > b->bbox[3])
                 continue;                       /* bbox 不包含 */
 
-            /* ★ 采样必须从 edgelist 取，不能从 nodes 取 */
+            /* ★ 采样必须从 edgelist 取，不能从 nodes 取：瓦片索引里登记的
+               是每条边的 from 节点，只作为 to 出现的节点（单行道终点等）
+               根本不在索引里，拿它们采样会把命中率拉到 60% 上下，误判为
+               "不包含"。路由真正关心的是有出边的路口，正好是 edgelist。 */
             uint64_t nea = a->edgelist.hdr.rec_count;
             if (nea == 0) continue;
             uint64_t stride = nea / DUP_SAMPLE;
@@ -1042,6 +1138,35 @@ static void detect_duplicates(MapSet *ms)
             }
         }
     }
+}
+
+static int mapset_add(MapSet *ms, const char *dir, const char *name)
+{
+    if (ms->n == ms->cap) {
+        int ncap = ms->cap ? ms->cap * 2 : 8;
+        MapSrc *ns = realloc(ms->srcs, (size_t)ncap * sizeof(MapSrc));
+        if (!ns) return -1;
+        ms->srcs = ns;
+        ms->cap = ncap;
+    }
+    MapSrc *s = &ms->srcs[ms->n];
+    if (src_open(s, dir, name) != 0) return -1;
+    s->loaded = 1;
+
+    if (ms->n == 0) {
+        memcpy(ms->bbox, s->bbox, sizeof(ms->bbox));
+    } else {
+        if (s->bbox[0] < ms->bbox[0]) ms->bbox[0] = s->bbox[0];
+        if (s->bbox[1] < ms->bbox[1]) ms->bbox[1] = s->bbox[1];
+        if (s->bbox[2] > ms->bbox[2]) ms->bbox[2] = s->bbox[2];
+        if (s->bbox[3] > ms->bbox[3]) ms->bbox[3] = s->bbox[3];
+    }
+    ms->n++;
+    printf("图集: + %-12s 节点 %-10llu 边 %-10llu\n",
+           s->name,
+           (unsigned long long)s->nodes.hdr.rec_count,
+           (unsigned long long)s->edges.hdr.rec_count);
+    return 0;
 }
 ```
 

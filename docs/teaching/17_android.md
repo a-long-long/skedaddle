@@ -36,7 +36,7 @@
 | `java/.../Prefs.java` | `SharedPreferences` 配置中枢：服务器地址 / 自动更新开关 / 每日检查时间戳 / 三个显示开关统一存取 | `Prefs.java:13-75`（键名 16-21） |
 | `java/.../Downloader.java` | HTTP 下载（M2 起带整包 sha256 校验，2026-11-16 再加实收字节数校验）+ zip 解包（地图包与 APK 共用） | `Downloader.java:22,36,45,62,149` |
 | `java/.../Manifests.java` | 解析省图 / App 清单（M2 起含 `sha256`、`chunksUrl`、`chunks.json`） | `Manifests.java:21,24,45,89,126` |
-| `java/.../ChunkDelta.java` + `ChunkUpdater.java` | 4 KiB 块差分：plan / HTTP Range / 按偏移重组 / 整包哈希提交 | `ChunkDelta.java:25,91,107,164`；`ChunkUpdater.java:27,51` |
+| `java/.../ChunkDelta.java` + `ChunkUpdater.java` | 4 KiB 块差分：plan / HTTP Range / 按偏移重组 / 整包哈希提交 | `ChunkDelta.java:25,91,107,164`；`ChunkUpdater.java:28,52` |
 | `java/.../AtomicCommit.java` | 落盘提交的唯一入口：`rename(2)` 原子替换 + 先 fsync 数据、后 fsync 目录 | `AtomicCommit.java:46,55` |
 | `java/.../DownloadActivity.java` | 地图增量更新：`.skversion` 比对、哈希校验、差分优先回落整包、本地 zip 安装 | `DownloadActivity.java:42,49,181,197,299` |
 | `scripts/gen_chunks.py` + `scripts/java_gate.sh` | 块表生成/离线校验 + 主机 Java 编译与夹具门禁 | 见 `docs/android.md` §11.1.1–11.1.2 |
@@ -243,6 +243,7 @@ if (!tmp.renameTo(dest))             throw new IOException("rename failed: " + d
 | `ChunkDelta.apply` / `verifyAndCommit` | 尾部两步合并成一次 `AtomicCommit.commit` |
 | `ChunkUpdater.update` | 数据文件逐个原子替换，**块表最后**提交（它一更新就等于宣称数据都是新版了） |
 | `ChunkUpdater.cleanStaleTemps` | 进来先清上次被杀留下的 `.new` / `.new.part` / `chunks.json.new`（从不被接管，白占几百 MB） |
+| `ChunkUpdater.readAll`（2026-11-17） | 读清单改**流式**：不再 `new byte[(int) f.length()]`——清单异常放大（>2GB int 截断）或读期间被并发改短时不 OOM、不越界，最多浪费一个 16 KiB 缓冲 |
 
 两个容易漏的细节：**先 fsync 再 rename**（rename 只改目录项，数据还在页缓存里，
 掉电可能得到"新文件名 + 空内容"，长度/哈希对不上但文件"装好了"），以及

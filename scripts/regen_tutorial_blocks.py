@@ -63,7 +63,10 @@ METHOD = re.compile(
 
 
 def read(p):
-    return p.read_text(encoding="utf-8", newline="")
+    # Path.read_text(newline=) 是 Python 3.13 才有的参数：老解释器上整个门禁直接
+    # TypeError 崩掉（2026-11-17 本机复现）。改用 open(newline='')，语义一致。
+    with open(p, "r", encoding="utf-8", newline="") as f:
+        return f.read()
 
 
 def lines(p):

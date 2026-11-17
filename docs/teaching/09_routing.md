@@ -1578,3 +1578,24 @@ void maneuver_text(const Maneuver *m, char *buf, size_t n)
 
 **验收口径**：`app_reload_maps()` 后 `router==NULL`，随后重新创建 Router 仍 `ROUTE-OK`；
 算路中把视口移出省，省保持 loaded，算路结束后才卸载。
+
+**2026-11-17 补：`mapset_free()` 的返回契约与显示层协作式中止**
+
+上面"最后 `mapset_free()`"那句隐含一个假设：释放时后台解码能在等待上限内停下。
+aarch64 实机 hebei（117 MB pbf）解码 >10s，旧的"等满 10s 照样 free"就是对
+worker 正在读的数据做 UAF（机理与判据详见第 3 课 2026-11-17 补记）。现在的契约：
+
+1. **协作式中止**：`pbfmap_decode_ex()` 带 `PbfMapAbort` 钩子（主扫描循环每个
+   blob 前检查），`mapset_free` 置 `dmap_quit` 后解码毫秒级就停，等待上限只是兜底。
+2. **`mapset_free()` 返回 `int`**：0 = 已释放并清零；-1 = 超时**什么都没释放**，
+   旧图集原样保留（worker 还在读，强行 free 是 UAF）。调用方：
+   `app_reload_maps()` 收到 -1 直接返回"稍后重试"（Router 已销毁无害，下次算路
+   懒重建）；`app_shutdown()` 收到 -1 跳过释放（进程退出回收）；
+   `dmap_selftest` 收尾重试直至停。
+3. **`nav_worker` 途经点分支补 `la/lo` malloc 判空**（失败同 `err=-4` 口径）——
+   与同函数里 `NavResult` 的 calloc 判空对齐。
+
+**Rust 对照**：Rust 里"worker 还在读时释放"由借用检查直接拦下——
+`MapSet` 若被解码线程共享（`Arc`），`mapset_free` 想拿 `&mut` 就得先 `try_unwrap`
+等所有引用退场，等价于这里的"等到 `dmap_stopped` 才释放"；拿不到就只能选择
+不释放（对应 -1 路径）。见 `tutorial/rust/README.md` §七。
