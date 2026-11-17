@@ -329,7 +329,20 @@ int app_reload_maps(App *a)
     }
 
     /* 3) 释放旧图集，清零后重新加载。 */
-    mapset_free(&a->ms);
+    /* ★ mapset_free 返回 -1 = 显示层解码 worker 未在等待上限内停下（协作式
+     *   中止下正常毫秒级，这里基本走不到）：它**什么都没释放**，旧图集/旧
+     *   状态原样保留，可稍后重试——不能继续 memset+reload，那会把还在被
+     *   worker 读的指针清掉。Router 已在上面销毁：无害，下次算路会懒重建。 */
+    if (mapset_free(&a->ms) != 0) {
+        if (nav_stopped) {
+            sk_mutex_lock(a->nav_mu);
+            a->nav_stop = 0;
+            sk_mutex_unlock(a->nav_mu);
+        }
+        fprintf(stderr,
+                "图集重载: 显示层解码未及时结束，保留旧图集，稍后重试\n");
+        return -1;
+    }
     memset(&a->ms, 0, sizeof(a->ms));
     if (mapset_load_repair(&a->ms, a->graph_dir, &a->ab, NULL) != 0) {
         /* 失败：ms 已是空壳，调用方应退出或重建，别拿去渲染 */
@@ -399,7 +412,11 @@ void app_shutdown(App *a)
         maneuver_free(&a->man);
         router_destroy(a->router);
         a->router = NULL;
-        mapset_free(&a->ms);
+        /* 返回 -1 = 解码 worker 未停（协作式中止下正常毫秒级）：跳过释放，
+         * 策略与上面 nav 超时一致——宁可漏，不可悬（进程退出回收）。 */
+        if (mapset_free(&a->ms) != 0)
+            fprintf(stderr, "退出: 显示层解码线程未及时停下，跳过图集释放"
+                            "（进程退出回收）\n");
     }
     dedup_free(&a->dd);
     label_cache_free(&a->places);
@@ -684,31 +701,36 @@ static void nav_worker(void *ud)
             int m = rq.n_via + 2;
             double *la = malloc((size_t)m * sizeof(double));
             double *lo = malloc((size_t)m * sizeof(double));
-            la[0] = rq.a.lat; lo[0] = rq.a.lon;
-            for (int i = 0; i < rq.n_via; i++) { la[i + 1] = rq.via[i].lat; lo[i + 1] = rq.via[i].lon; }
-            la[m - 1] = rq.b.lat; lo[m - 1] = rq.b.lon;
-            RNode f, t; double da = 0, db = 0;
-            RouteResult vr; memset(&vr, 0, sizeof(vr));
-            int rc = router_route_via(a->router, la, lo, m, &vr, &f, &t, &da, &db);
-            free(la); free(lo);
-            res->err = nav_err_of(rc);
-            if (rc == 0) {
-                res->alts.n = ROUTE_ALT_K;
-                res->alts.err[0] = 0;
-                res->alts.rr[0] = vr;                 /* 指针整体搬家，源清零避免双重释放 */
-                memset(&vr, 0, sizeof(vr));
-                for (int k = 1; k < ROUTE_ALT_K; k++) {
-                    res->alts.err[k] = -2;            /* 途经点模式暂只给单方案 */
-                    memset(&res->alts.rr[k], 0, sizeof(RouteResult));
+            if (!la || !lo) {               /* 判空口径与 res 的 calloc 一致（2026-11-17）*/
+                free(la); free(lo);
+                res->err = -4;              /* 内存不足：与 Router 建不起来同码 */
+            } else {
+                la[0] = rq.a.lat; lo[0] = rq.a.lon;
+                for (int i = 0; i < rq.n_via; i++) { la[i + 1] = rq.via[i].lat; lo[i + 1] = rq.via[i].lon; }
+                la[m - 1] = rq.b.lat; lo[m - 1] = rq.b.lon;
+                RNode f, t; double da = 0, db = 0;
+                RouteResult vr; memset(&vr, 0, sizeof(vr));
+                int rc = router_route_via(a->router, la, lo, m, &vr, &f, &t, &da, &db);
+                free(la); free(lo);
+                res->err = nav_err_of(rc);
+                if (rc == 0) {
+                    res->alts.n = ROUTE_ALT_K;
+                    res->alts.err[0] = 0;
+                    res->alts.rr[0] = vr;                 /* 指针整体搬家，源清零避免双重释放 */
+                    memset(&vr, 0, sizeof(vr));
+                    for (int k = 1; k < ROUTE_ALT_K; k++) {
+                        res->alts.err[k] = -2;            /* 途经点模式暂只给单方案 */
+                        memset(&res->alts.rr[k], 0, sizeof(RouteResult));
+                    }
+                    /* 各段里程细节由各腿 seg_m 累加可得，但合并后的整条路线已无法直接
+                     * 映射到具体腿；面板只展示全程总里程（vr.total_m），故此处不填
+                     * via_seg_km 的逐段值（保持全 0，避免展示错误数字）。
+                     * ★ 填的是**结果包里那份**，主线程收割时再覆盖 App 的（2026-11-16：
+                     *   原来直接 memset App 字段，与 UI 读面板是竞态）。 */
+                    res->a_snap_m = da; res->b_snap_m = db;
+                    nav_snap_info(&a->ms, f, &res->a_lat, &res->a_lon, &res->a_prov);
+                    nav_snap_info(&a->ms, t, &res->b_lat, &res->b_lon, &res->b_prov);
                 }
-                /* 各段里程细节由各腿 seg_m 累加可得，但合并后的整条路线已无法直接
-                 * 映射到具体腿；面板只展示全程总里程（vr.total_m），故此处不填
-                 * via_seg_km 的逐段值（保持全 0，避免展示错误数字）。
-                 * ★ 填的是**结果包里那份**，主线程收割时再覆盖 App 的（2026-11-16：
-                 *   原来直接 memset App 字段，与 UI 读面板是竞态）。 */
-                res->a_snap_m = da; res->b_snap_m = db;
-                nav_snap_info(&a->ms, f, &res->a_lat, &res->a_lon, &res->a_prov);
-                nav_snap_info(&a->ms, t, &res->b_lat, &res->b_lon, &res->b_prov);
             }
         } else {
             RNode f, t;

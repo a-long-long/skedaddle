@@ -39,6 +39,13 @@ typedef struct {
  * cb 在**解码线程**里调用，调用方负责线程安全（这里只回调，不碰锁）。 */
 typedef void (*PbfMapProgress)(void *ud, double frac);
 
+/* 协作式中止钩子（2026-11-17）：在解码主循环**每个 blob 前**调用，
+ * 返回非 0 = 请求中止。中止后 pbfmap_decode_ex 内部清干净局部缓冲并返回 -1，
+ * out 保持全零（未接管任何缓冲）⇒ 调用方不需要额外善后。
+ * 用于 mapset_free 等"必须尽快停手"的场合：否则释放方只能干等整段解码
+ * （大省 >10s），超时强行 free 就是对 worker 正在读的数据做 UAF。 */
+typedef int (*PbfMapAbort)(void *ud);
+
 /* 从 pbf_path 解码一省的显示层到 out。
  *
  * nodes_index 必须是该省 nmbin 的 nodes.bin（提供 osm_id → 内部下标的
@@ -50,6 +57,11 @@ typedef void (*PbfMapProgress)(void *ud, double frac);
  * pbfmap_free 释放可能已分配的缓冲）。 */
 int  pbfmap_decode(const char *pbf_path, const NMBinFile *nodes_index,
                     PbfMap *out, PbfMapProgress cb, void *ud);
+
+/* 同上 + 可选中止钩子（abort_fn/abort_ud 可传 NULL = 不支持中止）。 */
+int  pbfmap_decode_ex(const char *pbf_path, const NMBinFile *nodes_index,
+                       PbfMap *out, PbfMapProgress cb, void *ud,
+                       PbfMapAbort abort_fn, void *abort_ud);
 
 /* 释放 out 持有的内存缓冲（可重复调用）。 */
 void pbfmap_free(PbfMap *m);

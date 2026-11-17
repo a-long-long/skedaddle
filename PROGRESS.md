@@ -1208,3 +1208,57 @@ CLI 端到端：`--datum=xa80 --datum-grid=demo.txt`（北 +100 / 东 +200）⇒
 - `UpdateChecker` 的 APK 下载没有清单 `size`（`AppUpdate` 无该字段），只有
   `Content-Length` 一道兜底。
 - `DownloadActivity` 的 `.skversion` 仍是普通覆写（截断只会读成「未知」，不破坏数据）。
+
+---
+
+## 十七、2026-11-17 上机复审：修复 16 章遗留的 P0/P1（协作式中止 / Qt5 兼容）
+
+> 对 `05bdd83` + `968861c` 做全量上机复审，抓到 2 个「作者的机器没暴露」的问题，
+> 连带补 2 处防御与 1 处 Android 小加固。判据 6 在本机（aarch64、hebei 117 MB pbf）
+> 实测 `DMAP-FAIL`，修复后 `DMAP-OK`。
+
+### 17.1 P0：`mapset_free` 的 10 秒等待 < 大省解码耗时 ⇒ 泄漏 + UAF
+
+- **根因**：16.2 修好了「结果没人 free」，但没修「释放时 worker 还没停」。
+  `mapset_free` 置 `dmap_quit` 后只等 `2000×5ms = 10s`，超时**照样**销毁锁、
+  `src_close` 全省、`memset(ms)`——而本机 hebei（117 MB pbf）解码 >10s。
+  `memset` 还把 `dmap_quit` 清回 0，worker 永远看不到退出标志：解码完成后把
+  结果写进已释放的 `ms->job_result`（实测 **+49.2 MB** 泄漏），期间
+  `dmap_progress_cb` 去锁已销毁的互斥量、worker 读已 munmap 的 `s->nodes` —— 真 UAF，
+  没崩纯属调度运气。`dmap_selftest` 判据 6（解码途中退出）当场抓到。
+- **修复**：`pbfmap` 增加协作式中止钩子 `PbfMapAbort`（`pbfmap_decode_ex`，
+  旧 `pbfmap_decode` 变包装）：主扫描循环**每个 blob 前**检查（粒度 = 毫秒级），
+  lines/areas 组装循环同样检查；worker 传 `dmap_abort_check`（读
+  `volatile ms->dmap_quit`）。`mapset_free` 等到 worker 停才释放；万一超时
+  **什么都不释放**并返回 -1（宁可漏，不可悬），调用方按契约处理：
+  `app_reload_maps` 保留旧图集可重试、`app_shutdown` 跳过释放（进程退出回收）、
+  `dmap_selftest` 收尾重试直至停。
+- **判据**：修复前 `ASSERT-FAIL 解码途中退出（dmap_worker 让出）：退出后多出
+  49.2 MB` → `DMAP-FAIL`；修复后 `本例占 18.9 MB → 退出后 0.0 MB`，`DMAP-OK`。
+
+### 17.2 P1：`QNetworkRequest::setTransferTimeout` 让 Qt < 5.15 编译失败
+
+- **根因**：该 API 是 Qt 5.15 才加入的；本机 Qt5-dev（5.12 系）三处调用全报
+  `has no member named 'setTransferTimeout'`，直接违反 CMakeLists「同一份源码
+  兼容 Qt5/Qt6」的承诺（作者的 Qt6 机器上不可见）。
+- **修复**：收进 `applyTransferTimeout()` 辅助函数，`QT_VERSION >= 5.15` 才下发
+  per-request 超时，老 Qt 退回旧行为（无传输级超时）。
+- **验收**：全量 `cmake --build` 零错误零警告（此前 Qt 目标编不过）。
+
+### 17.3 附带加固
+
+- `nav_worker` 途经点分支 `la`/`lo` malloc 判空（失败置 `err=-4`，与 Router
+  建不起来同码）——同函数内 `res` 的 calloc 早有判空，口径补齐。
+- `src_open_files` 的「解码在途」防御分支由 `return 0`（伪成功，会让调用方
+  置 loaded=1 但文件没开）改为 `return -1`（保持 loaded=0，下帧重试）。
+- `ChunkUpdater.readAll` 改流式读，去掉 `new byte[(int) f.length()]` 的 int
+  截断与预分配隐患。
+
+### 17.4 验收（本机实跑）
+
+- `cmake --build build -j4`：零错误零警告（修复前 Qt 目标编不过）。
+- `skedaddle_dmap_selftest`：**DMAP-OK**（修复前判据 6 `ASSERT-FAIL +49.2 MB`）。
+- `scripts/java_gate.sh`：**13 标记全绿**（`M2-JAVA-OK`）。
+- `skedaddle_disp_runtime_selftest`：`DISP-RUNTIME-OK`；
+  `skedaddle_disp_tile_selftest`：`DISP-TILE-OK`（面 199709 / 线 104696 无丢失）。
+- 全量 `scripts/regress.sh`：后台复跑中（路线类用例耗时长），结果记工作日志。

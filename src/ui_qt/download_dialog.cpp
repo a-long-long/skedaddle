@@ -43,6 +43,18 @@ static const int      SK_DL_MAX_RETRY  = 3;
 static const int      SK_DL_META_MS    = 3000;
 static const int      SK_DL_TIMEOUT_MS = 30000;   /* 30s 无传输活动 = 断线 */
 
+/* per-request 传输超时是 Qt 5.15 才加入的 API（QNetworkRequest::setTransferTimeout）。
+ * 本项目承诺同一份源码兼容 Qt5/Qt6，老 Qt（如 5.12）上没有这条：退回旧行为
+ * （无传输级超时，请求挂起靠用户取消），绝不能让整个前端编译失败。 */
+static void applyTransferTimeout(QNetworkRequest &req)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+    req.setTransferTimeout(SK_DL_TIMEOUT_MS);
+#else
+    (void)req;
+#endif
+}
+
 /* .part / .part.meta 的路径约定：一切续传状态都挂在目标文件名上。
  * .part 保存已传字节，.meta 保存段布局（JSON，原子写）。 */
 static QString partPathOf(const QString &target) { return target + QStringLiteral(".part"); }
@@ -557,7 +569,7 @@ void DownloadDialog::startDownload()
         setBusy(true);
         logLine(trd("本地已存在 %1。正在比对远端是否有更新…").arg(m_target));
         QNetworkRequest req(m_dlUrl);
-        req.setTransferTimeout(SK_DL_TIMEOUT_MS);
+        applyTransferTimeout(req);
         QNetworkReply *r = m_nam->head(req);
         connect(r, &QNetworkReply::finished, this, [this, r]() { onHeadFinished(r); });
         return;
@@ -738,7 +750,7 @@ void DownloadDialog::headForDownload()
 {
     setBusy(true);
     QNetworkRequest req(m_dlUrl);
-    req.setTransferTimeout(SK_DL_TIMEOUT_MS);
+    applyTransferTimeout(req);
     QNetworkReply *r = m_nam->head(req);
     connect(r, &QNetworkReply::finished, this, [this, r]() { onHeadForDl(r); });
 }
@@ -865,8 +877,10 @@ void DownloadDialog::startSegs(const QVector<Seg> &segs, qint64 total,
         Seg &s = m_segs[i];
         QNetworkRequest req(m_dlUrl);
         /* 30s 无传输活动即报错 → seg 失败 → 自动续传重试。没有这条，
-         * 直连超时的挂起请求永远不返回错误，重试机制就永远不会触发。 */
-        req.setTransferTimeout(SK_DL_TIMEOUT_MS);
+         * 直连超时的挂起请求永远不返回错误，重试机制就永远不会触发。
+         * （Qt < 5.15 没有 per-request 超时：applyTransferTimeout 内部
+         *   按版本退回旧行为。） */
+        applyTransferTimeout(req);
         if (s.end >= 0 || resume) {
             const qint64 from = s.start + s.got;
             req.setRawHeader("Range",

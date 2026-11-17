@@ -297,9 +297,12 @@ int main(int argc, char **argv)
      *   还在 pbfmap_decode 里，若直接 return，栈帧销毁后它回调
      *   dmap_progress_cb(ud=&ms) 就会去锁已释放的 dmap_mtx ⇒ 退出期 SIGSEGV。
      *   实测：日志里 DMAP-OK 齐全、进程 rc=139（一度被误当成"通过"，因为判据
-     *   只 grep 了标记行）。mapset_free 会置 dmap_quit 并等 worker 停下。 */
+     *   只 grep 了标记行）。mapset_free 会置 dmap_quit 并等 worker 停下——
+     *   解码带协作式中止钩子后毫秒级就停；返回 -1（理论走不到）就再等再试，
+     *   绝不带着仍在跑的 worker 返回。 */
     fflush(stdout);
-    mapset_free(&ms);
+    while (mapset_free(&ms) != 0)
+        sk_sleep_ms(50);
 
     return bad ? 1 : 0;
 }

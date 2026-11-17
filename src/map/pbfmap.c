@@ -164,6 +164,13 @@ typedef struct {
 int pbfmap_decode(const char *pbf_path, const NMBinFile *nodes_index,
                   PbfMap *out, PbfMapProgress cb, void *ud)
 {
+    return pbfmap_decode_ex(pbf_path, nodes_index, out, cb, ud, NULL, NULL);
+}
+
+int pbfmap_decode_ex(const char *pbf_path, const NMBinFile *nodes_index,
+                     PbfMap *out, PbfMapProgress cb, void *ud,
+                     PbfMapAbort abort_fn, void *abort_ud)
+{
     if (!out || !pbf_path || !nodes_index) return -1;
     memset(out, 0, sizeof(*out));
 
@@ -209,6 +216,9 @@ int pbfmap_decode(const char *pbf_path, const NMBinFile *nodes_index,
     if (cb) cb(ud, 0.0);   /* 起始：UI 立刻进入"解码中 0%" */
 
     while ((rc = pbf_stream_next(s, &type, &buf, &len)) == PBF_OK) {
+        /* 协作式中止：每个 blob 检查一次（blob 约百 KB，粒度 = 毫秒级）。
+         * 走 failed 路径，局部缓冲统一在下面回收，out 未被接管。 */
+        if (abort_fn && abort_fn(abort_ud)) { failed = 1; break; }
         /* 进度：已读字节 / 文件总长（主解码阶段约占 0~0.92；后续 polyrefs
          * 映射 + 记录组装占 0.92~1.0）。后台线程据此回报实时百分比。 */
         if (cb) {
@@ -359,6 +369,7 @@ int pbfmap_decode(const char *pbf_path, const NMBinFile *nodes_index,
     {
         Buf lb; memset(&lb, 0, sizeof(lb)); lb.esz = SK_LINE_BYTES;
         for (size_t i = 0; i < nlines; i++) {
+            if (abort_fn && abort_fn(abort_ud)) { rc_ret = -1; break; }
             if (lr[i].ref_cnt == 0) continue;
             uint8_t rec[SK_LINE_BYTES];
             memset(rec, 0, sizeof(rec));
@@ -388,6 +399,7 @@ int pbfmap_decode(const char *pbf_path, const NMBinFile *nodes_index,
     {
         Buf ab; memset(&ab, 0, sizeof(ab)); ab.esz = SK_AREA_BYTES;
         for (size_t i = 0; i < nareas; i++) {
+            if (abort_fn && abort_fn(abort_ud)) { rc_ret = -1; break; }
             if (ar[i].ref_cnt == 0) continue;
             uint8_t rec[SK_AREA_BYTES];
             memset(rec, 0, sizeof(rec));

@@ -105,7 +105,7 @@ typedef struct {
      * 单一 worker 串行解码；主线程每帧 publish 已完成的结果、并 dispatch 新任务。
      * 所有字段都受 dmap_mtx 保护（job_prov / job_done / job_*）。 */
     SkMutex  *dmap_mtx;         /* 保护下面的任务槽；NULL 则退回同步解码 */
-    int       dmap_quit;        /* 置 1 让 worker 退出 */
+    volatile int dmap_quit;     /* 置 1 让 worker 退出；解码钩子跨线程无锁读 */
     int       dmap_stopped;     /* worker 已退出（free 时等待） */
     int       dmap_worker_started;
     int       job_prov;         /* 正在解码的省下标；-1 = 空闲 */
@@ -119,7 +119,12 @@ typedef struct {
  * （扫描所有含 manifest.txt 的子目录，跳过 *.tmp.* 与隐藏目录）。
  * 返回 0 = 至少加载了一个省；-1 = 一个都没有。 */
 int  mapset_load(MapSet *ms, const char *graph_dir);
-void mapset_free(MapSet *ms);
+/* 释放图集。返回 0 = 已全部释放并清零；-1 = 后台解码未能在等待上限内停下，
+ * 此时**什么都没释放、结构体保持原样**（worker 还在读 srcs/nodes，
+ * 强行 free 是 UAF），调用方应稍后重试或干脆放弃（进程退出路径）。
+ * 2026-11-17 起：worker 解码带协作式中止钩子，正常几百 ms 内就停；
+ * 本函数不再出现"等满 10 秒照样 free"的悬垂路径。 */
+int  mapset_free(MapSet *ms);
 
 /* 视口驱动的按需加载：只保留与 vb（e7 的 [lat0,lon0,lat1,lon1]）相交（含边距）的
  * 省份打开，其余卸载。省份下标恒定（槽位 = 省 id），迭代函数跳过 !loaded，因此

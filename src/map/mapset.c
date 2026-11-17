@@ -324,9 +324,12 @@ static int src_open_files(MapSrc *s)
 {
     /* ★ 在途解码 ⇒ worker 正在读 s->nodes：绝不能在这里换映射，也不能拆 pin。
        正常路径走不到这（loaded=1 时调用方不会重开），这是防"绕过 loaded 直调"。
-       真重开时 dmap_inflight 本来就是 0，所以这里不再无条件清零它——旧代码的
-       `dmap_inflight = 0` 会悄悄拆掉 src_unload 依赖的 pin（2026-11-16）。 */
-    if (s->dmap_inflight) return 0;
+       返回 -1（失败）而不是 0：返回 0 会让调用方把 loaded 置 1，可文件其实
+       一个都没开——那才是更深的谎报。返回 -1 则调用方保持 loaded=0，下帧重试，
+       状态永远与真实一致（2026-11-17）。真重开时 dmap_inflight 本来就是 0，
+       所以这里不再无条件清零它——旧代码的 `dmap_inflight = 0` 会悄悄拆掉
+       src_unload 依赖的 pin（2026-11-16）。 */
+    if (s->dmap_inflight) return -1;
     s->dmap_failed    = 0;   /* 重载 = 重新尝试解码（清掉失败标记） */
     s->unload_pending = 0;
     char p[4096];
@@ -1080,7 +1083,19 @@ static void dmap_progress_cb(void *ud, double frac)
 
 /* 后台解码线程：轮询任务槽（无 condvar，解码本身 0.6~4.4s，4ms 轮询延迟可忽略），
  * 在锁外做耗时解码，完成后把结果放入 job_result 并置 job_done。pbfmap_decode
- * 仅用局部状态（Buf/StrPool/本地数组），无文件级可变全局 ⇒ 线程安全。 */
+ * 仅用局部状态（Buf/StrPool/本地数组），无文件级可变全局 ⇒ 线程安全。
+ *
+ * ★ 解码带协作式中止钩子（dmap_abort_check → ms->dmap_quit）：mapset_free 置
+ *   quit 后，解码在下一个 blob（毫秒级）内停下，而不是等整段跑完（大省 >10s）
+ *   ——否则释放方只能"等满超时照样 free"，那是对 worker 正在读的数据做 UAF
+ *   （2026-11-17 修：实测 117MB hebei 解码 >10s，dmap_selftest 判据 6 抓到
+ *   +49.2MB 泄漏 + 悬空写）。 */
+static int dmap_abort_check(void *ud)
+{
+    MapSet *ms = (MapSet *)ud;
+    return ms->dmap_quit;      /* volatile 读：mapset_free 在另一线程置 1 */
+}
+
 static void dmap_worker(void *arg)
 {
     MapSet *ms = (MapSet *)arg;
@@ -1103,8 +1118,8 @@ static void dmap_worker(void *arg)
                 sk_path_join(pbf, sizeof(pbf), ms->pbf_dir, sk_) == 0 &&
                 sk_file_exists(pbf)) {
                 DmapCbCtx cbctx = { ms, p };
-                ok = (pbfmap_decode(pbf, &s->nodes, &m, dmap_progress_cb,
-                                   &cbctx) == 0);
+                ok = (pbfmap_decode_ex(pbf, &s->nodes, &m, dmap_progress_cb,
+                                       &cbctx, dmap_abort_check, ms) == 0);
             }
         }
 
@@ -1134,15 +1149,18 @@ static void dmap_worker(void *arg)
     ms->dmap_stopped = 1;
 }
 
-void mapset_free(MapSet *ms)
+int mapset_free(MapSet *ms)
 {
-    if (!ms) return;
+    if (!ms) return 0;
     /* 先让 worker 退出，避免它读已释放的 srcs / nodes。detached 线程无法 join，
-     * 故置 quit 后轮询 dmap_stopped（上限 ~10s，正常只在数 ms 内停）。 */
+     * 故置 quit 后轮询 dmap_stopped：解码带协作式中止钩子，正常毫秒级就停；
+     * 上限 ~10s 只是兜底——超时**不再继续释放**（宁可漏，不可悬），
+     * 调用方拿到 -1 可稍后重试（再调一次本函数即可，worker 迟早会停）。 */
     if (ms->dmap_worker_started) {
         ms->dmap_quit = 1;
         for (int i = 0; i < 2000 && !ms->dmap_stopped; i++)
             sk_sleep_ms(5);
+        if (!ms->dmap_stopped) return -1;
     }
     if (ms->dmap_mtx) {
         /* ★ 2026-11-16 修泄漏：worker 可能已经解完并放进 job_result，但主线程
@@ -1156,6 +1174,7 @@ void mapset_free(MapSet *ms)
         src_close(&ms->srcs[i]);
     free(ms->srcs);
     memset(ms, 0, sizeof(*ms));
+    return 0;
 }
 
 void mapset_totals(const MapSet *ms, uint64_t *nodes, uint64_t *edges)

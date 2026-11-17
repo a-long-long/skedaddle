@@ -7,6 +7,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.InputStream;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -139,16 +140,16 @@ public final class ChunkUpdater {
     }
 
     public static String readAll(File f) throws IOException {
-        byte[] b = new byte[(int) f.length()];
-        try (FileInputStream in = new FileInputStream(f)) {
-            int off = 0;
-            while (off < b.length) {
-                int n = in.read(b, off, b.length - off);
-                if (n <= 0) break;
-                off += n;
-            }
+        /* 流式读，不按 f.length() 预分配也不做 int 截断：清单文件异常放大
+         * （>2GB）或读期间被并发改短时，旧的 `new byte[(int) f.length()]`
+         * 会 OOM/截断，而流式读最多浪费一个缓冲、读到多少算多少。 */
+        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream(1 << 16);
+        try (InputStream in = new FileInputStream(f)) {
+            byte[] buf = new byte[16384];
+            int n;
+            while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
         }
-        return new String(b, 0, b.length, java.nio.charset.StandardCharsets.UTF_8);
+        return new String(bos.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
     }
 
     public static void writeAll(File f, String s) throws IOException {
