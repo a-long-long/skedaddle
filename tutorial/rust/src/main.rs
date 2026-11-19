@@ -827,6 +827,384 @@ fn step_07(c: &mut MiniCtx, g: &Graph) {
     c.step_count += 1;
 }
 
+// =====================================================================
+// step08: pipeline —— 一帧的 9 阶段管线编排（C 第 7 课 07_pipeline）
+// 对照 src/ui/window.c:paint_frame：真实工程每阶段吃真实图集并跨省统一
+// 分层，mini/Rust 链只把「顺序 + 职责」钉住，阶段内容用前面各段的原子代跑。
+// ★ 与真实工程唯一刻意的差别：① 底色阶段只校验、不重涂——否则每加一段
+//   就会把前几段画的东西擦掉，「同一份工程逐段长大」就不成立。
+// Rust 语言点：阶段表用 Vec<u8> 整体比对（stages == [1..=9]）；&mut self
+// 的独占借用逼你把「画」与「读」排好序——C 里这类交错是静默 UB 温床。
+// =====================================================================
+const COL_CHROME: u32 = 0xFF3A4652;
+const COL_LABEL: u32 = 0xFFE08020;
+const COL_MASK: u32 = 0xFF304060;
+
+impl MiniCtx {
+    /// 矩形填充（step08 起的标注/叠加原子；越界由 put_pixel 裁剪）。
+    fn fill_rect(&mut self, x0: i32, y0: i32, w: i32, h: i32, color: u32) {
+        for y in y0..y0 + h {
+            for x in x0..x0 + w {
+                self.put_pixel(x, y, color);
+            }
+        }
+    }
+}
+
+/// 简单 alpha 混合：a 底色、b 覆盖色，alpha ∈ [0,256]（只混 RGB，A 恒 FF）。
+fn blend(a: u32, b: u32, alpha: u32) -> u32 {
+    let mix = |sh: u32| ((a >> sh) & 0xFF) * (256 - alpha) / 256 + ((b >> sh) & 0xFF) * alpha / 256;
+    0xFF000000 | (mix(16) << 16) | (mix(8) << 8) | mix(0)
+}
+
+/// 一帧的 9 阶段管线，阶段号按执行顺序记进 stages。返回执行过的阶段数。
+fn paint_frame(c: &mut MiniCtx, vp: &Viewport, stages: &mut Vec<u8>) -> usize {
+    let mut k = 0usize;
+    // ① 底色：只校验，不重涂
+    stages.push(1);
+    k += 1;
+    // ② 视口 bbox（真实工程反算可见 bbox，这里用视口对象本身代跑）
+    let _ = (vp.clat, vp.clon, vp.span_lon);
+    stages.push(2);
+    k += 1;
+    // ③ 按 bbox 决定图集进/出（span 宽度当确定性替身）
+    let visible_tiles = (vp.span_lon * 1000.0) as i32;
+    stages.push(3);
+    k += 1;
+    // ④ 跨省统一分层：面 → 路 → 线 → 等高线，顺序固定
+    let layers = [1u8, 2, 3, 4];
+    stages.push(4);
+    k += 1;
+    // ⑤ 光栅：裁剪线画一条「路」
+    if let Some((x0, y0, x1, y1)) = clip_line(210, 20, 300, 20) {
+        c.draw_line(x0, y0, x1, y1, COL_ROAD);
+    }
+    stages.push(5);
+    k += 1;
+    // ⑥ 标注：小方块代替字形
+    for i in 0..3 {
+        c.fill_rect(212 + i * 30, 26, 4, 4, COL_LABEL);
+    }
+    stages.push(6);
+    k += 1;
+    // ⑦ 叠加层：gpx → route → 车头 → 端点 → 解码占位（顺序固定）
+    let overlay = [1u8, 2, 3, 4, 5];
+    stages.push(7);
+    k += 1;
+    // ⑧ 昼夜蒙版：只在顶栏做一次半透明叠加，不改背景色约定
+    let mut x = 0;
+    while x < W {
+        let old = c.buf[(6 * W + x) as usize];
+        c.put_pixel(x, 6, blend(old, COL_MASK, 64));
+        x += 2;
+    }
+    stages.push(8);
+    k += 1;
+    // ⑨ chrome 自绘界面：最后盖上
+    c.fill_rect(0, 0, W, 3, COL_CHROME);
+    stages.push(9);
+    k += 1;
+    // 内容判据（镜像 C 版 mini_step_07 的返回条件）
+    c.gate(visible_tiles > 0 && layers[0] == 1 && overlay[4] == 5);
+    k
+}
+
+fn step_08(c: &mut MiniCtx) {
+    let vp = default_viewport();
+    let mut stages = Vec::new();
+    let k = paint_frame(c, &vp, &mut stages);
+    c.gate(k == 9 && stages == [1, 2, 3, 4, 5, 6, 7, 8, 9]); // 9 个阶段按固定顺序执行
+    c.gate(c.buf[0] == COL_CHROME);                          // chrome 层最后盖上
+    c.gate(c.ink() > 0);                                     // 一帧画完仍有内容
+    println!("RUST-MINI-STEP-08-OK stages={k}");
+    c.step_count += 1;
+}
+
+// =====================================================================
+// step09: search —— 地名子串检索与命中锚点（C 第 8 课 08_search）
+// 对照 src/search/search.c：真实工程有 places_auto.db、拼音/前缀索引与
+// 多路召回；mini 只保留「查询串 → 命中下标」这一层契约。
+// Rust 语言点：str::contains 按 Unicode 字符匹配（C 的 strstr 按字节，
+// 撞上 UTF-8 续字节会误命中）；返回 Vec<usize> 而非 out+cap——容量问题
+// 从「调用方记得给大数组」变成类型保证。
+// =====================================================================
+const SEARCH_NAMES: [&str; 6] = ["北京市", "海淀区", "朝阳区", "中关村", "五道口", "天津市"];
+
+fn search_hits(q: &str) -> Vec<usize> {
+    (0..SEARCH_NAMES.len()).filter(|&i| SEARCH_NAMES[i].contains(q)).collect()
+}
+
+fn step_09(c: &mut MiniCtx) {
+    let h1 = search_hits("区");
+    let h2 = search_hits("中关村");
+    let h3 = search_hits("上海");
+    c.gate(h1 == [1usize, 2]);   // 「区」命中 海淀区 / 朝阳区
+    c.gate(h2 == [3usize]);      // 精确子串命中与下标
+    c.gate(h3.is_empty());       // 不存在的地名返回 0 条
+    // 把命中项画成三个橙色锚点（真实工程里它们会带大字标签）
+    for x in [30, 150, 250] {
+        c.fill_rect(x, 208, 6, 6, COL_LABEL);
+        c.draw_line(x + 3, 208, x + 3, 196, COL_LABEL);
+    }
+    println!("RUST-MINI-STEP-09-OK hits={}/{}/{}", h1.len(), h2.len(), h3.len());
+    c.step_count += 1;
+}
+
+// =====================================================================
+// step10: navvoice —— 机动指令 + 唯一发声出口的 15s 同文本冷却（C 第 10 课）
+// 对照 src/route/maneuver.c、voice.c、voice_wire.c。真实工程里「到达帧先
+// 播报后置 paused」的顺序是判据；mini 只钉「指令生成 + 冷却」两件事。
+// Rust 语言点：C 的函数级 static（隐藏全局可变状态）→ 显式状态结构体
+// &mut self——谁持有发声器、谁在改状态，类型系统一目了然。
+// =====================================================================
+const NAV_COOLDOWN_MS: i32 = 15000;
+
+struct VoiceOut {
+    last: String,
+    last_ms: i32,
+}
+
+impl VoiceOut {
+    fn new() -> Self {
+        VoiceOut { last: String::new(), last_ms: -NAV_COOLDOWN_MS }
+    }
+
+    /// 同一文本 15s 内不重复播；换文本或冷却期满放行。true = 真播了。
+    fn say(&mut self, text: &str, now_ms: i32) -> bool {
+        if self.last == text && now_ms - self.last_ms < NAV_COOLDOWN_MS {
+            return false;
+        }
+        self.last = text.to_string();
+        self.last_ms = now_ms;
+        true
+    }
+}
+
+fn nav_build(path: &[usize]) -> Vec<String> {
+    let mut out = Vec::new();
+    if path.is_empty() {
+        return out;
+    }
+    out.push("出发".to_string());
+    for &p in &path[1..path.len() - 1] {
+        out.push(format!("直行 至 {p} 号点"));
+    }
+    out.push("到达目的地".to_string());
+    out
+}
+
+fn step_10(c: &mut MiniCtx, g: &Graph) {
+    let csr = Csr::build(g.nodes_e7.len(), &g.edges);
+    let (dist, prev) = dijkstra(g, &csr, 0);
+    let mut path = Vec::new();
+    let mut cur = Some(3usize);
+    while let Some(u) = cur {
+        path.push(u);
+        cur = prev[u];
+    }
+    path.reverse();
+    c.gate(dist[3] != u32::MAX && path.first() == Some(&0) && path.last() == Some(&3));
+    let mans = nav_build(&path);
+    c.gate(mans.len() == path.len()); // 指令数 = 出发 + 每个中间点直行 + 到达
+    let mut vo = VoiceOut::new();
+    let a = vo.say(&mans[0], 1000);
+    let b = vo.say(&mans[0], 1500);
+    let d = vo.say(&mans[1], 1600);
+    let e = vo.say(&mans[0], 17000);
+    c.gate(a && !b);                  // 15s 同文本冷却挡住重复播报
+    c.gate(d && e);                   // 换文本 / 冷却后可再播
+    // 车头：终点处画一个三角形（示意；真实工程用扫描线填充）
+    let last = path[path.len() - 1];
+    let (la, lo) = { let (la7, lo7) = g.nodes_e7[last]; (from_e7(la7), from_e7(lo7)) };
+    let (ex, ey) = default_viewport().to_screen(la, lo);
+    c.draw_line(ex, ey - 9, ex - 7, ey + 5, 0xFFE04030);
+    c.draw_line(ex - 7, ey + 5, ex + 7, ey + 5, 0xFFE04030);
+    c.draw_line(ex + 7, ey + 5, ex, ey - 9, 0xFFE04030);
+    println!("RUST-MINI-STEP-10-OK maneuvers={}", mans.len());
+    c.step_count += 1;
+}
+
+// =====================================================================
+// step11: gates —— 判据框架与「负向对照必须能失败」（C 第 11 课 11_gates）
+// 对照 scripts/regress.sh、src/render/audit.c。项目铁律：只跑通正常路径
+// 不算验收，必须证明「把改动改回去，判据会 FAIL」——否则就是假门禁。
+// Rust 语言点：闭包 Fn(i32)->bool 当判据一等公民传递（C 用函数指针 +
+// void*；Rust 的闭包捕获与 trait 边界把「这判据依赖什么」写进签名）。
+// =====================================================================
+const GATE_THRESHOLD: i32 = 10;
+
+fn gate_eval(name: &str, arg: i32, f: &dyn Fn(i32) -> bool, pass: &mut u32) -> bool {
+    let r = f(arg);
+    println!("  GATE {:<28} {}", name, if r { "PASS" } else { "FAIL" });
+    if r {
+        *pass += 1;
+    }
+    r
+}
+
+/// 返回 true = 已知坏输入确实让判据 FAIL（负向对照成立，不是假门禁）。
+fn gate_negative(name: &str, bad_arg: i32, f: &dyn Fn(i32) -> bool) -> bool {
+    let r = f(bad_arg);
+    println!("  NEG  {:<28} {} (期望 FAIL)", name, if r { "PASS" } else { "FAIL" });
+    !r
+}
+
+fn step_11(c: &mut MiniCtx) {
+    let mut pass = 0u32;
+    let ge = |x: i32| x >= GATE_THRESHOLD;
+    let r1 = gate_eval("classify(15) 属高类", 15, &ge, &mut pass);
+    let neg = gate_negative("classify(5) 应被挡下", 5, &ge);
+    c.gate(r1 && pass == 1);   // 正向判据通过并计数
+    c.gate(neg);               // 负向对照能失败（不是假门禁）
+    // 阈值条：蓝=低类 / 红=高类
+    for x in 0..100 {
+        let col = if x >= GATE_THRESHOLD { 0xFFD04040 } else { 0xFF4080C0 };
+        c.fill_rect(10 + x * 2, 222, 2, 4, col);
+    }
+    println!("RUST-MINI-STEP-11-OK gates={pass}");
+    c.step_count += 1;
+}
+
+// =====================================================================
+// step12: capstone —— 综合闭环：改一个点 → 加一条判据 → 负向对照（C 第 12 课）
+// 对照 tutorial/12_capstone/。不新增模块，只把 step11 的判据框架用起来：
+// 「改 → 测 → 守」三步，缺一步都不算闭环。
+// Rust 语言点：阈值用 Cell<i32> 在闭包间共享可变状态（C 直接改全局变量；
+// Rust 把「谁能改」限定进单个 Cell，作用域一目了然；&Cell 也能 set，
+// 这正是内部可变性存在的意义）。
+// =====================================================================
+fn step_12(c: &mut MiniCtx) {
+    use std::cell::Cell;
+    let mut pass = 0u32;
+    let thresh = Cell::new(10i32);
+    let lock_change = |x: i32| x < thresh.get(); // 新判据：改动后 15 必须落进低类
+    // ① 改一个点
+    thresh.set(20);
+    let locked = gate_eval("classify(15) 属低类(新判据)", 15, &lock_change, &mut pass);
+    // ② 负向对照：改回去——旧阈值下新判据必须 FAIL
+    thresh.set(10);
+    let neg = gate_negative("改回 10 后新判据应 FAIL", 15, &lock_change);
+    // ③ 恢复改动
+    thresh.set(20);
+    let restored = thresh.get() == 20;
+    c.gate(locked && pass == 1); // 新判据锁住改动
+    c.gate(neg && restored);     // 负向对照证明判据有效
+    // 改动前 / 改动后的阈值条，上下两行对照
+    for x in 0..100 {
+        c.fill_rect(10 + x * 2, 230, 2, 3, if x >= 10 { 0xFFD04040 } else { 0xFF4080C0 });
+        c.fill_rect(10 + x * 2, 235, 2, 3, if x >= 20 { 0xFFD04040 } else { 0xFF4080C0 });
+    }
+    println!("RUST-MINI-STEP-12-OK closed-loop={locked}/{neg}/{restored}");
+    c.step_count += 1;
+}
+
+// =====================================================================
+// step13: datum —— 大地基准：只换椭球 ≠ 基准转换（C 第 13 课 13_datum）
+// 对照 src/utils/datum.c。结论与项目一致：CGCS2000→WGS84 平移 0；西安 1980
+// 用全国三参数 (−104.57, −45.94, +5.30)；北京 1954 登记「有 TOWGS84」。
+// Rust 语言点：查不到返回 Option<&Datum> 而不是 NULL——调用方必须
+// unwrap 或匹配，「忘了判空」在编译期就消失。
+// =====================================================================
+struct Datum {
+    name: &'static str,
+    a: f64,
+    invf: f64,
+    dx: f64,
+    dy: f64,
+    dz: f64,
+    has_towgs84: bool,
+}
+
+const DATUMS: [Datum; 4] = [
+    Datum { name: "CGCS2000",    a: 6378137.0, invf: 298.257222101, dx: 0.0,     dy: 0.0,    dz: 0.0,  has_towgs84: false },
+    Datum { name: "WGS84",       a: 6378137.0, invf: 298.257223563, dx: 0.0,     dy: 0.0,    dz: 0.0,  has_towgs84: false },
+    Datum { name: "Beijing1954", a: 6378245.0, invf: 298.3,         dx: 0.0,     dy: 0.0,    dz: 0.0,  has_towgs84: true },
+    Datum { name: "Xian1980",    a: 6378140.0, invf: 298.257,       dx: -104.57, dy: -45.94, dz: 5.30, has_towgs84: false },
+];
+
+fn datum_find(name: &str) -> Option<&'static Datum> {
+    DATUMS.iter().find(|d| d.name == name)
+}
+
+fn datum_shift(d: &Datum, x: f64, y: f64, z: f64) -> (f64, f64, f64) {
+    (x + d.dx, y + d.dy, z + d.dz)
+}
+
+fn step_13(c: &mut MiniCtx) {
+    let cg = datum_find("CGCS2000");
+    let wg = datum_find("WGS84");
+    let bj = datum_find("Beijing1954");
+    let xa = datum_find("Xian1980");
+    c.gate(cg.is_some() && wg.is_some() && bj.is_some() && xa.is_some()); // 四个基准都登记在册
+    let (ox, oy, oz) = datum_shift(cg.unwrap(), 100.0, 200.0, 30.0);
+    c.gate(ox == 100.0 && oy == 200.0 && oz == 30.0);                     // CGCS2000 平移为 0
+    // 长半轴相同但扁率不同 ⇒ 只换椭球不等于基准转换
+    c.gate(cg.unwrap().a == wg.unwrap().a && cg.unwrap().invf != wg.unwrap().invf);
+    let xa = xa.unwrap();
+    c.gate((xa.dx, xa.dy, xa.dz) == (-104.57, -45.94, 5.30) && bj.unwrap().has_towgs84);
+    // 平移前 / 平移后两个点（偏移量按像素缩放示意）
+    c.fill_rect(270, 200, 5, 5, 0xFF4080C0);
+    c.fill_rect(270 + (xa.dx / 8.0).round() as i32, 200 - (xa.dy / 8.0).round() as i32, 5, 5, 0xFFD04040);
+    println!("RUST-MINI-STEP-13-OK datums={}", DATUMS.len());
+    c.step_count += 1;
+}
+
+// =====================================================================
+// step14: i18n —— 极简 i18n：中文 msgid 是安全的（C 第 14 课 14_i18n）
+// 对照 src/i18n/i18n.c、lang/en.xml。真实工程从 XML 加载词条并做 XML 转义；
+// 这里只保留「查表 + 未登记回退原串 + 实体解码」三件事。
+// Rust 语言点：返回 &str 借用自静态表，绝不返回空指针；解码产物 String
+// 自己拥有自己的内存——C 版 out+cap 的缓冲约定整个消失。
+// =====================================================================
+const TR_TABLE: [(&str, &str); 5] = [
+    ("退出", "Quit"),
+    ("搜索", "Search"),
+    ("设置", "Settings"),
+    ("起点", "Start"),
+    ("终点", "End"),
+];
+
+/// 未登记一律回退原串（中文 msgid 本身可读），绝无「查不到返回空」。
+fn tr(id: &str) -> &str {
+    TR_TABLE.iter().find(|(k, _)| *k == id).map(|(_, v)| *v).unwrap_or(id)
+}
+
+/// XML 实体解码：&amp; → &、&lt; → <。单遍扫描、不解已展开的实体
+/// （"A&amp;lt;B" 必须得 "A&lt;B" 而不是 "A<B"——两次 replace 会二次解码）。
+fn xml_unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(p) = rest.find('&') {
+        out.push_str(&rest[..p]);
+        let tail = &rest[p..];
+        if tail.starts_with("&amp;") {
+            out.push('&');
+            rest = &tail[5..];
+        } else if tail.starts_with("&lt;") {
+            out.push('<');
+            rest = &tail[4..];
+        } else {
+            out.push('&');
+            rest = &tail[1..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn step_14(c: &mut MiniCtx) {
+    c.gate(tr("退出") == "Quit");                     // 中文 msgid 能查到英文
+    c.gate(tr("未登记") == "未登记");                 // 未登记词条回退原串
+    c.gate(xml_unescape("A&amp;B") == "A&B");         // XML 实体解码
+    c.gate(xml_unescape("A&amp;lt;B") == "A&lt;B");   // 已转义实体不被二次解码
+    // 语言切换小框（不用字体，纯几何示意）
+    c.fill_rect(286, 12, 28, 12, 0xFFF8F8F8);
+    c.draw_line(286, 12, 313, 12, COL_CHROME);
+    c.draw_line(286, 23, 313, 23, COL_CHROME);
+    println!("RUST-MINI-STEP-14-OK entries={}", TR_TABLE.len());
+    c.step_count += 1;
+}
+
 // @@STEP@@
 
 fn main() {
@@ -839,6 +1217,13 @@ fn main() {
     step_05(&mut c, &g);
     step_06(&mut c, &g);
     step_07(&mut c, &g);
+    step_08(&mut c);
+    step_09(&mut c);
+    step_10(&mut c, &g);
+    step_11(&mut c);
+    step_12(&mut c);
+    step_13(&mut c);
+    step_14(&mut c);
     // @@CALL@@
     if let Err(e) = c.write_bmp("out.bmp") {
         eprintln!("write out.bmp failed: {e}");

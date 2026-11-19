@@ -1269,3 +1269,41 @@ CLI 端到端：`--datum=xa80 --datum-grid=demo.txt`（北 +100 / 东 +200）⇒
   `index.md` 演进索引补 11-16/11-17 两条。`regen_tutorial_blocks.py` 修掉
   `Path.read_text(newline=)` 的 Python <3.13 TypeError（本机门禁此前直接崩）。
   `check_teaching_sync.py` / `regen --check` / `check_tutorial_tracks.py` 全绿。
+
+---
+
+## 十八、2026-11-19 教程补齐：Rust 演化链 8 段 → 15 段（核心课全覆盖）
+
+> Rust 对照链（`tutorial/rust/`）此前只有 step00–07 八段，映射到 C 课
+> 00–06 + 09，**07_pipeline / 08_search / 10_navvoice / 11_gates /
+> 12_capstone / 13_datum / 14_i18n 七门核心课没有对应段**（README §六
+> 只给 13/14 排了路线，07/08/10/11/12 连路线都没排——漏记）。本批补齐。
+
+### 18.1 追加七段（只增不减，逐段镜像 C 版 mini `_parts/`）
+
+| Rust 段 | C 课 | 钉住的概念 | Rust 语言点 |
+|---|---|---|---|
+| `step08: pipeline` | 07 | 一帧 9 阶段管线（底色只校验不重涂、chrome 最后盖） | 阶段表 `Vec<u8>` 整体比对；`&mut self` 独占借用排「画/读」次序 |
+| `step09: search` | 08 | 子串检索 → 命中下标 | `str::contains` 按 Unicode 字符（strstr 按字节会撞 UTF-8 续字节）；`Vec<usize>` 替代 out+cap |
+| `step10: navvoice` | 10 | 机动指令 + 15s 同文本冷却 + 车头 | C 的函数级 static → 显式 `VoiceOut` 状态结构体 |
+| `step11: gates` | 11 | 判据框架 + 负向对照能失败 | 闭包 `Fn(i32)->bool` 一等公民传递 |
+| `step12: capstone` | 12 | 改点 → 加判据 → 负向对照闭环 | `Cell<i32>` 内部可变性 |
+| `step13: datum` | 13 | 四基准 + 三参数平移 + 只换椭球≠基准转换 | `Option<&Datum>` 替代 NULL |
+| `step14: i18n` | 14 | 中文 msgid 回退 + XML 实体解码（单遍防二次解码） | 返回 `&str` 借用静态表；`String` 消灭 out+cap |
+
+纪律遵守：`main.rs` diff **+385 行 / 0 删除**——七段插在 `// @@STEP@@` 前、
+七行调用插在 `// @@CALL@@` 前，旧行零改动（截断即历史快照的锚点约定不变）。
+跨平台三课（15/16/17）按零外部 crate 纪律仍留 README §六 作练习，§六标题
+改为「仅剩这三课」。
+
+### 18.2 验收（本机实跑）
+
+- `cargo run` dev / `cargo run --release`：**`RUST-MINI-CHAIN-OK steps=15
+  ink=9370 gates=47/0`**，两档逐字一致（此前 `steps=8 ink=5833 gates=24/0`），
+  退出码 0。仅有的 warning 是本机 linker 对 rustc 内部 `symbols.o` 的
+  `GNU_PROPERTY_TYPE` 噪音，与源码无关。
+- `check_tutorial_tracks.py`（18 讲义 + 2 课程表 + 17 小程序）、
+  `check_mini_chain.py`（18 步累加链 + 17 diff + 54 判据）、
+  `regen_mini_chain.py --check`、`check_doc_numbers.sh`：全绿。
+- README 同步：标题改「从最小框架长到迷你导航端」；映射表 +7 行；
+  运行数字 / 判据清单 / 链级 `steps=15` 全部换成实测值。
