@@ -72,7 +72,7 @@
   <item><zh>搜索地点或道路（Ctrl+F）</zh><ja>場所または道路を検索（Ctrl+F）</ja></item>
   <item><zh>搜索</zh><ja>検索</ja></item>
   <item><zh>搜索地点、道路…</zh><ja>場所、道路…</ja></item>
-  <item><zh>左键循环切换 · 右键菜单</zh><ja>左クリックで切替 · 右クリックでメニュー</ja></item>
+  <item><zh>点击开关 · 坐标系在「设置」菜单选择</zh><ja>クリックで切替 · 座標系は「設定」メニューで選択</ja></item>
   <item><zh>浮层透明度</zh><ja>オーバーレイ透明度</ja></item>
   <item><zh>（C 核心）</zh><ja>(C コア)</ja></item>
   <item><zh>默认</zh><ja>既定</ja></item>
@@ -96,7 +96,6 @@
   <item><zh>（还没有途经点：面板开着时点地图即可添加；也可先设好起点和终点）</zh><ja>（経由点はまだありません：パネルを開いて地図をクリックするか、始点と終点を設定してください）</ja></item>
   <item><zh>全程约 %1 km</zh><ja>全行程約 %1 km</ja></item>
   <item><zh>下载地图（全球可下载区域 · Geofabrik）</zh><ja>地図をダウンロード（Geofabrik 配信地域）</ja></item>
-  <item><zh>可下载区域（✓已下载 ·未下载）</zh><ja>ダウンロード可能地域（✓ 済 · 未）</ja></item>
   <item><zh>选择左侧一个地区，查看下载链接并下载。</zh><ja>左の地域を選ぶとダウンロードリンクが表示されます。</ja></item>
   <item><zh>下载并转换</zh><ja>ダウンロードして変換</ja></item>
   <item><zh>复制下载链接</zh><ja>ダウンロードリンクをコピー</ja></item>
@@ -108,7 +107,6 @@
   <item><zh>GPX 轨迹</zh><ja>GPX 軌跡</ja></item>
   <item><zh>所有文件</zh><ja>すべてのファイル</ja></item>
   <item><zh>导出全部为 GPX</zh><ja>すべてを GPX にエクスポート</ja></item>
-  <item><zh>  ✓已下载</zh><ja>  ✓ 済</ja></item>
   <item><zh>  ·未下载</zh><ja>  · 未</ja></item>
   <item><zh>  (%1/%2)</zh><ja>  (%1/%2 済)</ja></item>
   <item><zh>本地已存在 %1。正在比对远端是否有更新…</zh><ja>%1 はローカルに存在します。サーバーと比較中…</ja></item>

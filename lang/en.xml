@@ -110,7 +110,7 @@
     <en>Datum: %1    Grid: %2
 </en>
   </item>
-  <item><zh>左键循环切换 · 右键菜单</zh><en>Left-click cycles · right-click menu</en></item>
+  <item><zh>点击开关 · 坐标系在「设置」菜单选择</zh><en>Click to toggle · datum in Settings menu</en></item>
   <item><zh>浮层透明度</zh><en>Overlay opacity</en></item>
   <item><zh>（C 核心）</zh><en> (C core)</en></item>
   <item><zh>默认</zh><en>Default</en></item>

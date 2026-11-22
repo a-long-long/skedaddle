@@ -72,7 +72,7 @@
   <item><zh>搜索地点或道路（Ctrl+F）</zh><fr>Lieu ou route à rechercher (Ctrl+F)</fr></item>
   <item><zh>搜索</zh><fr>Rechercher</fr></item>
   <item><zh>搜索地点、道路…</zh><fr>Lieu, route à rechercher…</fr></item>
-  <item><zh>左键循环切换 · 右键菜单</zh><fr>Clic gauche : cycle · clic droit : menu</fr></item>
+  <item><zh>点击开关 · 坐标系在「设置」菜单选择</zh><fr>Clic : bascule · repère dans le menu Réglages</fr></item>
   <item><zh>浮层透明度</zh><fr>Opacité des superpositions</fr></item>
   <item><zh>（C 核心）</zh><fr>(cœur C)</fr></item>
   <item><zh>默认</zh><fr>Défaut</fr></item>
@@ -96,7 +96,6 @@
   <item><zh>（还没有途经点：面板开着时点地图即可添加；也可先设好起点和终点）</zh><fr>(Aucun point de passage : avec le panneau ouvert, cliquez sur la carte ; ou définissez départ et arrivée.)</fr></item>
   <item><zh>全程约 %1 km</zh><fr>Environ %1 km au total</fr></item>
   <item><zh>下载地图（全球可下载区域 · Geofabrik）</zh><fr>Télécharger la carte (extraits Geofabrik)</fr></item>
-  <item><zh>可下载区域（✓已下载 ·未下载）</zh><fr>Régions téléchargeables (✓ téléchargé · en attente)</fr></item>
   <item><zh>选择左侧一个地区，查看下载链接并下载。</zh><fr>Choisissez une région à gauche pour voir son lien et la télécharger.</fr></item>
   <item><zh>下载并转换</zh><fr>Télécharger et convertir</fr></item>
   <item><zh>复制下载链接</zh><fr>Copier le lien</fr></item>
@@ -108,7 +107,6 @@
   <item><zh>GPX 轨迹</zh><fr>Traces GPX</fr></item>
   <item><zh>所有文件</zh><fr>Tous les fichiers</fr></item>
   <item><zh>导出全部为 GPX</zh><fr>Exporter tout en GPX</fr></item>
-  <item><zh>  ✓已下载</zh><fr>  ✓ téléchargé</fr></item>
   <item><zh>  ·未下载</zh><fr>  · en attente</fr></item>
   <item><zh>  (%1/%2)</zh><fr>  (%1/%2 téléchargé)</fr></item>
   <item><zh>本地已存在 %1。正在比对远端是否有更新…</zh><fr>%1 existe déjà localement. Comparaison avec le serveur…</fr></item>

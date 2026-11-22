@@ -184,10 +184,12 @@ add("搜索地点或道路（Ctrl+F）", fr="Lieu ou route à rechercher (Ctrl+F
 add("搜索", fr="Rechercher", de="Suchen", es="Buscar", pt="Buscar", it="Cerca", ja="検索")
 add("搜索地点、道路…", fr="Lieu, route à rechercher…", de="Ort, Straße…",
     es="Lugar, ruta…", pt="Local, rota…", it="Luogo, strada…", ja="場所、道路…")
-add("左键循环切换 · 右键菜单", fr="Clic gauche : cycle · clic droit : menu",
-    de="Links: zyklisch · Rechts: Menü", es="Clic izq.: ciclar · clic der.: menú",
-    pt="Clique esq.: ciclar · clique dir.: menu", it="Clic sx: cicla · clic dx: menu",
-    ja="左クリックで切替 · 右クリックでメニュー")
+add("点击开关 · 坐标系在「设置」菜单选择", fr="Clic : bascule · repère dans le menu Réglages",
+    de="Klick: umschalten · Referenz im Menü Einstellungen",
+    es="Clic: alternar · datum en el menú Ajustes",
+    pt="Clique: alternar · datum no menu Definições",
+    it="Clic: attiva · datum nel menu Impostazioni",
+    ja="クリックで切替 · 座標系は「設定」メニューで選択")
 add("浮层透明度", fr="Opacité des superpositions", de="Deckkraft der Overlays",
     es="Opacidad de superposiciones", pt="Opacidade das sobreposições",
     it="Opacità degli overlay", ja="オーバーレイ透明度")

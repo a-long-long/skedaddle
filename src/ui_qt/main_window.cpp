@@ -282,7 +282,6 @@ void MainWindow::clearMenus()
 {
     m_datumActs.clear();
     m_gridTypeActs.clear();
-    m_gridDatumActs.clear();
     if (m_gridCtx) { delete m_gridCtx; m_gridCtx = nullptr; m_gridShowAct = nullptr; }
     if (m_menuMain) {
         menuBar()->removeAction(m_menuMain->menuAction());
@@ -296,21 +295,12 @@ void MainWindow::rebuildGridCtx()
 {
     if (!m_gridCtx) m_gridCtx = new QMenu(this);
     m_gridCtx->clear();
-    m_gridDatumActs.clear();
+    /* 只留网格开关：坐标系选择已收进 ☰「设置」菜单（2026-11-22 起） */
     m_gridShowAct = m_gridCtx->addAction(trc("显示坐标网"));
     m_gridShowAct->setCheckable(true);
     connect(m_gridShowAct, &QAction::triggered, this, [this]() {
-        if (m_canvas) m_canvas->setShowGrid(!m_canvas->isGridOn());
+        setShowGrid(!m_canvas->isGridOn());
     });
-    m_gridCtx->addSeparator();
-    QMenu *md = m_gridCtx->addMenu(trc("坐标系"));
-    for (int i = 0; i < (int)DATUM_COUNT; i++) {
-        QAction *a = md->addAction(QString::fromUtf8(datum_label((DatumId)i)));
-        a->setCheckable(true);
-        a->setData(i);
-        connect(a, &QAction::triggered, this, [this, i]() { setDatum(i); });
-        m_gridDatumActs.append(a);
-    }
 }
 
 void MainWindow::buildMenus()
@@ -363,8 +353,9 @@ void MainWindow::buildMenus()
     addAct(mview, trc("浮层透明度…"), QKeySequence(), this,
            [this]() { showOverlayAlphaDialog(); });
 
-    /* 坐标系（大地基准）：切基准后经纬网与读数按该基准呈现。勾选态与右栏
-     * 坐标网按钮悬停提示里的"当前坐标系"同步（右栏没有下拉框了）。 */
+    /* 坐标系（大地基准）：切基准后经纬网与**右下角坐标读数**都按该基准呈现。
+     * 2026-11-22 起挂在「设置」子菜单里（原来挂 ☰ 顶级），坐标网按钮改为纯开关后，
+     * 这里是唯一的坐标系选择入口。勾选态与右栏坐标网按钮悬停提示同步。 */
     QMenu *mdatum = new QMenu(trc("坐标系(&C)"), this);
     for (int i = 0; i < DATUM_COUNT; i++) {
         QAction *act = mdatum->addAction(QString::fromUtf8(datum_label((DatumId)i)));
@@ -421,6 +412,8 @@ void MainWindow::buildMenus()
             m_gridTypeActs.append(act);
         }
     }
+    /* 坐标系（大地基准）收进「设置」：紧挨网格类型，两者共同决定网格与读数口径。 */
+    mset->addMenu(mdatum);
     {
         QAction *act = mset->addAction(trc("POI 显示"));
         act->setCheckable(true);
@@ -597,7 +590,6 @@ void MainWindow::buildMenus()
     /* 把 5 个功能子菜单挂进「≡主菜单」弹出按钮，取消顶栏后作为唯一入口 */
     m_menuMain->addMenu(msim);
     m_menuMain->addMenu(mview);
-    m_menuMain->addMenu(mdatum);
     m_menuMain->addMenu(mgpx);
     m_menuMain->addMenu(mset);
 
@@ -830,42 +822,34 @@ void MainWindow::buildRightCol()
         cycleDayNight();
     });
 
-    /* 坐标网按钮：左键**循环切换坐标系**（关 → 开且保持基准 → WGS84 → CGCS2000
-     * → 北京54 → 西安80 → …），还原最初的"点击切换坐标系"交互（上版改成了纯开关，
-     * 丢失了坐标系切换入口，J 先生指出的回归）；右键弹出菜单可**精确选坐标系** +
-     * 开关网格。网格类型（经纬网/方里格，默认方里格）与坐标系已解耦，仍由「设置」菜单选。
-     * 按钮只显示图标（不写"关"或坐标系名，避免遮挡右栏），状态由悬停提示承载。 */
+    /* 坐标网按钮：纯**开关**（2026-11-22 改）：点击只切换网格显隐，按钮可勾选
+     * （亮起 = 网格开着）。坐标系（大地基准）与网格类型（经纬网/方里格）都收进
+     * ☰「设置」菜单选择——上一版"左键循环坐标系"把开/关和坐标系搅在一个按钮里，
+     * 想关网格得点满一圈；现在循环取消，唯一遗留入口是设置菜单（radio）。
+     * 按钮只显示图标（不写"关"或坐标系名，避免遮挡右栏），状态由勾选态 +
+     * 悬停提示承载。 */
     m_gridBtn = bigbtn(Qt::IconKind::Grid, trc("坐标网"));
-    m_gridBtn->setCheckable(false);   /* 左键是"循环切换"不是勾选开关 */
+    m_gridBtn->setCheckable(true);    /* 勾选态 = 网格开关态（setShowGrid 统一同步） */
     m_gridBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_gridBtn->setFixedSize(IconButton::kSize, IconButton::kSize);
-    connect(m_gridBtn, &QToolButton::clicked, this, &MainWindow::cycleGridDatum);
-    /* 右键菜单：恢复"精确切换坐标系 + 开关网格"入口 */
+    connect(m_gridBtn, &QToolButton::clicked, this, [this]() {
+        setShowGrid(!m_canvas->isGridOn());
+    });
+    /* 右键菜单：只留网格开关（坐标系选择已收进「设置」菜单） */
     m_gridCtx = new QMenu(this);
     m_gridShowAct = m_gridCtx->addAction(trc("显示坐标网"));
     m_gridShowAct->setCheckable(true);
     connect(m_gridShowAct, &QAction::triggered, this, [this]() {
-        if (m_canvas) m_canvas->setShowGrid(!m_canvas->isGridOn());
+        setShowGrid(!m_canvas->isGridOn());
     });
-    m_gridCtx->addSeparator();
-    QMenu *md = m_gridCtx->addMenu(trc("坐标系"));
-    for (int i = 0; i < (int)DATUM_COUNT; i++) {
-        QAction *a = md->addAction(QString::fromUtf8(datum_label((DatumId)i)));
-        a->setCheckable(true);
-        a->setData(i);
-        connect(a, &QAction::triggered, this, [this, i]() { setDatum(i); });
-        m_gridDatumActs.append(a);
-    }
     m_gridBtn->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_gridBtn, &QWidget::customContextMenuRequested, this,
             [this](const QPoint &p) {
                 if (!m_gridCtx) return;
-                if (m_gridShowAct)
-                    m_gridShowAct->setChecked(m_canvas && m_canvas->isGridOn());
-                for (QAction *a : m_gridDatumActs)
-                    a->setChecked(a->data().toInt() == (int)m_a->datum);
+                syncGridToggleUi();
                 m_gridCtx->popup(m_gridBtn->mapToGlobal(p));
             });
+    syncGridToggleUi();
     updateGridBtn();
 
     /* 轨迹 / 收藏面板开关（可勾选：亮起 = 面板开着）。
@@ -1100,10 +1084,29 @@ void MainWindow::locate()
 void MainWindow::setShowGrid(bool v)
 {
     if (m_canvas) m_canvas->setShowGrid(v);
-    /* ★ 悬停提示必须始终反映真实状态：除了点击开关（toggleGrid）外，
-     *   命令行 --grid 等其它入口也走这里，若不在此同步，会出现"网格明明开着、
-     *   提示却显示『关』"的不一致。按钮本身只显示图标，不显文字。 */
+    /* ★ 三处勾选态统一在这里同步：右栏按钮（QSignalBlocker 堵 clicked 回环）、
+     *   右键菜单「显示坐标网」、悬停提示。除了按钮点击外，--grid 等其它入口
+     *   也走这里，不在此同步就会出现"网格明明开着、按钮/菜单却是灭的"。 */
+    if (m_gridBtn) {
+        QSignalBlocker blk(m_gridBtn);
+        m_gridBtn->setChecked(v);
+    }
+    if (m_gridShowAct)
+        m_gridShowAct->setChecked(v);
     updateGridBtn();
+}
+
+/* 只同步勾选态、不动运行时值：右键菜单弹出前 + 按钮创建后各用一次
+ * （网格初始态可能由 --grid 等入口直接写进 canvas，绕过 setShowGrid）。 */
+void MainWindow::syncGridToggleUi()
+{
+    const bool on = m_canvas && m_canvas->isGridOn();
+    if (m_gridBtn) {
+        QSignalBlocker blk(m_gridBtn);
+        m_gridBtn->setChecked(on);
+    }
+    if (m_gridShowAct)
+        m_gridShowAct->setChecked(on);
 }
 
 void MainWindow::setDatum(int id)
@@ -1113,43 +1116,14 @@ void MainWindow::setDatum(int id)
     updateDatumTip();
     for (QAction *a : m_datumActs)
         a->setChecked(a->data().toInt() == id);
-    for (QAction *a : m_gridDatumActs)
-        a->setChecked(a->data().toInt() == id);
     /* 落盘延到 app_shutdown（app_persist_settings 统一写回 settings.ini） */
     settings_set_int(m_a->cfg, "datum", id);
     m_a->need_redraw = 1;   /* 经纬网/读数立即按新基准重绘 */
 }
 
-/* 坐标网按钮左键：在 关 → WGS84 → CGCS2000 → 北京54 → 西安80 → 关 间循环。
- * 「关」是循环的一档（不再只是循环外的独立开关），左键一路点到底必能关掉网格。
- * ★ 从「关」进入循环时归到第一档 WGS84，保证 关→d0→…→d3→关 是一个闭合全循环；
- *   否则关态会停在"最后一个坐标系"上，导致 关↔末档 死循环、回不到 WGS84。
- * 右键菜单仍可精确选坐标系 + 开关网格，与左键循环互不干扰。 */
-void MainWindow::cycleGridDatum()
-{
-    if (!m_canvas) return;
-    if (!m_canvas->isGridOn()) {
-        /* 关 → 开：进入循环第一档（WGS84） */
-        m_canvas->setShowGrid(true);
-        if ((int)m_a->datum != (int)DATUM_WGS84) setDatum((int)DATUM_WGS84);
-        updateGridBtn();
-        m_a->need_redraw = 1;
-        return;
-    }
-    /* 开 → 循环推进坐标系；已是最后一个（西安80）则回到「关」 */
-    int next = (int)m_a->datum + 1;
-    if (next >= (int)DATUM_COUNT) {
-        m_canvas->setShowGrid(false);
-        updateGridBtn();
-        m_a->need_redraw = 1;
-        return;
-    }
-    setDatum(next);
-}
-
 /* 坐标网按钮的悬停提示：简洁三行，避免超出界面、也别堆砌长篇来源说明
  * （datum_note 的来龙去脉已随菜单项/坐标系说明承载，不再塞进窄按钮的提示）。
- * 网格类型（经纬网/方里格）与坐标系（大地基准）已解耦，各自由菜单选；
+ * 网格类型（经纬网/方里格）与坐标系（大地基准）已解耦、都在 ☰「设置」菜单选；
  * 提示随 setGridType/setDatum/开关态刷新。 */
 void MainWindow::updateDatumTip()
 {
@@ -1163,7 +1137,7 @@ void MainWindow::updateDatumTip()
     tip += trc("坐标系：%1    网格：%2\n")
                .arg(QString::fromUtf8(datum_label(id)))
                .arg(gt == GRID_GK ? trc("方里格") : trc("经纬网"));
-    tip += trc("左键循环切换 · 右键菜单");
+    tip += trc("点击开关 · 坐标系在「设置」菜单选择");
     m_gridBtn->setToolTip(tip);
 }
 
@@ -1177,7 +1151,7 @@ void MainWindow::updateGridBtn()
 }
 
 /* 坐标网「显示坐标网」开关（右键菜单用）：仅**开关**网格。
- * 坐标系切换走左键 cycleGridDatum / 右键菜单，网格类型与坐标系已解耦。 */
+ * 坐标系切换收进 ☰「设置」子菜单，网格类型与坐标系已解耦（按钮不再碰坐标系）。 */
 void MainWindow::toggleGrid()
 {
     if (m_canvas) m_canvas->setShowGrid(!m_canvas->isGridOn());

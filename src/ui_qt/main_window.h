@@ -5,7 +5,7 @@
  *   取消顶栏菜单栏：全部功能收进右栏「≡主菜单」一个弹出按钮（Qt 弹出菜单）。
  *   **浮在地图上的独立按钮**（不进任何工具栏）：
  *       左上角：搜索按钮（点击才展开搜索框）
- *       右上角：放大 / 缩小 / 定位 / 昼夜 / 坐标网(点击循环切换坐标系) / 轨迹 / ≡主菜单
+ *       右上角：放大 / 缩小 / 定位 / 昼夜 / 坐标网(点击开关，坐标系在「设置」菜单选) / 轨迹 / ≡主菜单
  *   左侧步骤面板（QDockWidget + QListWidget）：转向指令列表
  * 地图画布（MapCanvas）作为 centralWidget，负责渲染与地图交互。
  *
@@ -63,12 +63,12 @@ public:
     /* 坐标网叠加层开关（右栏「坐标网」按钮 / --grid 用） */
     void setShowGrid(bool v);
 
-    /* 坐标系（大地基准）切换：☰ 菜单 / 菜单栏「坐标系(C)」；右栏只在下拉框
-     * 撤掉后留下的坐标网按钮悬停提示里显示"当前坐标系"（updateDatumTip） */
+    /* 坐标系（大地基准）切换：☰「设置」子菜单（2026-11-22 起唯一入口；坐标网按钮
+     * 已改纯开关不再碰坐标系）；右栏按钮悬停提示里显示"当前坐标系"（updateDatumTip） */
     void setDatum(int id);
     void updateDatumTip();             /* 刷新坐标网按钮悬停提示里的"当前坐标系 + 网格类型" */
-    void toggleGrid();                 /* 右栏坐标网右键菜单「显示坐标网」用：开关网格 */
-    void cycleGridDatum();             /* 坐标网按钮左键：关→开（保持基准）→ 循环切换坐标系 */
+    void toggleGrid();                 /* 开关网格（右键菜单等入口共用；不碰坐标系） */
+    void syncGridToggleUi();           /* 只同步按钮/右键菜单勾选态（不动运行时值） */
     void setGridType(int t);           /* 设置网格类型（0 经纬网 / 1 方里格），持久化 */
     void updateGridBtn();              /* 同步按钮悬停提示（图标本身不显文字） */
     void applyOverlayAlpha();          /* 把 App::ovl_alpha 作用到本前端的浮层上 */
@@ -215,11 +215,10 @@ private:
      *   所以改成记下原 geometry → setGeometry(可用区) → 再还原，跨平台一致。 */
     bool          m_winMaxed    = false;
     QRect         m_winNormalGeom;
-    QToolButton  *m_gridBtn = nullptr;    /* 右栏「坐标网」按钮：左键循环切换坐标系，右键菜单精确选 + 开关网格 */
-    QMenu        *m_gridCtx = nullptr;     /* 坐标网按钮右键菜单（显示网格 + 坐标系） */
+    QToolButton  *m_gridBtn = nullptr;    /* 右栏「坐标网」按钮：可勾选纯开关（2026-11-22 起），坐标系选择收进 ☰「设置」 */
+    QMenu        *m_gridCtx = nullptr;     /* 坐标网按钮右键菜单（只留网格开关） */
     QAction      *m_gridShowAct = nullptr; /* 右键菜单「显示坐标网」勾选项 */
-    QList<QAction*> m_datumActs;           /* ☰ 菜单里的坐标系动作（与悬停提示同步） */
-    QList<QAction*> m_gridDatumActs;       /* 右键菜单里的坐标系动作（与 ☰ 菜单、悬停提示同步） */
+    QList<QAction*> m_datumActs;           /* ☰「设置」子菜单里的坐标系动作（与悬停提示同步） */
     QAction      *m_contourAct = nullptr;  /* 设置菜单「等高线」勾选项（与 O 键同步） */
     QAction      *m_dayNightAct = nullptr; /* 设置菜单「夜间模式」勾选项（与 D 键、右栏昼/夜按钮同步） */
     QAction      *m_dayNightAutoAct = nullptr; /* 设置菜单「自动（日出日落）」勾选项 */

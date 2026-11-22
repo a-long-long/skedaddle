@@ -584,97 +584,135 @@ int MainWindow::runUiSelfTest()
         m_a->need_redraw = 1;
     }
 
-    /* ⑬ 坐标网按钮：左键在 关 → 各坐标系 → 关 之间循环（循环态含"关"）。
-     *    右键菜单可精确选坐标系 + 开关网格。网格类型（经纬网/方里格）与坐标系已解耦。
-     *    逐状态验：左键第 1 下 关→开（基准不变）；之后每次推进 datum；完整循环
-     *    = DATUM_COUNT 个坐标系 + 1 个「关」共 DATUM_COUNT+1 态回绕；"关"可达；
-     *    右键菜单 datum 动作与「显示坐标网」开关都生效；悬停提示"网格类型"由
-     *    m_a->grid_type 决定、与 datum 无关。 */
+    /* ⑬ 坐标网按钮：**纯开关**（2026-11-22 改）。左键/右键菜单都只切网格显隐，
+     *    不再碰坐标系；坐标系（大地基准）收进 ☰「设置」子菜单（radio）。
+     *    逐项验：按钮可勾选且勾选态=网格态；连续点击只翻转开关、datum 不动
+     *    （钉死"循环"不回归）；设置菜单选坐标系 → datum 变、**右下角读数口径
+     *    跟随**；网格类型（经纬网/方里格）与坐标系解耦，仍由设置菜单管。 */
     {
         const int  keep_gt = m_a->grid_type;
         const int  user_d  = m_a->datum;   /* 本机持久化值，段末还原用它 */
         const bool keep_g  = m_canvas->isGridOn();
 
-        /* ★ 先把 datum 归一到 WGS84 再验"关→开基准不变"：
-         *   cycleGridDatum 的关→开档本就会把 datum 归位 WGS84（进入循环第一档），
-         *   本机持久化 datum 非默认时，不归一的话这条断言必然假 FAIL
-         *   （2026-11-12 Windows 实机踩到；Linux 默认 settings 恰好是 WGS84 才一直绿）。
-         *   keep_d 即归一后的值，段内"切回原坐标系"语义不变；user_d 在段末还原。 */
         setDatum((int)DATUM_WGS84);
-        const int keep_d = (int)DATUM_WGS84;
 
-        /* 起始：确保关着（按钮只显示图标不显文字，故只校验状态） */
+        /* 起始：关（按钮只显示图标不显文字，校验勾选态与运行时状态） */
         m_canvas->setShowGrid(false);
         updateGridBtn();
         check(!m_canvas->isGridOn(), "坐标网初始：关");
+        check(m_gridBtn->isCheckable(), "坐标网按钮：可勾选（开关语义）");
+        check(!m_gridBtn->isChecked(), "坐标网初始：按钮未勾选");
 
-        /* 第 1 下：关 → 开（保持当前坐标系，不切基准） */
+        /* 左键①：关 → 开；坐标系不被按钮改动（2026-11-22 起按钮与坐标系解耦） */
         emit m_gridBtn->clicked();
         QApplication::processEvents();
-        check(m_canvas->isGridOn(), "左键①：关 → 开（保持坐标系）");
-        check((int)m_a->datum == keep_d, "左键①：开时坐标系不变");
+        check(m_canvas->isGridOn(), "左键①：关 → 开");
+        check(m_gridBtn->isChecked(), "左键①：按钮勾选亮起");
+        check((int)m_a->datum == (int)DATUM_WGS84, "左键①：坐标系不被按钮改动");
 
-        /* 第 2 下：循环切换坐标系（WGS84→CGCS2000→北京54→西安80→关→回绕） */
-        const int before = (int)m_a->datum;
+        /* 左键②：再点 → 关。旧版这里会推进坐标系（循环），必须钉死不回归 */
         emit m_gridBtn->clicked();
         QApplication::processEvents();
-        const int after = (int)m_a->datum;
-        check(after == (before + 1) % (int)DATUM_COUNT, "左键②：坐标系循环推进 1 档");
-        check(m_gridBtn->toolTip().contains(QString::fromUtf8(datum_label((DatumId)after))),
-              "左键②：悬停提示跟随新坐标系");
+        check(!m_canvas->isGridOn(), "左键②：开 → 关（纯开关，不再循环）");
+        check((int)m_a->datum == (int)DATUM_WGS84, "左键②：坐标系仍不变");
 
-        /* 完整循环 = DATUM_COUNT 个坐标系 + 1 个「关」共 DATUM_COUNT+1 态，
-         * 回绕到 after 态（开 + 同一坐标系）。 */
-        for (int i = 0; i < (int)DATUM_COUNT + 1; i++) {
-            emit m_gridBtn->clicked();
+        /* 「设置」子菜单：坐标系 radio 选西安80 → datum 变、右下角读数口径跟随 */
+        check(m_datumActs.size() == (int)DATUM_COUNT, "设置菜单：坐标系动作已建");
+        if (m_datumActs.size() == (int)DATUM_COUNT) {
+            /* radio 确实挂在「设置」子菜单里（父菜单的 menuAction 在 m_setMenu 中） */
+            const QMenu *dmenu = qobject_cast<const QMenu *>(m_datumActs[0]->parent());
+            check(dmenu && m_setMenu && m_setMenu->actions().contains(dmenu->menuAction()),
+                  "设置菜单：坐标系子菜单已收进「设置」");
+
+            m_datumActs[(int)DATUM_XA80]->trigger();
             QApplication::processEvents();
+            check((int)m_a->datum == (int)DATUM_XA80, "设置菜单：选西安80 → datum 变西安80");
+            check(m_datumActs[(int)DATUM_XA80]->isChecked(), "设置菜单：西安80 项勾选态同步");
+            /* 右下角读数跟随所选坐标系（前缀换成基准短名） */
+            m_canvas->update();
+            check(m_canvas->cursorCoordsText().startsWith(QString::fromUtf8("西安80")),
+                  "右下角读数按所选坐标系呈现");
         }
-        check(m_canvas->isGridOn() && (int)m_a->datum == after,
-              "左键：完整循环(含关)回绕到原态");
 
-        /* 再从当前态连续点直到「关」，验证"关"确实是循环末项之后的档 */
-        int guard = 0;
-        while (m_canvas->isGridOn() && guard++ < 16) {
-            emit m_gridBtn->clicked();
-            QApplication::processEvents();
-        }
-        check(!m_canvas->isGridOn(), "左键：循环到末项再点一次 → 关");
+        /* 网格类型与坐标系解耦（提示由 m_a->grid_type 决定） */
+        m_canvas->setShowGrid(true);
+        setGridType((int)GRID_LATLON); updateGridBtn();
+        check(m_gridBtn->toolTip().contains(QStringLiteral("经纬网")),
+              "网格类型保持经纬网（与坐标系解耦）");
+        setGridType((int)GRID_GK); updateGridBtn();
+        check(m_gridBtn->toolTip().contains(QStringLiteral("方里格")),
+              "网格类型切方里格（与坐标系解耦）");
 
-        /* 右键菜单：精确选坐标系 + 开关网格 */
-        check(!m_gridDatumActs.isEmpty(), "右键菜单：坐标系动作已建");
+        /* 右键菜单「显示坐标网」开关（坐标系项已从右键菜单移除） */
         check(m_gridShowAct != nullptr, "右键菜单：网格开关动作存在");
-        if (!m_gridDatumActs.isEmpty()) {
-            m_gridDatumActs[(int)DATUM_XA80]->trigger();
-            QApplication::processEvents();
-            check((int)m_a->datum == (int)DATUM_XA80, "右键菜单：选西安80 → datum 变西安80");
-            check(m_gridDatumActs[(int)DATUM_XA80]->isChecked(), "右键菜单：西安80 项勾选态同步");
-
-            /* 网格开关 */
-            bool g0 = m_canvas->isGridOn();
+        if (m_gridShowAct) {
+            const bool g0 = m_canvas->isGridOn();
             m_gridShowAct->trigger(); QApplication::processEvents();
-            check(m_canvas->isGridOn() != g0, "右键菜单：切换网格开关（关→开）");
+            check(m_canvas->isGridOn() != g0, "右键菜单：切换网格开关");
+            check(m_gridShowAct->isChecked() == m_canvas->isGridOn(),
+                  "右键菜单：勾选态与网格态一致");
             m_gridShowAct->trigger(); QApplication::processEvents();
-            check(m_canvas->isGridOn() == g0, "右键菜单：再切回原状态（开→关）");
-
-            /* 解耦：网格类型不受坐标系影响 */
-            m_canvas->setShowGrid(true);
-            setGridType((int)GRID_LATLON); updateGridBtn();
-            setDatum((int)DATUM_BJ54); updateGridBtn();
-            check(m_gridBtn->toolTip().contains(QStringLiteral("经纬网")) &&
-                  m_gridBtn->toolTip().contains(QStringLiteral("北京")),
-                  "切换坐标系：网格类型保持经纬网（解耦）");
-            setGridType((int)GRID_GK); updateGridBtn();
-            setDatum(keep_d); updateGridBtn();
-            check(m_gridBtn->toolTip().contains(QStringLiteral("方里格")) &&
-                  m_gridBtn->toolTip().contains(QString::fromUtf8(datum_label((DatumId)keep_d))),
-                  "切回原坐标系：网格类型仍方里格（解耦验证）");
+            check(m_canvas->isGridOn() == g0, "右键菜单：再切回原状态");
         }
 
-        /* 还原（datum 恢复本机持久化原值，而非段内归一的 WGS84） */
+        /* 还原（datum 恢复本机持久化原值） */
         m_canvas->setShowGrid(keep_g);
         setGridType(keep_gt);
         setDatum(user_d);
         updateGridBtn();
+    }
+
+    /* ⑬b 网格开着 → 「设置」里切坐标系：网格**下一帧**就刷新成新坐标系
+     *    （2026-11-22 要求钉死，防重绘链将来被悄悄打断）。
+     *    重绘链 = setDatum 置 need_redraw → MainWindow::tick(33ms) → renderNow
+     *    → update() → paintEvent → drawGraticule 读**当下** m_a->datum。全链无
+     *    缓存，所以判据用**像素**两对照（延续第 ⑨ 项"函数在 ≠ 画出来了"的教训）：
+     *    ① 网格开 + WGS84 vs 网格开 + 北京54 → 必须不同（网格内容按新基准重画，
+     *      标签 %.4f° 的基准差远超一个像素）；② 网格关 + 两基准 → 裁掉右下角
+     *      读数框后必须相同（底图几何是 WGS84 不含基准；读数随基准走是第 ⑪ 项
+     *      的语义，不裁会假 FAIL）——防"整帧乱画"也能让 ① 变绿。
+     *    tick() 走真实节奏（收割/按需渲染），比直接 renderNow 更贴近用户感知路径。 */
+    {
+        const int  keep_d = m_a->datum;
+        const bool keep_g = m_canvas->isGridOn();
+
+        m_canvas->setShowGrid(true);
+        /* ★ 先钉重绘链本身：grab() 会强制同步重画、绕过"要不要重绘"的判定，
+         *   光靠下面的像素对照抓不住"链断了但 grab 救场"的退化。所以显式断言
+         *   setDatum 置位 need_redraw、tick 消费它——两环任何一环被拆都当场挂。 */
+        m_a->need_redraw = 0;
+        setDatum((int)DATUM_WGS84);
+        check(m_a->need_redraw, "setDatum 置位 need_redraw（切坐标系必请求重绘）");
+        m_canvas->tick();                       /* 真实链路：消费请求 → 重渲底图 → 请求重绘 */
+        check(!m_a->need_redraw, "tick 消费重绘请求（重绘链未被拆）");
+        const QImage g_wgs = m_canvas->grab().toImage();
+
+        setDatum((int)DATUM_BJ54);
+        m_canvas->tick();
+        const QImage g_bj = m_canvas->grab().toImage();
+
+        /* 网格关：切基准，除**右下角坐标框**外整帧必须不变。
+         * ★ 对照面必须把读数区裁掉：右下角读数本来就是随基准走的（第 ⑪ 项
+         *   验的正是它），不裁的话这条会假 FAIL；裁掉后底图几何是 WGS84、
+         *   不含基准 ⇒ 剩余像素必须逐位相同——防"整帧乱画"混过 ①。 */
+        m_canvas->setShowGrid(false);
+        m_canvas->tick();
+        const QImage n_bj = m_canvas->grab().toImage();
+        setDatum((int)DATUM_WGS84);
+        m_canvas->tick();
+        const QImage n_wgs = m_canvas->grab().toImage();
+        /* 裁掉右下角读数框（右下 340×44 覆盖最长读数行 + pad 余量） */
+        auto cropNoReadout = [](const QImage &im) {
+            return im.copy(0, 0, qMax(0, im.width() - 340), qMax(0, im.height() - 44));
+        };
+
+        check(g_wgs != g_bj, "网格开：设置切坐标系 → 下一帧网格按新基准重画（像素变）");
+        check(cropNoReadout(n_bj) == cropNoReadout(n_wgs),
+              "网格关：切坐标系除读数框外像素不变（差异仅来自网格/读数两个判据面）");
+
+        m_canvas->setShowGrid(keep_g);
+        setDatum(keep_d);
+        m_canvas->tick();
     }
 
     /* ⑭ 坐标网细分刻度线开关（设置项，依附网格；「设置」菜单可勾选，持久化）。

@@ -174,7 +174,7 @@ static const TrPair TR[] = {
     /* 坐标网按钮悬停提示（updateDatumTip） */
     { "坐标网：%1\n", "Grid: %1\n" },
     { "坐标系：%1    网格：%2\n", "Datum: %1    Grid: %2\n" },
-    { "左键循环切换 · 右键菜单", "Left-click cycles · right-click menu" },
+    { "点击开关 · 坐标系在「设置」菜单选择", "Click to toggle · datum in Settings menu" },
 
     /* 浮层透明度对话框（showOverlayAlphaDialog） */
     { "浮层透明度", "Overlay opacity" },

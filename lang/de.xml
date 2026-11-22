@@ -72,7 +72,7 @@
   <item><zh>搜索地点或道路（Ctrl+F）</zh><de>Ort oder Straße suchen (Ctrl+F)</de></item>
   <item><zh>搜索</zh><de>Suchen</de></item>
   <item><zh>搜索地点、道路…</zh><de>Ort, Straße…</de></item>
-  <item><zh>左键循环切换 · 右键菜单</zh><de>Links: zyklisch · Rechts: Menü</de></item>
+  <item><zh>点击开关 · 坐标系在「设置」菜单选择</zh><de>Klick: umschalten · Referenz im Menü Einstellungen</de></item>
   <item><zh>浮层透明度</zh><de>Deckkraft der Overlays</de></item>
   <item><zh>（C 核心）</zh><de>(C-Kern)</de></item>
   <item><zh>默认</zh><de>Standard</de></item>
@@ -96,7 +96,6 @@
   <item><zh>（还没有途经点：面板开着时点地图即可添加；也可先设好起点和终点）</zh><de>(Noch keine Via-Punkte: Panel offen lassen und Karte klicken, oder Start/Ziel setzen.)</de></item>
   <item><zh>全程约 %1 km</zh><de>Gesamt ca. %1 km</de></item>
   <item><zh>下载地图（全球可下载区域 · Geofabrik）</zh><de>Karte herunterladen (Geofabrik)</de></item>
-  <item><zh>可下载区域（✓已下载 ·未下载）</zh><de>Verfügbare Regionen (✓ heruntergeladen · ausstehend)</de></item>
   <item><zh>选择左侧一个地区，查看下载链接并下载。</zh><de>Wählen Sie links eine Region, um den Link zu sehen und zu laden.</de></item>
   <item><zh>下载并转换</zh><de>Herunterladen und konvertieren</de></item>
   <item><zh>复制下载链接</zh><de>Link kopieren</de></item>
@@ -108,7 +107,6 @@
   <item><zh>GPX 轨迹</zh><de>GPX-Spuren</de></item>
   <item><zh>所有文件</zh><de>Alle Dateien</de></item>
   <item><zh>导出全部为 GPX</zh><de>Alles als GPX exportieren</de></item>
-  <item><zh>  ✓已下载</zh><de>  ✓ heruntergeladen</de></item>
   <item><zh>  ·未下载</zh><de>  · ausstehend</de></item>
   <item><zh>  (%1/%2)</zh><de>  (%1/%2 geladen)</de></item>
   <item><zh>本地已存在 %1。正在比对远端是否有更新…</zh><de>%1 liegt lokal vor. Vergleich mit Server…</de></item>
