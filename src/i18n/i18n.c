@@ -95,6 +95,17 @@ static const TrPair TR[] = {
     { "CGCS2000（2000国家大地坐标系）", "CGCS2000 (2000 national datum)" },
     { "北京 1954",  "Beijing 1954" },
     { "西安 1980",  "Xian 1980" },
+    { "ITRF2020（国际地球参考框架2020）", "ITRF2020 (Intl Terrestrial Ref. Frame 2020)" },
+    { "ETRS89（欧洲1989地球参考系）",     "ETRS89 (European Ref. System 1989)" },
+    { "NAD83(2011)（1983北美基准，2011历元）", "NAD83(2011) (North American Datum 1983, epoch 2011)" },
+    { "JGD2000（日本大地基准2000）",      "JGD2000 (Geodetic Datum of Japan 2000)" },
+    { "JGD2011（日本大地基准2011）",      "JGD2011 (Geodetic Datum of Japan 2011)" },
+    { "OSGB36（1936英国国家基准）",       "OSGB36 (Ordnance Survey GB 1936)" },
+    { "GDA2020（澳大利亚大地基准2020）",  "GDA2020 (Geocentric Datum of Australia 2020)" },
+    { "SIRGAS2000（南美洲地心参考系2000）", "SIRGAS2000 (South American Geocentric Ref. 2000)" },
+    { "AFREF（非洲大地参考框架）",        "AFREF (African Geodetic Ref. Frame)" },
+    { "CGCS2000（2025历元）", "CGCS2000 (epoch 2025)" },
+    { "GDM2000（马来西亚大地基准2000）",  "GDM2000 (Geodetic Datum of Malaysia 2000)" },
 
     /* C 核心自绘设置面板（chrome.c） */
     { "设置",       "Settings" },

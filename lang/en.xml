@@ -36,6 +36,17 @@
   <item><zh>CGCS2000（2000国家大地坐标系）</zh><en>CGCS2000 (2000 national datum)</en></item>
   <item><zh>北京 1954</zh><en>Beijing 1954</en></item>
   <item><zh>西安 1980</zh><en>Xian 1980</en></item>
+  <item><zh>ITRF2020（国际地球参考框架2020）</zh><en>ITRF2020 (Intl Terrestrial Ref. Frame 2020)</en></item>
+  <item><zh>ETRS89（欧洲1989地球参考系）</zh><en>ETRS89 (European Ref. System 1989)</en></item>
+  <item><zh>NAD83(2011)（1983北美基准，2011历元）</zh><en>NAD83(2011) (North American Datum 1983, epoch 2011)</en></item>
+  <item><zh>JGD2000（日本大地基准2000）</zh><en>JGD2000 (Geodetic Datum of Japan 2000)</en></item>
+  <item><zh>JGD2011（日本大地基准2011）</zh><en>JGD2011 (Geodetic Datum of Japan 2011)</en></item>
+  <item><zh>OSGB36（1936英国国家基准）</zh><en>OSGB36 (Ordnance Survey GB 1936)</en></item>
+  <item><zh>GDA2020（澳大利亚大地基准2020）</zh><en>GDA2020 (Geocentric Datum of Australia 2020)</en></item>
+  <item><zh>SIRGAS2000（南美洲地心参考系2000）</zh><en>SIRGAS2000 (South American Geocentric Ref. 2000)</en></item>
+  <item><zh>AFREF（非洲大地参考框架）</zh><en>AFREF (African Geodetic Ref. Frame)</en></item>
+  <item><zh>CGCS2000（2025历元）</zh><en>CGCS2000 (epoch 2025)</en></item>
+  <item><zh>GDM2000（马来西亚大地基准2000）</zh><en>GDM2000 (Geodetic Datum of Malaysia 2000)</en></item>
   <item><zh>设置</zh><en>Settings</en></item>
   <item><zh>关</zh><en>Off</en></item>
   <item><zh>开</zh><en>On</en></item>

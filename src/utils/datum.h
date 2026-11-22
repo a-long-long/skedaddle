@@ -24,6 +24,21 @@ typedef enum {
     DATUM_CGCS2000 = 1,   /* 中国 2000 国家大地坐标系：与 WGS84 近等（差 < 2 m） */
     DATUM_BJ54     = 2,   /* 北京 1954（克拉索夫斯基 1940 椭球） */
     DATUM_XA80     = 3,   /* 西安 1980（1975 IUGG 椭球） */
+    /* ---- 2026-11-22 追加：国际基准（详见 datum.c 参数表出处注释） ----
+     * 5~9 号是地心框架（GRS80 椭球，与各自对齐的 ITRF 差厘米~分米级），
+     * 对 WGS84 的平移按 EPSG 的 nil 处理取 0；OSGB36 是唯一参心老基准，
+     * 出厂即带完整 7 参数（EPSG:1314）。 */
+    DATUM_ITRF2020 = 4,   /* 国际地球参考框架 2020 */
+    DATUM_ETRS89   = 5,   /* 欧洲 1989 地球参考系 */
+    DATUM_NAD83_2011 = 6, /* 北美 1983 基准（2011 历元） */
+    DATUM_JGD2000  = 7,   /* 日本 2000 大地基准 */
+    DATUM_JGD2011  = 8,   /* 日本 2011 大地基准 */
+    DATUM_OSGB36   = 9,   /* 1936 英国国家基准（Airy 1830 椭球，全 7 参数） */
+    DATUM_GDA2020  = 10,  /* 澳大利亚 2020 大地基准 */
+    DATUM_SIRGAS2000 = 11,/* 南美洲地心参考系 2000 */
+    DATUM_AFREF    = 12,  /* 非洲大地参考框架 */
+    DATUM_CGCS2000_2025 = 13, /* 2000 国家大地坐标系（2025 参考历元） */
+    DATUM_GDM2000  = 14,  /* 马来西亚大地基准 2000 */
     DATUM_COUNT
 } DatumId;
 
@@ -43,7 +58,8 @@ typedef enum {
 } GridTypeId;
 
 /* 方里格投影所用的基准：读数基准是 WGS84 时用 CGCS2000（国标公里网），
- * 读数基准是某中文基准时直接用该基准，保证方里格与读数口径一致。 */
+ * 其它基准（含 2026-11-22 追加的国际基准）直接用该基准（高斯投影按其椭球
+ * 展开），保证方里格与读数口径一致。 */
 static inline DatumId grid_gk_datum(DatumId readout)
 {
     return (readout == DATUM_WGS84) ? DATUM_CGCS2000 : readout;

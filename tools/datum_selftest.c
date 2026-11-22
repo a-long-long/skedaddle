@@ -6,6 +6,12 @@
  *   3) CGCS2000 ≈ WGS84：往返（wgs84_to → to_wgs84）与原点差 < 1e-9 度（亚毫米）。
  *   4) 北京54 / 西安80 往返一致：wgs84_to → to_wgs84 回到原点 < 1e-9 度（变换可逆）。
  *      往返必须把 h 原样带回，否则测的是"丢了高程"而不是"不可逆"。
+ *   4b) 2026-11-22 追加的国际基准（ITRF2020/ETRS89/NAD83(2011)/JGD2000/JGD2011/
+ *      GDA2020/SIRGAS2000/AFREF/CGCS2000(2025)/GDM2000）：往返可逆 + 各自代表性
+ *      城市位移 < 5 m（框架型基准与 WGS84 差厘米~分米级，超 5 m 说明参数抄错）。
+ *      OSGB36 是唯一参心老基准、出厂带全 7 参数：① 参数表逐字段 = EPSG:1314
+ *      公布值；② 旋转/尺度真的在起作用（清零后位移差 > 20 m）；③ 格林尼治
+ *      锚点——OSGB36 零子午线与 WGS84 零子午线差 ~102 m（著名子午线偏差）。
  *   5) ★ 西安80 的位移必须落进**国家测绘地理信息局公布的图幅平移量区间**：
  *      "1980西安坐标系下的 X 平移量为 −9~+43 m，Y 方向的平移量为 +76~+119 m"
  *      （X=北向、Y=东向）。取 6 个分布点全中 ⇒ 同时钉住数值与方向。
@@ -142,6 +148,94 @@ int main(void)
         check(e < 1e-9, "北京54 往返可逆（误差 < 1e-9 度）");
         e = roundtrip_err(DATUM_XA80, 23.1291, 113.2644);
         check(e < 1e-9, "西安80 往返可逆（误差 < 1e-9 度）");
+    }
+
+    /* 4b) 2026-11-22 追加的国际基准。
+     *   框架型（地心 + GRS80，与各自对齐的 ITRF 差厘米~分米级）：每基准挑一个
+     *   代表性城市，位移 < 5 m（与 CGCS2000 同判据）。这不是恒等也能过的废话
+     *   判据——它同时防两头：谁将来给某基准抄了一份区域参数（会超 5 m）、或
+     *   给它们填了非出厂旋转/尺度，都当场 FAIL；往返可逆则防正/反算不自洽。 */
+    {
+        static const struct {
+            DatumId id; const char *name;
+            double la, lo;            /* 代表性城市（各基准的"本土"） */
+        } FR[] = {
+            { DATUM_ITRF2020,       "ITRF2020",        52.2297,  21.0122 }, /* 华沙 */
+            { DATUM_ETRS89,         "ETRS89",          52.5163,  13.3777 }, /* 柏林 */
+            { DATUM_NAD83_2011,     "NAD83(2011)",     39.7392, 104.9903 }, /* 丹佛 */
+            { DATUM_JGD2000,        "JGD2000",         35.6762, 139.6503 }, /* 东京 */
+            { DATUM_JGD2011,        "JGD2011",         34.6937, 135.5023 }, /* 大阪 */
+            { DATUM_GDA2020,        "GDA2020",        -33.8688, 151.2093 }, /* 悉尼 */
+            { DATUM_SIRGAS2000,     "SIRGAS2000",     -23.5505,  -46.6333 }, /* 圣保罗 */
+            { DATUM_AFREF,          "AFREF",            6.5244,   3.3792 }, /* 拉各斯 */
+            { DATUM_CGCS2000_2025,  "CGCS2000(2025)",  39.9042, 116.4074 }, /* 北京 */
+            { DATUM_GDM2000,        "GDM2000",          3.1390, 101.6869 }, /* 吉隆坡 */
+        };
+        const int NF = (int)(sizeof(FR) / sizeof(FR[0]));
+        int rev_ok = 1, nil_ok = 1;
+        for (int i = 0; i < NF; i++) {
+            double e = roundtrip_err(FR[i].id, FR[i].la, FR[i].lo);
+            double la, lo;
+            datum_wgs84_to(FR[i].id, FR[i].la, FR[i].lo, 0, &la, &lo, NULL);
+            double d = sk_haversine_m(FR[i].la, FR[i].lo, la, lo);
+            printf("    %-16s: 本土位移 %.3f m\n", FR[i].name, d);
+            if (e >= 1e-9) rev_ok = 0;
+            if (d >= 5.0) nil_ok = 0;
+        }
+        check(rev_ok, "国际基准(框架型 x10): 往返全部可逆");
+        check(nil_ok, "国际基准(框架型 x10): 各自本土位移 < 5 m（平移 0 = EPSG nil）");
+
+        /* OSGB36：本模块第一个出厂**全 7 参数**的基准，单独设三道判据。 */
+        DatumSevenParam p;
+        datum_get_seven_param(DATUM_OSGB36, &p);
+        check(fabs(p.dx + 446.448) < 1e-9 && fabs(p.dy - 125.157) < 1e-9 &&
+              fabs(p.dz + 542.060) < 1e-9 && fabs(p.rx + 0.1502) < 1e-9 &&
+              fabs(p.ry + 0.2470) < 1e-9 && fabs(p.rz + 0.8421) < 1e-9 &&
+              fabs(p.ds - 20.4894) < 1e-9,
+              "OSGB36: 参数表逐字段 = EPSG:1314 公布值");
+
+        double e_os = roundtrip_err(DATUM_OSGB36, 51.5074, -0.1278); /* 伦敦 */
+        check(e_os < 1e-9, "OSGB36 往返可逆（全 7 参数 + 矩阵逆）");
+
+        /* ② 旋转/尺度真的在起作用：把旋转/尺度清零后，伦敦点的换算结果必须
+         *   矢量差 > 10 m。★ 必须比**矢量**差而不是位移模差：旋转贡献矢量
+         *   与 ~150 m 平移位移不同向，模差只剩几米——第一版踩了这个坑。
+         *   量级解析预估（伦敦 φ≈51.5）：rz=−0.8421″ 主导，E ≈ |rz|·N·cosφ
+         *   ≈ 16 m，ry/rx 各贡献 ±3~6 m，合计 ~14 m（实测 14.5 m 与之吻合）；
+         *   旋转没装进算法则差为 0，立刻 FAIL。 */
+        DatumSevenParam q0 = p; q0.rx = q0.ry = q0.rz = q0.ds = 0.0;
+        datum_set_seven_param(DATUM_OSGB36, &q0);
+        double la1, lo1;
+        datum_wgs84_to(DATUM_OSGB36, 51.5074, -0.1278, 0, &la1, &lo1, NULL);
+        datum_reset_params(DATUM_OSGB36);
+        double la2, lo2;
+        datum_wgs84_to(DATUM_OSGB36, 51.5074, -0.1278, 0, &la2, &lo2, NULL);
+        double ve = (lo2 - lo1) * 111320.0 * cos(51.5074 * M_PI / 180.0);
+        double vn = (la2 - la1) * 111320.0;
+        double rotv = sqrt(ve * ve + vn * vn);
+        printf("    OSGB36 @伦敦: 旋转+尺度矢量贡献 %.1f m（北 %.1f / 东 %.1f）\n",
+               rotv, vn, ve);
+        check(rotv > 10.0, "OSGB36: 旋转/尺度矢量贡献 > 10 m（全 7 参数真的生效）");
+
+        /* ③ 格林尼治锚点（文献公认的"子午线偏差"）：Airy 子午仪圈定义 OSGB36
+         *   经度 0，它在 WGS84 下位于 **-0.00147°**（即 WGS84 零子午线在其
+         *   以东 ~102 m；GPS 实测 51°28′40.1″N 0°0′5.3″W）⇒ WGS84 经度 0 的
+         *   点换到 OSGB36 后经度应为 **-0.00147°**。窗口 ±0.00075°（±52 m）：
+         *   抓大错（尺度符号错/平移符号错 ⇒ 差出百米级），不卡 7 参数的
+         *   米级拟合残差（实测 -0.00162°，与文献值差 ~10 m，在残差内）。 */
+        double gla, glo;
+        datum_wgs84_to(DATUM_OSGB36, 51.4778, 0.0, 0, &gla, &glo, NULL);
+        printf("    OSGB36 @WGS84格林尼治: OSGB36 经度 %+.6f°（期望 ~-0.00147° ≈ 102 m）\n",
+               glo);
+        check(glo < -0.0007 && glo > -0.0022,
+              "OSGB36: 格林尼治子午线偏差 ~102 m（文献锚点，含方向）");
+
+        /* 负向对照：OSGB36 与 BJ54 在同一外国点（伦敦）的位移不能雷同。 */
+        double lbj, nbj, losg, nosg;
+        enu_shift(DATUM_BJ54,   51.5074, -0.1278, &lbj,  &nbj);
+        enu_shift(DATUM_OSGB36, 51.5074, -0.1278, &losg, &nosg);
+        double ddiff = sqrt((lbj - losg) * (lbj - losg) + (nbj - nosg) * (nbj - nosg));
+        check(ddiff > 20.0, "负向对照: OSGB36/BJ54 在伦敦的位移显著不同（参数未抄混）");
     }
 
     /* 5) 西安80：★ 硬判据 —— 拿国家测绘地理信息局公布的图幅平移量区间来核对。

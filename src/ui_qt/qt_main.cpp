@@ -88,7 +88,9 @@ int main(int argc, char **argv)
     int shot_nomap = 0;               /* --shot-nomap：截图前跑无图区弹窗+预选下载自检 */
     int shot_offscreen = 0;           /* --shot-offscreen：离屏像素审计，在 C 核心
                                          缓冲上跑共享审计后退出 */
-    const char *datum = NULL;         /* --datum=wgs84|cgcs2000|bj54|xa80：坐标系（命令行优先） */
+    const char *datum = NULL;         /* --datum=wgs84|cgcs2000|bj54|xa80|itrf2020|etrs89|
+                                         nad83|jgd2000|jgd2011|osgb36|gda2020|sirgas2000|
+                                         afref|gdm2000|cgcs2000-2025：坐标系（命令行优先） */
     const char *datum_grid = NULL;    /* --datum-grid=<file>：图幅改正量格网（入口②） */
     const char *gpx_in[8] = {0};      /* --gpx=<file>：启动即导入（可多次，最多 8 个） */
     int n_gpx_in = 0;
@@ -339,6 +341,38 @@ int main(int argc, char **argv)
         else if (!strcmp(datum, "xa80") || !strcmp(datum, "xian1980") ||
                  !strcmp(datum, "西安80") || !strcmp(datum, "西安1980"))
             did = DATUM_XA80;
+        /* ---- 2026-11-22 追加的国际基准 ---- */
+        else if (!strcmp(datum, "itrf2020") || !strcmp(datum, "itrf"))
+            did = DATUM_ITRF2020;
+        else if (!strcmp(datum, "etrs89") || !strcmp(datum, "etrs"))
+            did = DATUM_ETRS89;
+        else if (!strcmp(datum, "nad83") || !strcmp(datum, "nad83-2011") ||
+                 !strcmp(datum, "nad832011"))
+            did = DATUM_NAD83_2011;
+        else if (!strcmp(datum, "jgd2000"))
+            did = DATUM_JGD2000;
+        else if (!strcmp(datum, "jgd2011"))
+            did = DATUM_JGD2011;
+        else if (!strcmp(datum, "osgb36") || !strcmp(datum, "osgb"))
+            did = DATUM_OSGB36;
+        else if (!strcmp(datum, "gda2020"))
+            did = DATUM_GDA2020;
+        else if (!strcmp(datum, "sirgas2000") || !strcmp(datum, "sirgas"))
+            did = DATUM_SIRGAS2000;
+        else if (!strcmp(datum, "afref"))
+            did = DATUM_AFREF;
+        else if (!strcmp(datum, "gdm2000"))
+            did = DATUM_GDM2000;
+        else if (!strcmp(datum, "cgcs2000-2025") || !strcmp(datum, "cgcs2025") ||
+                 !strcmp(datum, "2000-2025"))
+            did = DATUM_CGCS2000_2025;
+        else {
+            fprintf(stderr, "提示: 未知坐标系 \"%s\"，按 WGS84 继续（可用：wgs84/"
+                            "cgcs2000/2000/bj54/xa80/itrf2020/etrs89/nad83/jgd2000/"
+                            "jgd2011/osgb36/gda2020/sirgas2000/afref/gdm2000/"
+                            "cgcs2000-2025）\n",
+                    datum);
+        }
         a.datum = did;
     }
 
