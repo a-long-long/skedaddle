@@ -146,9 +146,32 @@ void MapCanvas::paintEvent(QPaintEvent *)
     drawScaleBar(p);
     drawCompass(p);
     drawCursorCoords(p);
+    drawNoMapHint(p);
     drawRouteInfo(p);
     if (m_showGrid) drawGraticule(p);
     if (m_showSatellite) drawSkyPlot(p);
+}
+
+/* 拖动经过无图区：白画布上 pan 无可感知变化，画提示条告诉用户拖动生效。 */
+/* 判定口径与顶部无图横幅相同（mapset_coverage，视口中心）。 */
+void MapCanvas::drawNoMapHint(QPainter &p)
+{
+    if (!m_panning || m_pan_dx <= 12) return;
+    int cov = mapset_coverage(&m_a->ms, m_a->view.lat, m_a->view.lon,
+                              3000.0, NULL, 0);
+    if (cov == COV_HAS_ROAD || cov == COV_BBOX_ONLY) return;
+    QString t = QString::fromUtf8("无图区 · 拖动已生效（此处没有地图数据）");
+    QFont f = p.font();
+    f.setPointSize(11);
+    p.setFont(f);
+    const QRect tb = p.boundingRect(QRect(), 0, t);
+    const int tw = tb.width() + 26, th = tb.height() + 12;
+    const int x = (width() - tw) / 2, y = height() - th - 52;
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(18, 22, 28, 200));
+    p.drawRoundedRect(x, y, tw, th, 6, 6);
+    p.setPen(QColor(238, 240, 244));
+    p.drawText(QRect(x, y, tw, th), Qt::AlignCenter, t);
 }
 
 void MapCanvas::setShowGrid(bool v)
@@ -592,6 +615,7 @@ void MapCanvas::mousePressEvent(QMouseEvent *e)
     m_lasty = m_downy = (int)ep.y();
     if (e->modifiers() & Qt::ControlModifier) m_rotating = true;
     else                                      m_panning = true;
+    m_pan_dx = 0;
 }
 
 void MapCanvas::mouseMoveEvent(QMouseEvent *e)
@@ -620,6 +644,7 @@ void MapCanvas::mouseMoveEvent(QMouseEvent *e)
     } else if (m_panning) {
         int dx = ex - m_lastx, dy = ey - m_lasty;
         if (dx || dy) {
+            m_pan_dx += (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
             /* 旋转正确的平移：同一视口下反投影两个屏幕点，取地理差 */
             double la1, lo1, la2, lo2;
             mv_unproject(&m_a->view, m_lastx, m_lasty, &la1, &lo1);
@@ -639,6 +664,8 @@ void MapCanvas::mouseReleaseEvent(QMouseEvent *e)
     bool was_rotating = m_rotating;
     bool was_panning  = m_panning;
     m_panning = m_rotating = false;
+    m_pan_dx = 0;
+    update();   /* 重绘：清掉拖动提示条，避免松手后残留陈旧帧 */
     if (was_rotating) return;
     if (!was_panning) return;
     /* 拖动与点击的判别：位移 ≤4px 算点击 */

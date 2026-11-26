@@ -62,6 +62,7 @@ protected:
 private:
     void ensureBuffer(int w, int h);
     void drawScaleBar(QPainter &p);
+    void drawNoMapHint(QPainter &p); /* 拖动经过无图区时画提示条 */
     void drawCompass(QPainter &p);
     void drawGraticule(QPainter &p);             /* 坐标网格叠加层：WGS84=经纬网，其余=方里格 */
     void drawGraticuleGK(QPainter &p, DatumId id); /* 方里格（高斯公里网，非 WGS84 坐标系） */
@@ -93,6 +94,7 @@ public:
     /* 鼠标状态 */
     bool m_panning  = false;
     bool m_rotating = false;
+    int  m_pan_dx = 0;   /* 本次拖动累计位移(px)，无图区反馈用 */
     int  m_lastx = 0, m_lasty = 0;
     int  m_downx = 0, m_downy = 0;
 

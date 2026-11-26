@@ -70,7 +70,7 @@ static bool is_graph_dir(const char *path)
 
 int main(int argc, char **argv)
 {
-    const char *graph = "products/graph/beijing";
+    const char *graph = "products/graph";   /* 默认多省图集根：只挂单省会让其他区域只剩地名 */
     int w = 1280, h = 800;
     const char *font = NULL;          /* NULL = 默认字体候选链 */
     int font_size = 0;
@@ -259,10 +259,10 @@ int main(int argc, char **argv)
      * 进程纹丝不动，只能 SIGKILL）。现在不碰 SDL，这个坑整个消失：
      * Qt 的信号处理是 Qt 自己的，与 SDL 无关。 */
 
-    /* ★ 双击 exe 时工作目录 = exe 所在目录，默认相对路径 products/graph/beijing
+    /* ★ 双击 exe 时工作目录 = exe 所在目录，默认相对路径 products/graph
      * 解析不到 ⇒ app_init 直接 return 1、窗口根本没建出来，用户只看到"点了没反应"。
      * 这里按候选回退解析出真实地图目录：显式 --graph → 相对 cwd → 从 exe 目录
-     * 向上各层找 products/graph/beijing → 扫描图集 → SKEDADDLE_GRAPH 环境变量 →
+     * 向上各层找 products/graph → 扫描图集 → SKEDADDLE_GRAPH 环境变量 →
      * 最后弹窗让用户选。都不中才报错退出（且弹框而非静默退出）。 */
     static char g_graph_buf[4096];
     const char *resolved = graph;
@@ -273,11 +273,11 @@ int main(int argc, char **argv)
         } else {
             QString exeDir = QCoreApplication::applicationDirPath();
             QStringList cands;
-            cands << QDir::currentPath() + "/products/graph/beijing";
+            cands << QDir::currentPath() + "/products/graph";
             for (int k = 0; k <= 3; k++) {
                 QString base = exeDir;
                 for (int u = 0; u < k; u++) base += "/..";
-                cands << base + "/products/graph/beijing";
+                cands << base + "/products/graph";
                 QDir gd(base + "/products/graph");
                 if (gd.exists()) {
                     for (QString pv : gd.entryList(QDir::Dirs | QDir::NoDotAndDotDot))

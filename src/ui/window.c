@@ -257,6 +257,15 @@ int app_init(App *a, const char *graph_dir, int w, int h,
         clat = settings_get_dbl(a->cfg, "view_lat", clat);
         clon = settings_get_dbl(a->cfg, "view_lon", clon);
         czoom = settings_get_dbl(a->cfg, "view_zoom", czoom);
+        /* 上次退出位置无图时回退图集中心（2026-11-25 拖不动案例） */
+        if (a->ms.n > 0) {
+            int cov = mapset_coverage(&a->ms, clat, clon, 3000.0, NULL, 0);
+            if (cov != COV_HAS_ROAD && cov != COV_BBOX_ONLY) {
+                clat = ((int64_t)a->ms.bbox[0] + a->ms.bbox[2]) / 2 / 1e7;
+                clon = ((int64_t)a->ms.bbox[1] + a->ms.bbox[3]) / 2 / 1e7;
+                czoom = (a->ms.n > 1) ? 9.0 : 12.0;
+            }
+        }
     }
     mv_init(&a->view, clat, clon, czoom, w, h);
     dedup_init(&a->dd);
