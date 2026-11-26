@@ -205,7 +205,12 @@ static int kind_max_for_zoom(double zoom)
     if (zoom < 12) return 6;
     if (zoom < 13) return 9;
     if (zoom < 14) return 11;     /* POI(kind 11) 自 z13 起可见 */
-    return 12;
+    if (zoom < 17) return 12;
+    return 14;                    /* 门牌(kind 14) 自 z17（50 米档）起可见：
+                                     2026-11-26 前它"只进搜索永不画"，现随
+                                     「信息全显示」放开——z17 视口只有几十米宽，
+                                     门牌密度不至于淹没画面；weight 最低(8)，
+                                     Top-N 竞争不过 POI，只在高倍下补空隙。 */
 }
 
 /* 视口变化超过 20% 才重查 SQL；否则平移只重投影。
@@ -264,15 +269,18 @@ static int refresh_items(LabelCache *lc, const MapView *v, int show_poi)
     /* sub 列是 11-10 加的：老库没有这列，prepare 会报 "no such column"。
      * 回退到 "0 AS sub"（全部当通用蓝圆）——老库不必重建也能继续用，
      * 只是画不出子类配色。 */
+    /* kind 13（路名）始终排除：它由 paint_road_labels 从图数据单独渲染，
+     * 这里放进来会被当 POI 画蓝圆、与路名标注重复。放开 kind 14（门牌）
+     * 后 kind_max 会到 14，故必须显式跳过 13。 */
     const char *sql =
         "SELECT name,lat,lon,kind,weight,sub FROM place "
         "WHERE lat BETWEEN ?1 AND ?2 AND lon BETWEEN ?3 AND ?4 AND kind<=?5 "
-        "AND (?7 OR kind<>11) "
+        "AND kind<>13 AND (?7 OR kind<>11) "
         "ORDER BY weight DESC LIMIT ?6";
     const char *sql_old =
         "SELECT name,lat,lon,kind,weight,0 FROM place "
         "WHERE lat BETWEEN ?1 AND ?2 AND lon BETWEEN ?3 AND ?4 AND kind<=?5 "
-        "AND (?7 OR kind<>11) "
+        "AND kind<>13 AND (?7 OR kind<>11) "
         "ORDER BY weight DESC LIMIT ?6";
     sqlite3_stmt *st = NULL;
     if (sqlite3_prepare_v2(lc->db, sql, -1, &st, NULL) != SQLITE_OK) {
@@ -791,6 +799,20 @@ void paint_place_labels(Raster *rs, const MapView *v,
                               poi_R) != 0)
                     goto oom;
                 icons++;
+            }
+            continue;
+        }
+
+        /* 门牌（kind 14）：不画图标、灰色小字——它是"地址"不是"设施"，
+         * 配一个蓝圆反而误导。也不走 admin 大字层。 */
+        if (it->kind == 14) {
+            /* 上方 785 行已对本格占格，这里只管文字 */
+            if (show_labels) {
+                if (lcmd_push(halo_on ? LCMD_HALO : LCMD_SHADOW, font, it->name,
+                              tx, ty, ty - up_s - 3, ty + dn_s + 3,
+                              118, 122, 130, 0, 0, 0) != 0)
+                    goto oom;
+                drawn++;
             }
             continue;
         }

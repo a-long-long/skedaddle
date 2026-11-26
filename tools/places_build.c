@@ -858,7 +858,7 @@ static int handle_tagged_node(Builder *b, PbfBlock *blk, int64_t osm_id,
             emit_alarm(b, st, lat_e7 / 1e7, lon_e7 / 1e7, ms);
     }
 
-    /* ---- 门牌（addr:*）：kind 14 只进搜索、永不画 ----
+    /* ---- 门牌（addr:*）：kind 14 主要进搜索；z17 起也进标注（2026-11-26） ----
      * 用 osm_key 槽位 3，避免与同一 node 上可能同时存在的 POI 行（槽位 1）
      * 在 keyset_seen 里互撞 —— 一栋楼既叫「某某餐厅」又有门牌是常见的。 */
     {

@@ -77,7 +77,8 @@ int search_ext_load_csv(const char *path, SearchExtPoi **out, int *n_out);
 /* 把外部 POI 并入已打开的搜索库（可多次调用，逐次追加），返回实际并入条数。
  * ★ 外部 POI 与库里 POI 在搜索里是**并集**：显示层 poi_source 是"二选一"的
  *   渲染口径，搜索层不该屏蔽任何一边 —— 用户新加的数据要能被检索到，屏蔽
- *   库里的反而会减少结果（门牌 kind 14 早就是"只进搜索永不画"的先例）。
+ *   库里的反而会减少结果（渲染口径与搜索口径本就分离：门牌 kind 14 早年是
+ *   "只进搜索"，2026-11-26 起 z17+ 才纳入标注，搜索层始终全量召回）。
  * ★ items==NULL / n<=0 ⇒ 零追加，查询结果逐条不变（负向对照锚）。 */
 int search_add_external(SearchDb *d, const SearchExtPoi *items, int n);
 
