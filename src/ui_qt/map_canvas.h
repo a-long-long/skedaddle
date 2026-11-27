@@ -36,6 +36,17 @@ class MainWindow;
 bool sk_tick_label_pos(int ex, int ey, int w, int h, int lw, int asc,
                        int *lx, int *ly);
 
+/* 网格线可见段裁剪（Liang-Barsky）：端点常在画布外（投影曲率/旋转），
+ * 标签锚点取"可见段"的西端（end=0）或另一端（end=1），而不是原始端点——
+ * 否则要么整段文字出画、要么出画端点全挤在角落叠字。
+ * 返回 false = 线段完全不可见（不画标签）。 */
+bool sk_tick_anchor(int x1, int y1, int x2, int y2, int w, int h,
+                    int end, int *ax, int *ay);
+
+/* 方里格步长（米）：nice 1/2/5 步进，下限 1000 —— 放大后最小 1 公里一个方格，
+ * 不再出现 500m/200m 步长导致同一公里数重复标注。 */
+double sk_gk_step(double span_m);
+
 class MapCanvas : public QWidget {
 public:
     MapCanvas(App *a, MainWindow *mw, QWidget *parent = nullptr);
