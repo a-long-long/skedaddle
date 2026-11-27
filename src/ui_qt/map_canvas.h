@@ -43,9 +43,14 @@ bool sk_tick_label_pos(int ex, int ey, int w, int h, int lw, int asc,
 bool sk_tick_anchor(int x1, int y1, int x2, int y2, int w, int h,
                     int end, int *ax, int *ay);
 
-/* 方里格步长（米）：nice 1/2/5 步进，下限 1000 —— 放大后最小 1 公里一个方格，
- * 不再出现 500m/200m 步长导致同一公里数重复标注。 */
-double sk_gk_step(double span_m);
+/* 比例尺读数（米）：110px 目标长度的 nice 1/2/5 取整 —— 与 drawScaleBar
+ * （及 chrome.c draw_scale）同一套换算，两处必须一致。 */
+double sk_scale_dist(double mpp);
+
+/* 方里格步长（米）：跟随比例尺读数，下限 1 公里 ——
+ * 比例尺 1 公里时刻度 1 公里；比例尺 500m/200m/100m/50m 时不再细分，
+ * 恒为 1 公里一个方格（不再出现 500m/200m 步长重复标同一公里数）。 */
+double sk_gk_step_from_scale(double mpp);
 
 class MapCanvas : public QWidget {
 public:

@@ -214,6 +214,21 @@ bool sk_tick_label_pos(int ex, int ey, int w, int h, int lw, int asc,
     return true;
 }
 
+double sk_scale_dist(double mpp)
+{
+    const double target = 110.0 * mpp;
+    const double step = pow(10.0, floor(log10(target)));
+    const double rem = target / step;
+    const double unit = (rem >= 5.0) ? 5.0 : (rem >= 2.0) ? 2.0 : 1.0;
+    return unit * step;
+}
+
+double sk_gk_step_from_scale(double mpp)
+{
+    const double dist = sk_scale_dist(mpp);
+    return (dist < 1000.0) ? 1000.0 : dist;
+}
+
 bool sk_tick_anchor(int x1, int y1, int x2, int y2, int w, int h,
                     int end, int *ax, int *ay)
 {
@@ -236,16 +251,6 @@ bool sk_tick_anchor(int x1, int y1, int x2, int y2, int w, int h,
     if (ax) *ax = (int)qRound(x);
     if (ay) *ay = (int)qRound(y);
     return true;
-}
-
-double sk_gk_step(double span_m)
-{
-    if (span_m <= 0.0) return 1000.0;
-    const double p10 = pow(10.0, floor(log10(span_m / 6.0)));
-    const double n = (span_m / 6.0) / p10;
-    double step = ((n < 1.5) ? 1.0 : (n < 3.0) ? 2.0 : (n < 7.0) ? 5.0 : 10.0) * p10;
-    if (step < 1000.0) step = 1000.0;
-    return step;
 }
 
 /* ---- 坐标网格（经纬网 / 方里格，与坐标系解耦）：Qt 端叠加层，C 渲染核心一行不改 ----
@@ -388,9 +393,11 @@ void MapCanvas::drawGraticuleGK(QPainter &p, DatumId id)
     double span = qMax(Xmax - Xmin, Ymax - Ymin);
     if (span <= 0) return;
 
-    /* nice 公里步长（下限 1 公里）：放大后最小刻度恒为 1 公里一个方格，
-     * 不再出现 500m/200m 步长把同一公里数重复标在多条线上。 */
-    double step = sk_gk_step(span);
+    /* 步长跟随比例尺读数（下限 1 公里）：比例尺 1 公里 → 1 公里方格；
+     * 比例尺 500m/200m/… 时不再细分。与左下角比例尺同一套 nice 换算。 */
+    const double mpp = (40075016.686 * cos(m_a->view.lat * M_PI / 180.0)) /
+                       (256.0 * pow(2.0, m_a->view.zoom));
+    double step = sk_gk_step_from_scale(mpp);
 
     QFont f = p.font();
     f.setPointSize(8);
@@ -486,12 +493,8 @@ void MapCanvas::drawScaleBar(QPainter &p)
 {
     double mpp = (40075016.686 * cos(m_a->view.lat * M_PI / 180.0)) /
                  (256.0 * pow(2.0, m_a->view.zoom));
-    double target = 110.0 * mpp;
-    if (target <= 0) return;
-    double step = pow(10.0, floor(log10(target)));
-    double rem = target / step;
-    double unit = (rem >= 5.0) ? 5.0 : (rem >= 2.0) ? 2.0 : 1.0;
-    double dist = unit * step;
+    if (mpp <= 0) return;
+    double dist = sk_scale_dist(mpp);   /* 与方里格步长同一换算，保持联动 */
     int px = (int)(dist / mpp);
     if (px < 8 || px > width() - 40) return;
 
