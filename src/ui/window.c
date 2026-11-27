@@ -1578,6 +1578,7 @@ static void paint_frame(Raster *rs, App *a, PaintStats *st)
         if (!s->loaded) continue;
         if (s->has_features)
             paint_lines(rs, &a->view, &s->nodes, &s->lines, &s->polyrefs,
+                       s->np.ready ? &s->np : NULL,
                        &s->line_bbox, st);
     }
     /* 等高线：独立于线/面要素，叠加在路网之上、地名之下。受 show_contours 门控。 */

@@ -179,6 +179,7 @@ int  paint_areas(Raster *rs, const MapView *v,
 int  paint_lines(Raster *rs, const MapView *v,
                  const NMBinFile *nodes, const NMBinFile *lines,
                  const NMBinFile *polyrefs,
+                 const NamePool *namep,   /* 本省名称池，线名收集用，可 NULL */
                  int32_t **bbox_cache, PaintStats *st);
 
 /* 等高线（SRTM 生成，contours/polyrefs/pts 三件套）。bbox_cache 与线要素同机制

@@ -1307,3 +1307,19 @@ CLI 端到端：`--datum=xa80 --datum-grid=demo.txt`（北 +100 / 东 +200）⇒
   `regen_mini_chain.py --check`、`check_doc_numbers.sh`：全绿。
 - README 同步：标题改「从最小框架长到迷你导航端」；映射表 +7 行；
   运行数字 / 判据清单 / 链级 `steps=15` 全部换成实测值。
+
+---
+
+## 十九、2026-11-27 线名标注显示（水系/铁路/步行道）
+
+LF_NAME_ID 此前从未被消费。本次接进既有路名标注管线（line_emit 收集 -> road_labels_add -> paint_road_labels 统一去重/避让/绘制），零新模块。
+
+- `paint.{h,c}`：`paint_lines` 增 `namep` 参数（本省名称池，可 NULL）；`line_emit` 按与线 LOD 同门槛收集线名（水系/铁路 z12 起、步行道 z14 起），锚点取折线中点。
+- `window.c`：调用处传 `s->np.ready ? &s->np : NULL`。
+- ★ 根因修复：`ROAD_LABEL_CAP` 4096→16384。路名先于线名收集（`paint_roads` 在 `paint_lines` 之前），实测北京 z12 起 4096 即被路名单独打满，线名候选全被 `road_labels_add` 的容量守卫静默丢弃（此前出图与基线逐字节相同 = 假装接了其实没画）。
+
+### 验收（本机实跑，8 省数据齐全）
+
+- 北京 z14：`road_labels` 173 → **393**；关线名对照 382 ⇒ 线名实际画出 **11 条**，差异 5917 px；z12 33→107、z12.5 55→175。
+- 复跑两次出图逐字节相同（确定性）；全量编译零警告。
+- 全量回归 `SKEDADDLE_BUILD_DIR=$PWD/build-release scripts/regress.sh`：**135 通过 / 0 失败**。

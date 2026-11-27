@@ -30,7 +30,11 @@
 /* 路名收集（paint_roads 顺带记录，labels.c 消费）                       */
 /* ------------------------------------------------------------------ */
 
-#define ROAD_LABEL_CAP 4096
+/* 4096 会被路名单独打满（z12 起路名收集无门槛，实测北京 z12 就 >4096），
+ * 线名（水系/铁路/步行道）在 paint_lines 里后收集、必然被挤光 ⇒ 一条都画不出。
+ * 16384：候选多只增加 paint_road_labels 的 O(n) 遍历（微秒级），最终能画多少
+ * 仍由避让格决定；24B/条 × 16k = 384 KB 静态缓冲，可接受。 */
+#define ROAD_LABEL_CAP 16384
 static RoadLabel g_rl[ROAD_LABEL_CAP];
 static int       g_rl_n;
 
@@ -1381,6 +1385,7 @@ typedef struct {
     const NMBinFile *lines;
     const NMBinFile *polyrefs;
     uint64_t         nn, np;
+    const NamePool  *namep;                /* 本省名称池：线名收集用（可 NULL） */
     int32_t          vla0, vla1, vlo0, vlo1;
     double           la0, la1, lo0, lo1;   /* 视口（外扩 0.02°） */
 } LineCtx;
@@ -1443,6 +1448,17 @@ static void line_emit(Raster *rs, const LineCtx *c, uint64_t i,
                               width, col);
     }
     dst->lines_drawn++;
+
+    /* 线名收集（2026-11-27「信息全显示」）：LF_NAME_ID 此前从不消费。
+     * 与线 LOD 同门槛：水系/铁路 z12 起、步行道 z14 起；锚点交给
+     * road_labels_add，由 paint_road_labels 统一去重避让绘制。 */
+    if (c->namep) {
+        uint32_t nid = sk_get_u32(lr + LF_NAME_ID);
+        int gate = (cls == RC_PATH) ? (zoom >= 14.0) : (zoom >= 12.0);
+        if (nid && gate && n > 0)
+            road_labels_add(c->namep, nid, px[n / 2], py[n / 2]);
+    }
+    return;
 }
 
 typedef struct {
@@ -1517,6 +1533,7 @@ static int paint_lines_banded(Raster *rs, const LineCtx *ctx, int32_t *lball,
 int paint_lines(Raster *rs, const MapView *v,
                 const NMBinFile *nodes, const NMBinFile *lines,
                 const NMBinFile *polyrefs,
+                const NamePool *namep,
                 int32_t **bbox_cache, PaintStats *st)
 {
     uint64_t nl = lines->hdr.rec_count;
@@ -1572,6 +1589,7 @@ int paint_lines(Raster *rs, const MapView *v,
     ctx.polyrefs = polyrefs;
     ctx.nn = nn;
     ctx.np = np;
+    ctx.namep = namep;
     ctx.vla0 = vla0; ctx.vla1 = vla1;
     ctx.vlo0 = vlo0; ctx.vlo1 = vlo1;
     ctx.la0 = la0;  ctx.la1 = la1;
