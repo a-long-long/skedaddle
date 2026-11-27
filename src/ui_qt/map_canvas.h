@@ -29,6 +29,13 @@ extern "C" {
 
 class MainWindow;
 
+/* 网格刻度标签的画布内钳位（纯几何，供 --ui-test 断言）。
+ * (ex,ey) 是线端点/标签基准位置，lw 是文字宽、asc 是字体 ascent；
+ * 端点出画 ⇒ false（不画标签，否则全挤在角落叠字）；否则输出左上/基线
+ * 坐标，保证文字完整落在 [0,w] × [0,h] 内。 */
+bool sk_tick_label_pos(int ex, int ey, int w, int h, int lw, int asc,
+                       int *lx, int *ly);
+
 class MapCanvas : public QWidget {
 public:
     MapCanvas(App *a, MainWindow *mw, QWidget *parent = nullptr);

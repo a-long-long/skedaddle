@@ -203,6 +203,17 @@ void MapCanvas::drawSkyPlot(QPainter &p)
                     m_satModel->hasFix());
 }
 
+bool sk_tick_label_pos(int ex, int ey, int w, int h, int lw, int asc,
+                       int *lx, int *ly)
+{
+    if (ex < 0 || ex > w || ey < 0 || ey > h) return false;
+    int x = qBound(2, ex + 2, w - lw - 2);
+    int y = qBound(asc + 2, ey, h - 2);
+    if (lx) *lx = x;
+    if (ly) *ly = y;
+    return true;
+}
+
 /* ---- 坐标网格（经纬网 / 方里格，与坐标系解耦）：Qt 端叠加层，C 渲染核心一行不改 ----
  * 网格类型由 m_a->grid_type 决定（默认经纬网 WGS84）；坐标系（m_a->datum）只管读数。
  * 经纬网：用 mv_visible_bbox 取可见范围（WGS84），把四角换到所选基准取范围，
@@ -242,6 +253,17 @@ void MapCanvas::drawGraticule(QPainter &p)
     p.setPen(QColor(40, 60, 95, 160));
 
     char buf[32];
+    QFontMetrics gfm(f);
+    /* 标签钳位：线端点贴到画布边时，文字会整段画出界面（右缘/上缘最明显）。
+     * 端点本身出画的线不画标签（旋转/斜投影下否则全挤在角落互相叠字，
+     * 旧行为里这些标签也本就落在画布外看不见）；在画内的收进边界内。 */
+    auto drawTick = [&](int x, int y, const char *s) {
+        const int lw = gfm.horizontalAdvance(QString::fromUtf8(s));
+        int lx, ly;
+        if (!sk_tick_label_pos(x, y, width(), height(), lw, gfm.ascent(),
+                               &lx, &ly)) return;
+        p.drawText(lx, ly, QString::fromUtf8(s));
+    };
     double lw0, lo0w, lw1, lo1w;
     int xb, yb, xt, yt;
     /* 经线（恒定 lon，基准下）：两端换回 WGS84 投影，标签标基准坐标 */
@@ -253,7 +275,7 @@ void MapCanvas::drawGraticule(QPainter &p)
         mv_project(&m_a->view, lw1, lo1w, &xt, &yt);
         p.drawLine(xb, yb, xt, yt);
         snprintf(buf, sizeof(buf), "%.4f°%c", fabs(lon), lon >= 0 ? 'E' : 'W');
-        p.drawText(xt + 2, yt + 10, QString::fromUtf8(buf));
+        drawTick(xt, yt + 10, buf);
     }
     /* 纬线（恒定 lat，基准下） */
     double lat = ceil(la0 / step - 1e-9) * step;
@@ -264,7 +286,7 @@ void MapCanvas::drawGraticule(QPainter &p)
         mv_project(&m_a->view, lw1, lo1w, &xt, &yt);
         p.drawLine(xb, yb, xt, yt);
         snprintf(buf, sizeof(buf), "%.4f°%c", fabs(lat), lat >= 0 ? 'N' : 'S');
-        p.drawText(xb + 2, yb - 3, QString::fromUtf8(buf));
+        drawTick(xb, yb - 3, buf);
     }
 
     /* 细分刻度线：每格 5 等分（step/5），浅色细线、不标标签；
@@ -338,6 +360,17 @@ void MapCanvas::drawGraticuleGK(QPainter &p, DatumId id)
     p.setPen(QColor(40, 60, 95, 160));
 
     char buf[32];
+    QFontMetrics gfm(f);
+    /* 标签钳位：与 drawGraticule 同一套（带号标签 5 位数字最宽 ~40px，
+     * 竖线端点贴右缘时此前会整段画出界面）。端点出画的线不画标签，
+     * 否则全挤在角落互相叠字。 */
+    auto drawTick = [&](int x, int y, const char *s) {
+        const int lw = gfm.horizontalAdvance(QString::fromUtf8(s));
+        int lx, ly;
+        if (!sk_tick_label_pos(x, y, width(), height(), lw, gfm.ascent(),
+                               &lx, &ly)) return;
+        p.drawText(lx, ly, QString::fromUtf8(s));
+    };
     int x1, y1, x2, y2;
     double lat1, lon1, lat2, lon2;
 
@@ -357,7 +390,7 @@ void MapCanvas::drawGraticuleGK(QPainter &p, DatumId id)
          *   ★ 之前写成 zone*1000+Y/1000 是数值相加，东向 3 位公里数巧合正确，
          *     北向 4 位公里数会变成 39000+4430=43430（吃掉了 39 前缀），故改用拼接。 */
         snprintf(buf, sizeof(buf), "%d%d", zone, (int)round(Yk / 1000.0));
-        p.drawText(x2 + 2, y2 + 10, QString::fromUtf8(buf));
+        drawTick(x2, y2 + 10, buf);
     }
     /* 横线（等 X 北向）：每整 step 米一条，从 Ymin 到 Ymax */
     double Xk = ceil(Xmin / step - 1e-9) * step;
@@ -371,7 +404,7 @@ void MapCanvas::drawGraticuleGK(QPainter &p, DatumId id)
          * 北向（纵坐标 / 北坐标）按国标**不带带号**，只标纯公里数（如 4419）；
          * 带号只属于东向（横坐标 / 东坐标），见上方竖线标签。 */
         snprintf(buf, sizeof(buf), "%d", (int)round(Xk / 1000.0));
-        p.drawText(x1 + 2, y1 - 3, QString::fromUtf8(buf));
+        drawTick(x1, y1 - 3, buf);
     }
 
     /* 细分刻度线：每格 5 等分（step/5），浅色细线、不标标签，依附 grid_subdiv */
@@ -497,8 +530,32 @@ void MapCanvas::drawCursorCoords(QPainter &p)
     const int margin = 10;
     int x = width()  - margin - tw - pad * 2;
     int y = height() - margin - th - pad * 2;
-    /* 画布太窄时收缩文字而不是溢出（与搜索框浮层的处理一致） */
-    if (x < margin) { x = margin; tw = qMax(40, width() - margin * 2 - pad * 2); }
+    /* 画布太窄时先缩字号（8→6.5pt 步进 0.5），仍放不下再中部省略——
+     * 只平移会裁掉整段坐标（"坐标值超出界面"）；中部省略保住前后两头的
+     * 基准前缀与最后一个坐标分量。 */
+    if (x < margin) {
+        const int avail = width() - margin * 2 - pad * 2;
+        for (qreal sz = 7.5; sz >= 6.4; sz -= 0.5) {
+            QFont f2 = p.font();
+            f2.setPointSizeF(sz);
+            QFontMetrics fm2(f2);
+            if (fm2.horizontalAdvance(txt) <= avail) {
+                f = f2; fm = fm2;
+                break;
+            }
+        }
+        tw = fm.horizontalAdvance(txt);
+        if (tw > avail) {
+            QFont f2 = f;
+            f2.setPointSizeF(6.5);
+            QFontMetrics fm2(f2);
+            txt = fm2.elidedText(txt, Qt::ElideMiddle, avail);
+            f = f2; fm = fm2;
+            tw = fm.horizontalAdvance(txt);
+        }
+        p.setFont(f);
+        x = margin;
+    }
     if (y < margin) { y = margin; }
 
     /* 半透明白底 + 细边框（与比例尺/指北针同一套视觉语言） */

@@ -634,6 +634,29 @@ int MainWindow::runUiSelfTest()
                   "右下角读数按所选坐标系呈现");
         }
 
+        /* 刻度标签画布内钳位（2026-11-27「坐标值超出界面」）：端点贴右缘时
+         * 未钳位的 x+2 会带着整段数字画出画布；端点出画的线必须不画标签
+         * （否则全挤到角落叠字）。判据用纯几何函数，改回旧写法必失败。 */
+        {
+            int lx = 0, ly = 0;
+            const int W = 1280, H = 800, LW = 40, ASC = 10;
+            check(sk_tick_label_pos(W - 3, 20, W, H, LW, ASC, &lx, &ly) &&
+                  lx + LW <= W && lx >= 0,
+                  "网格刻度：贴右缘时文字完整留在画布内");
+            check((W - 3) + 2 + LW > W,
+                  "网格刻度：未钳位的旧写法确实会越界（负向对照）");
+            check(sk_tick_label_pos(10, 20, W, H, LW, ASC, &lx, &ly) &&
+                  lx == 12 && ly >= ASC && ly <= H,
+                  "网格刻度：普通位置不挪动");
+            check(!sk_tick_label_pos(W + 50, 20, W, H, LW, ASC, &lx, &ly),
+                  "网格刻度：端点出画（右）不画标签");
+            check(!sk_tick_label_pos(10, -20, W, H, LW, ASC, &lx, &ly),
+                  "网格刻度：端点出画（上）不画标签");
+            check(sk_tick_label_pos(10, H - 1, W, H, LW, ASC, &lx, &ly) &&
+                  ly <= H - 2,
+                  "网格刻度：贴下缘时基线收进画布内");
+        }
+
         /* 网格类型与坐标系解耦（提示由 m_a->grid_type 决定） */
         m_canvas->setShowGrid(true);
         setGridType((int)GRID_LATLON); updateGridBtn();
